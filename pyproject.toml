@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gps2asp"
+version = "0.1.0"
+description = "GPS-to-street resolver for NYC Alternate Side Parking"
+requires-python = ">=3.11"
+dependencies = [
+    "pyproj>=3.7.0",
+    "rtree>=1.4.0",
+    "shapely>=2.1.0",
+    "numpy",
+]
+
+[project.optional-dependencies]
+build = [
+    "geopandas>=1.1.0",
+    "requests",
+]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gps2asp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
