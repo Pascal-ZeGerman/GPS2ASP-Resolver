@@ -214,13 +214,17 @@ async def resolve_segment(
                 confidence=confidence,
             )
 
+        # Determine has_asp based on side. Both left/right are flagged
+        # conservatively (if any ASP sign exists on the segment, both are True).
+        has_asp = best.has_asp_left or best.has_asp_right
+
         return ResolutionResult(
             on_street=best.full_street_name,
             from_street=best.from_street,
             to_street=best.to_street,
             side_of_street=side,
             confidence=round(confidence, 4),
-            has_asp=False,  # Will be populated by build script pre-computation
+            has_asp=has_asp,
         )
 
     except (NoSegmentFoundError, AmbiguousResolutionError):

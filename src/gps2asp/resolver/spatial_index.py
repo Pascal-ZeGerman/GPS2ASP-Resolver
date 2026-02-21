@@ -166,6 +166,8 @@ class SpatialIndex:
                         l_blockfaceid=seg_data.get("l_blockfaceid", ""),
                         r_blockfaceid=seg_data.get("r_blockfaceid", ""),
                         borocode=seg_data.get("borocode", ""),
+                        has_asp_left=bool(seg_data.get("has_asp_left", False)),
+                        has_asp_right=bool(seg_data.get("has_asp_right", False)),
                         distance_ft=distance_ft,
                     )
                 )

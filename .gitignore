@@ -1,0 +1,13 @@
+.planning/
+
+# Spatial index files (too large for git, built via build script)
+src/gps2asp/data/index/*.idx
+src/gps2asp/data/index/*.dat
+src/gps2asp/data/index/segments.json
+src/gps2asp/data/index/build_info.json
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/

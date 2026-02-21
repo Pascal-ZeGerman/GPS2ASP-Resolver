@@ -61,6 +61,8 @@ class SegmentCandidate:
     l_blockfaceid: str
     r_blockfaceid: str
     borocode: str
+    has_asp_left: bool
+    has_asp_right: bool
     distance_ft: float
 
 
