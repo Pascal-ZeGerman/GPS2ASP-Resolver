@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 ## Current Position
 
 Phase: 3 of 4 (Schedule Parsing)
-Plan: 1 of ? in current phase
-Status: Ready
-Last activity: 2026-02-22 -- Completed 02-02-PLAN.md (public API, tests, Phase 2 complete)
+Plan: 2 of 2 in current phase
+Status: In Progress
+Last activity: 2026-02-22 -- Completed 03-01-PLAN.md (schedule data models and sign parser)
 
-Progress: [============........] 50%
+Progress: [==============......] 62%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 15 min
-- Total execution time: 1.0 hours
+- Total plans completed: 5
+- Average duration: 13 min
+- Total execution time: 1.1 hours
 
 **By Phase:**
 
@@ -29,10 +29,11 @@ Progress: [============........] 50%
 |-------|-------|-------|----------|
 | 1 | 2/2 | 49 min | 25 min |
 | 2 | 2/2 | 7 min | 4 min |
+| 3 | 1/2 | 4 min | 4 min |
 
 **Recent Trend:**
-- Last 5 plans: 6min, 43min, 4min, 3min
-- Trend: Phase 2 fast execution (building on established patterns)
+- Last 5 plans: 43min, 4min, 3min, 4min
+- Trend: Consistently fast execution (established patterns accelerating development)
 
 *Updated after each plan completion*
 
@@ -61,6 +62,10 @@ Recent decisions affecting current work:
 - [02-02]: Level 2 iterates variant combos via itertools.product, short-circuits on first hit
 - [02-02]: Level 3 client-side cross-street matching tries from/to swapped (SODA directionality may differ)
 - [02-02]: Registered custom pytest integration marker for clean test output
+- [03-01]: ASPDay as IntEnum with Monday=0 matching datetime.weekday() for direct comparison
+- [03-01]: v2 suspension hook via suspended=False field on ScheduleFound and ASPActiveNow
+- [03-01]: Prefix-based rejection gate: signs must match standard NO PARKING prefix or return None
+- [03-01]: Day extraction order: EXCEPT -> dash range -> individual names (prevents MONDAY-FRIDAY misparse)
 
 ### Pending Todos
 
@@ -68,11 +73,10 @@ None yet.
 
 ### Blockers/Concerns
 
-- Research flags sign description parser as needing empirical format catalog from live SODA dataset before writing parser (Phase 3 pre-task)
 - nyc311calendar is alpha -- relevant for v2 suspension handling but not v1
 
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 02-02-PLAN.md (Phase 2 complete)
+Stopped at: Completed 03-01-PLAN.md (schedule data models and sign parser)
 Resume file: None
