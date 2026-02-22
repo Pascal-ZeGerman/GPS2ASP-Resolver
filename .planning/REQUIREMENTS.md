@@ -24,7 +24,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **SCHED-01**: System parses ASP sign descriptions to extract cleaning days (e.g., "TUESDAY FRIDAY")
 - [x] **SCHED-02**: System parses ASP sign descriptions to extract time windows (e.g., "8:30AM-10AM")
 - [x] **SCHED-03**: System handles sign description format variations (arrow directions, "EXCEPT SUNDAY", multiple patterns)
-- [ ] **SCHED-04**: System computes the next upcoming ASP window datetime from current time and parsed schedule
+- [x] **SCHED-04**: System computes the next upcoming ASP window datetime from current time and parsed schedule
 
 ### Home Assistant Integration
 
@@ -82,7 +82,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SCHED-01 | Phase 3 | Complete |
 | SCHED-02 | Phase 3 | Complete |
 | SCHED-03 | Phase 3 | Complete |
-| SCHED-04 | Phase 3 | Pending |
+| SCHED-04 | Phase 3 | Complete |
 | HA-01 | Phase 4 | Pending |
 | HA-02 | Phase 4 | Pending |
 | HA-03 | Phase 4 | Pending |

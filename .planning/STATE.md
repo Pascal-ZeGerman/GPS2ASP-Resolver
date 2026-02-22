@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-21)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP -- "next time to move is [datetime]"
-**Current focus:** Phase 3: Schedule Parsing
+**Current focus:** Phase 4: Home Assistant Integration
 
 ## Current Position
 
-Phase: 3 of 4 (Schedule Parsing)
-Plan: 2 of 2 in current phase
-Status: In Progress
-Last activity: 2026-02-22 -- Completed 03-01-PLAN.md (schedule data models and sign parser)
+Phase: 4 of 4 (Home Assistant Integration)
+Plan: 1 of ? in current phase
+Status: Ready for Phase 4
+Last activity: 2026-02-22 -- Completed 03-02-PLAN.md (window merge, next-move, compute_schedule API)
 
-Progress: [==============......] 62%
+Progress: [===============.....] 75%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
-- Average duration: 13 min
-- Total execution time: 1.1 hours
+- Total plans completed: 6
+- Average duration: 11 min
+- Total execution time: 1.15 hours
 
 **By Phase:**
 
@@ -29,10 +29,10 @@ Progress: [==============......] 62%
 |-------|-------|-------|----------|
 | 1 | 2/2 | 49 min | 25 min |
 | 2 | 2/2 | 7 min | 4 min |
-| 3 | 1/2 | 4 min | 4 min |
+| 3 | 2/2 | 7 min | 4 min |
 
 **Recent Trend:**
-- Last 5 plans: 43min, 4min, 3min, 4min
+- Last 5 plans: 4min, 3min, 4min, 3min
 - Trend: Consistently fast execution (established patterns accelerating development)
 
 *Updated after each plan completion*
@@ -66,6 +66,11 @@ Recent decisions affecting current work:
 - [03-01]: v2 suspension hook via suspended=False field on ScheduleFound and ASPActiveNow
 - [03-01]: Prefix-based rejection gate: signs must match standard NO PARKING prefix or return None
 - [03-01]: Day extraction order: EXCEPT -> dash range -> individual names (prevents MONDAY-FRIDAY misparse)
+- [03-02]: Conservative merge: earliest start, latest end when windows overlap (safer for tickets)
+- [03-02]: Source signs joined with "; " in merged TimeWindow for traceability
+- [03-02]: 8-day lookahead guarantees finding next weekly occurrence
+- [03-02]: Same-meridiem simplification and consecutive-day dash notation in summary
+- [03-02]: Start time inclusive, end time exclusive for active window detection
 
 ### Pending Todos
 
@@ -78,5 +83,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 03-01-PLAN.md (schedule data models and sign parser)
+Stopped at: Completed 03-02-PLAN.md (window merge, next-move computation, compute_schedule API)
 Resume file: None
