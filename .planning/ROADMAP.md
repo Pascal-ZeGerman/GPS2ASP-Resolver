@@ -13,7 +13,7 @@ This roadmap delivers a Python tool that takes GPS coordinates from a VW CarNet 
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: GPS-to-Street Resolution** - Convert GPS coordinates to NYC State Plane and resolve to the correct street segment and side (completed 2026-02-21)
-- [ ] **Phase 2: ASP Sign Retrieval** - Query NYC Open Data for ASP/broom signs on the resolved block segment and filter to current signs
+- [x] **Phase 2: ASP Sign Retrieval** - Query NYC Open Data for ASP/broom signs on the resolved block segment and filter to current signs (completed 2026-02-22)
 - [ ] **Phase 3: Schedule Parsing and Next-Move Computation** - Parse sign descriptions into structured schedules and compute the next ASP window datetime
 - [ ] **Phase 4: Home Assistant Integration** - Expose the full pipeline as HA sensor entities driven by VW CarNet GPS data
 
@@ -46,8 +46,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Signs module core: data models, exceptions, street name normalization (CSCL-to-SODA), async SODA API client with pagination and retry
-- [ ] 02-02-PLAN.md — Three-level fallback retrieve_signs() public API, normalization unit tests, and SODA integration tests
+- [x] 02-01-PLAN.md — Signs module core: data models, exceptions, street name normalization (CSCL-to-SODA), async SODA API client with pagination and retry
+- [x] 02-02-PLAN.md — Three-level fallback retrieve_signs() public API, normalization unit tests, and SODA integration tests
 
 ### Phase 3: Schedule Parsing and Next-Move Computation
 **Goal**: Given ASP sign records, the system extracts structured cleaning schedules and computes the exact next datetime the car must move
@@ -58,11 +58,11 @@ Plans:
   2. The parser handles real-world format variations from the NYC dataset -- day ranges with "THRU", separators (&, comma, space), "EXCEPT SUNDAY", arrow directions, multiple time windows per sign -- with at least 95% coverage of actual broom symbol sign formats
   3. Given the current datetime and a parsed schedule, the system returns the correct next upcoming ASP window start time (e.g., "next move: Tuesday 2026-02-24 at 8:30 AM")
   4. The schedule parser and next-move computer are usable as a standalone Python library with no Home Assistant dependency
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
+- [ ] 03-01-PLAN.md — Data models (ASPDay enum, ScheduleResult union, TimeWindow, CleaningWindow, WeeklySchedule) and regex-based sign description parser with comprehensive tests
+- [ ] 03-02-PLAN.md — Window merging, next-move datetime computation, human-readable summary, compute_schedule() public API, and integration tests
 
 ### Phase 4: Home Assistant Integration
 **Goal**: The full GPS-to-next-move-time pipeline runs inside Home Assistant, triggered by VW CarNet GPS updates, with results exposed as sensor entities for dashboards and automations
@@ -88,6 +88,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. GPS-to-Street Resolution | 2/2 | Complete    | 2026-02-21 |
-| 2. ASP Sign Retrieval | 0/2 | Not started | - |
-| 3. Schedule Parsing and Next-Move Computation | 0/TBD | Not started | - |
+| 2. ASP Sign Retrieval | 2/2 | Complete    | 2026-02-22 |
+| 3. Schedule Parsing and Next-Move Computation | 0/2 | In progress | - |
 | 4. Home Assistant Integration | 0/TBD | Not started | - |
