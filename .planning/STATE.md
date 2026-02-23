@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 ## Current Position
 
 Phase: 4 of 4 (Home Assistant Integration)
-Plan: 2 of 3 in current phase
+Plan: 3 of 3 in current phase
 Status: Executing Phase 4
-Last activity: 2026-02-22 -- Completed 04-01-PLAN.md (foundation files and coordinator)
+Last activity: 2026-02-22 -- Completed 04-02-PLAN.md (config flow, sensors, entry point)
 
-Progress: [================....] 80%
+Progress: [==================..] 90%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
-- Average duration: 10 min
-- Total execution time: 1.18 hours
+- Total plans completed: 8
+- Average duration: 9 min
+- Total execution time: 1.21 hours
 
 **By Phase:**
 
@@ -30,10 +30,10 @@ Progress: [================....] 80%
 | 1 | 2/2 | 49 min | 25 min |
 | 2 | 2/2 | 7 min | 4 min |
 | 3 | 2/2 | 7 min | 4 min |
-| 4 | 1/3 | 2 min | 2 min |
+| 4 | 2/3 | 4 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: 3min, 4min, 3min, 2min
+- Last 5 plans: 4min, 3min, 2min, 2min
 - Trend: Consistently fast execution (established patterns accelerating development)
 
 *Updated after each plan completion*
@@ -77,6 +77,10 @@ Recent decisions affecting current work:
 - [04-01]: Debouncer with 5s cooldown and immediate=False to coalesce GPS jitter
 - [04-01]: Pipeline errors retain last known schedule (fall back, not clear)
 - [04-01]: OutsideNYC and NoSegmentFound produce distinct special_state sentinels
+- [04-02]: No device_class on sensor -- text states break timestamp device class
+- [04-02]: Device tracker in entry.data (immutable), thresholds in entry.options (reconfigurable)
+- [04-02]: AllUnparseable and NoMatchSchedule treated as "No restrictions" fallback
+- [04-02]: Sensor retains last known attributes when special_state is set
 
 ### Pending Todos
 
@@ -91,5 +95,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 04-01-PLAN.md (foundation files and event-driven coordinator)
+Stopped at: Completed 04-02-PLAN.md (config flow, sensors, and entry point)
 Resume file: None
