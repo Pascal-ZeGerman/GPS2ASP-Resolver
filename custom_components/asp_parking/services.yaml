@@ -1,0 +1,3 @@
+resolve_now:
+  name: Resolve Now
+  description: "Manually trigger ASP schedule resolution for the current GPS position."

@@ -1,0 +1,52 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "VW CarNet Login",
+        "description": "VW CarNet integration coming soon. Click Submit to continue with manual device tracker selection."
+      },
+      "vehicle": {
+        "title": "Select Vehicle",
+        "description": "Choose the device tracker entity that provides your car's GPS location.",
+        "data": {
+          "device_tracker": "Device tracker entity"
+        }
+      },
+      "settings": {
+        "title": "Settings",
+        "data": {
+          "movement_threshold": "Movement threshold (meters)",
+          "refresh_interval": "Refresh interval (hours)",
+          "stale_timeout": "GPS stale timeout (hours)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "ASP Parking Monitor is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Settings",
+        "data": {
+          "movement_threshold": "Movement threshold (meters)",
+          "refresh_interval": "Refresh interval (hours)",
+          "stale_timeout": "GPS stale timeout (hours)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_move_time": {
+        "name": "Next Move Time"
+      }
+    },
+    "binary_sensor": {
+      "active_now": {
+        "name": "ASP Active Now"
+      }
+    }
+  }
+}
