@@ -28,10 +28,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Home Assistant Integration
 
-- [ ] **HA-01**: System reads GPS coordinates (latitude/longitude) from VW CarNet device_tracker entity attributes
+- [x] **HA-01**: System reads GPS coordinates (latitude/longitude) from VW CarNet device_tracker entity attributes
 - [ ] **HA-02**: System exposes `sensor.asp_next_move_time` with datetime value as primary output
 - [ ] **HA-03**: System exposes sensor attributes with schedule details (days, time window, street, side)
-- [ ] **HA-04**: System triggers re-resolve when car GPS position changes significantly (>50m movement)
+- [x] **HA-04**: System triggers re-resolve when car GPS position changes significantly (>50m movement)
 
 ## v2 Requirements
 
@@ -83,10 +83,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SCHED-02 | Phase 3 | Complete |
 | SCHED-03 | Phase 3 | Complete |
 | SCHED-04 | Phase 3 | Complete |
-| HA-01 | Phase 4 | Pending |
+| HA-01 | Phase 4 | Complete |
 | HA-02 | Phase 4 | Pending |
 | HA-03 | Phase 4 | Pending |
-| HA-04 | Phase 4 | Pending |
+| HA-04 | Phase 4 | Complete |
 
 **Coverage:**
 - v1 requirements: 14 total

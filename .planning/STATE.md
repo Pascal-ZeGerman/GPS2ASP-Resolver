@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-21)
 ## Current Position
 
 Phase: 4 of 4 (Home Assistant Integration)
-Plan: 1 of ? in current phase
-Status: Ready for Phase 4
-Last activity: 2026-02-22 -- Completed 03-02-PLAN.md (window merge, next-move, compute_schedule API)
+Plan: 2 of 3 in current phase
+Status: Executing Phase 4
+Last activity: 2026-02-22 -- Completed 04-01-PLAN.md (foundation files and coordinator)
 
-Progress: [===============.....] 75%
+Progress: [================....] 80%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
-- Average duration: 11 min
-- Total execution time: 1.15 hours
+- Total plans completed: 7
+- Average duration: 10 min
+- Total execution time: 1.18 hours
 
 **By Phase:**
 
@@ -30,9 +30,10 @@ Progress: [===============.....] 75%
 | 1 | 2/2 | 49 min | 25 min |
 | 2 | 2/2 | 7 min | 4 min |
 | 3 | 2/2 | 7 min | 4 min |
+| 4 | 1/3 | 2 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: 4min, 3min, 4min, 3min
+- Last 5 plans: 3min, 4min, 3min, 2min
 - Trend: Consistently fast execution (established patterns accelerating development)
 
 *Updated after each plan completion*
@@ -71,10 +72,17 @@ Recent decisions affecting current work:
 - [03-02]: 8-day lookahead guarantees finding next weekly occurrence
 - [03-02]: Same-meridiem simplification and consecutive-day dash notation in summary
 - [03-02]: Start time inclusive, end time exclusive for active window detection
+- [04-01]: Custom coordinator (not DataUpdateCoordinator) since GPS events are the data source
+- [04-01]: ASPParkingData is mutable dataclass (not frozen) -- coordinator updates incrementally
+- [04-01]: Debouncer with 5s cooldown and immediate=False to coalesce GPS jitter
+- [04-01]: Pipeline errors retain last known schedule (fall back, not clear)
+- [04-01]: OutsideNYC and NoSegmentFound produce distinct special_state sentinels
 
 ### Pending Todos
 
-None yet.
+- Add env config for caching area range
+- Parse non-ASP parking restrictions in future phase
+- Add HA diagnostics endpoint to asp_parking integration (v2)
 
 ### Blockers/Concerns
 
@@ -83,5 +91,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Completed 03-02-PLAN.md (window merge, next-move computation, compute_schedule API)
+Stopped at: Completed 04-01-PLAN.md (foundation files and event-driven coordinator)
 Resume file: None

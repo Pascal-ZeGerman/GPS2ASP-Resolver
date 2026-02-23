@@ -74,11 +74,12 @@ Plans:
   3. The sensor exposes attributes with schedule details (cleaning days, time window, street name, side of street) for use in HA dashboards and automations
   4. When the car's GPS position changes by more than 50 meters, the system automatically re-resolves the ASP schedule for the new location
   5. The integration is installable via HACS or manual copy to `custom_components/` with a standard config flow setup
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 04-01: TBD
-- [ ] 04-02: TBD
+- [ ] 04-01-PLAN.md — Foundation files (const, manifest, strings, services) and event-driven ASPParkingCoordinator with GPS subscription, movement threshold, debounce, and full pipeline orchestration
+- [ ] 04-02-PLAN.md — Config flow (3-step wizard + options flow), sensor entity (ASPNextMoveTimeSensor with rich attributes), binary sensor (ASPActiveNowBinarySensor), and integration entry point
+- [ ] 04-03-PLAN.md — Unit tests for state mapping and coordinator logic, HACS packaging, and full integration structure verification
 
 ## Progress
 
@@ -90,4 +91,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | 1. GPS-to-Street Resolution | 2/2 | Complete    | 2026-02-21 |
 | 2. ASP Sign Retrieval | 2/2 | Complete    | 2026-02-22 |
 | 3. Schedule Parsing and Next-Move Computation | 0/2 | In progress | - |
-| 4. Home Assistant Integration | 0/TBD | Not started | - |
+| 4. Home Assistant Integration | 0/3 | Not started | - |
