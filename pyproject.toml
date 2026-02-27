@@ -24,6 +24,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-homeassistant-custom-component",
+    "mypy",
 ]
 
 [tool.hatch.build.targets.wheel]
