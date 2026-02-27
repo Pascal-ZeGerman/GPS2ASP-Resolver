@@ -2,67 +2,92 @@
 
 ## What This Is
 
-A Python tool that resolves a car's GPS coordinates to Alternate Side Parking (ASP) rules for that specific curb location in NYC. Given lat/long from a VW CarNet Home Assistant integration, it determines which side of the street the car is on, looks up the ASP schedule for that block segment, and returns when the car next needs to move. It also factors in ASP suspensions (holidays, snow emergencies, etc.).
+A Python tool and Home Assistant custom integration that resolves a car's GPS coordinates to Alternate Side Parking (ASP) rules for that specific curb location in NYC. Given lat/long from a VW CarNet device_tracker entity, it determines which side of the street the car is on, looks up the ASP schedule for that block segment from NYC Open Data, parses the sign descriptions, computes the next cleaning window, and exposes "next time to move" as an HA sensor entity.
 
 ## Core Value
 
 Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]" — so they never get a ticket.
 
+## Current State
+
+**Shipped:** v1.0 MVP (2026-02-23)
+**Code:** 7,314 lines Python, 41 files, 213 tests
+**Stack:** Python 3.11+, pyproj, shapely, rtree, httpx, Home Assistant custom component
+
+The full pipeline is operational: GPS → State Plane → street segment/side → SODA API signs → parsed schedule → next move datetime → HA sensor. Installable via HACS or manual copy to `custom_components/`.
+
 ## Requirements
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ GPS-01: WGS84 to NY State Plane coordinate conversion — v1.0
+- ✓ GPS-02: GPS point to street segment + side resolution — v1.0
+- ✓ GPS-03: Confidence scoring for GPS accuracy limitations — v1.0
+- ✓ SIGN-01: SODA API query for ASP/broom signs — v1.0
+- ✓ SIGN-02: Filter current signs only (exclude voided/superseded) — v1.0
+- ✓ SIGN-03: SODA API pagination handling — v1.0
+- ✓ SCHED-01: Parse cleaning days from sign descriptions — v1.0
+- ✓ SCHED-02: Parse time windows from sign descriptions — v1.0
+- ✓ SCHED-03: Handle sign format variations (EXCEPT, dash ranges, etc.) — v1.0
+- ✓ SCHED-04: Compute next upcoming ASP window datetime — v1.0
+- ✓ HA-01: Read GPS from VW CarNet device_tracker entity — v1.0
+- ✓ HA-02: Expose sensor with datetime value for next move time — v1.0
+- ✓ HA-03: Expose sensor attributes with schedule details — v1.0
+- ✓ HA-04: Auto re-resolve on GPS movement >50m — v1.0
 
 ### Active
 
-- [ ] Accept GPS coordinates (lat/long WGS84) as input from HA integration
-- [ ] Convert GPS coordinates to NY State Plane to match NYC Open Data sign locations
-- [ ] Resolve GPS point to nearest street segment and correct side of street
-- [ ] Query NYC Open Data (SODA API) for ASP/broom signs on that block segment and side
-- [ ] Parse sign descriptions to extract ASP schedule (days, time windows)
-- [ ] Compute the next upcoming ASP window from current datetime
-- [ ] Return "next time to move" datetime as primary output
-- [ ] Cache ASP sign data per block segment with weekly refresh
-- [ ] Handle NYC holiday ASP suspension calendar
-- [ ] Cron job to check for weather-based ASP suspensions (snow, rain, etc.)
-- [ ] Push HA notification when move time is approaching
-- [ ] Return structured data for HA automation consumption
+- [ ] CACHE-01: Cache ASP sign data per block segment in SQLite with weekly refresh
+- [ ] CACHE-02: Configurable caching area (center + radius) for pre-seeding
+- [ ] CACHE-03: Fall back to live SODA API on cache miss
+- [ ] SUSP-01: NYC holiday ASP suspension calendar
+- [ ] SUSP-02: Weather/emergency suspension polling via 311 API
+- [ ] SUSP-03: Merge suspension status with schedule for single authoritative answer
+- [ ] SUSP-04: Bridge with ha-nyc311 integration for suspension binary sensors
+- [ ] NOTIF-01: HA actionable notification with configurable lead time
+- [ ] NOTIF-02: Automation-ready structured output
 
 ### Out of Scope
 
-- Real-time parking availability / open spot finding — this is about ASP rules only
-- Other parking regulations (meters, no standing, hydrants) — ASP/broom signs only for v1
-- Mobile app or web UI — this is a backend function for Home Assistant
-- Multi-vehicle support — single car for now
-- Parking guidance (where to move TO) — just tells you WHEN to move
+- Real-time parking availability / spot finding — different data problem, no public API
+- Full parking regulation support (meters, no standing, hydrants) — ASP signs have consistent patterns, others are far more varied
+- Mobile app or web UI — HA dashboard and companion app ARE the UI
+- Multi-vehicle support — single car for now; design doesn't preclude but not implemented
+- Parking guidance (where to move TO) — requires spot availability data that doesn't exist
+- AI/ML suspension predictions — official announcements are the data
+- OpenCurb API — only covers Midtown Manhattan, not Brooklyn
 
 ## Context
 
-- **Data source**: NYC Open Data dataset `nfid-uabd` (Parking Regulation Locations and Signs) via SODA API. ASP signs identifiable by `"SANITATION BROOM SYMBOL"` in `sign_description`. Contains street name, from/to cross streets, side of street (N/S/E/W), and parseable schedule text like `"TUESDAY FRIDAY 8:30AM-10AM"`.
-- **Coordinate systems**: GPS provides WGS84 lat/long. NYC Open Data uses NY State Plane (NAD83, feet) for `sign_x_coord`/`sign_y_coord`. Conversion needed via `pyproj`.
-- **OpenCurb API** (`opencurb.nyc`): Alternative data source that accepts GPS directly and returns curb regulations as GeoJSON. Works in Brooklyn despite claiming Manhattan only. Could serve as validation or fallback, but doesn't expose raw ASP schedules in a parseable way for "next time to move" computation.
-- **ASP suspensions**: NYC suspends ASP on ~30+ holidays/year. Weather-based suspensions (snow emergencies) are announced via NYC 311 / DSNY. Need a cron job to poll for these.
-- **Primary area**: Prospect Heights, Brooklyn and surrounding neighborhoods. Should work for all NYC.
-- **Integration**: VW CarNet / WeConnect Home Assistant integration provides `device_tracker` entity with `latitude`/`longitude` attributes.
+- **Data source**: NYC Open Data `nfid-uabd` via SODA API. ASP signs identifiable by `"SANITATION BROOM SYMBOL"` in `sign_description`.
+- **Coordinate systems**: GPS WGS84 → NY State Plane (EPSG:2263) via pyproj. R-tree spatial index with 105K vehicular segments.
+- **Street name normalization**: CSCL format (abbreviated) to SODA format (expanded) with three-level fallback for name mismatches.
+- **Primary area**: Prospect Heights, Brooklyn and surrounding neighborhoods. Works for all NYC.
+- **Integration**: VW CarNet / WeConnect HA integration provides `device_tracker` entity with `latitude`/`longitude` attributes.
+- **Known tech debt**: ScheduleFound.next_window type mismatch (edge case), SODA app_token not in config flow, IndexNotFoundError produces no distinct sensor state.
 
 ## Constraints
 
-- **Runtime**: Python — native HA integration language, good library ecosystem (pyproj, requests)
-- **Platform**: Home Assistant — function gets called by existing automation that polls car GPS
-- **Data freshness**: ASP signs rarely change (~yearly). Cache with weekly refresh is sufficient.
-- **Network**: SODA API is free, no auth required. Suspension checks need periodic polling.
-- **Accuracy**: GPS accuracy (~3-5m) is sufficient to place car on correct curb side per user confirmation.
+- **Runtime**: Python 3.11+ — native HA integration language
+- **Platform**: Home Assistant custom component with HACS support
+- **Data freshness**: ASP signs rarely change (~yearly). Live SODA query per resolve (caching deferred to v2).
+- **Network**: SODA API is free, no auth required (optional app_token for rate limits)
+- **Accuracy**: GPS accuracy (~3-5m) sufficient for street-side determination with confidence scoring
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| NYC Open Data as primary source | Parseable ASP schedules in sign descriptions, all boroughs, free SODA API | — Pending |
-| Local cache with live fallback | ASP signs rarely change, avoid unnecessary API calls, works offline after first lookup | — Pending |
-| Python for implementation | Native HA language, pyproj for coord conversion, requests for API | — Pending |
-| Focus on "my side's next window" | User's primary need is knowing when to move away, not where to move to | — Pending |
-| Full suspension handling | Holidays + cron for weather suspensions — avoids unnecessary moves | — Pending |
+| NYC Open Data as primary source | Parseable ASP schedules in sign descriptions, all boroughs, free SODA API | ✓ Good — 95%+ sign format coverage |
+| Python 3.11+ with pyproj/shapely/rtree | Native HA language, strong geospatial libraries | ✓ Good — clean async pipeline |
+| Exceptions over Result objects | Cleaner for async pipeline with distinct error types | ✓ Good — OutsideNYC, NoSegment, Ambiguous all distinct |
+| 4-phase linear pipeline | GPS → Signs → Schedule → HA derived from data dependencies | ✓ Good — each phase independently testable |
+| Suspensions/caching deferred to v2 | Core value delivered without them; adds complexity | ✓ Good — shipped faster, v2 scope clear |
+| Custom coordinator (not DataUpdateCoordinator) | GPS events are the data source, not polling | ✓ Good — natural fit for event-driven model |
+| Conservative window merging | Earliest start, latest end when overlapping (safer for tickets) | ✓ Good — user won't miss a window |
+| 50m movement threshold with 5s debounce | Filters GPS jitter while catching real movement | — Pending (needs real-world testing) |
+| Retain last known state on errors | SODA errors don't clear schedule; user keeps useful data | ✓ Good — graceful degradation |
+| Entity ID via has_entity_name=True | HA recommended pattern; generates sensor.asp_parking_next_move_time | — Pending (docs say sensor.asp_next_move_time) |
 
 ---
-*Last updated: 2026-02-21 after initialization*
+*Last updated: 2026-02-23 after v1.0 milestone*

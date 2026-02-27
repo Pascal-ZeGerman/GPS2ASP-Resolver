@@ -2,26 +2,26 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-02-21)
+See: .planning/PROJECT.md (updated 2026-02-23)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP -- "next time to move is [datetime]"
-**Current focus:** Phase 4: Home Assistant Integration
+**Current focus:** v1.0 shipped — planning next milestone
 
 ## Current Position
 
-Phase: 4 of 4 (Home Assistant Integration)
-Plan: 3 of 3 in current phase (COMPLETE)
-Status: Phase 4 Complete -- All phases complete
-Last activity: 2026-02-22 -- Completed 04-03-PLAN.md (tests and HACS config)
+Milestone: v1.0 MVP shipped 2026-02-23
+Status: All 4 phases (9 plans) complete, 213 tests passing
+Next: /gsd:new-milestone for v2 (caching, suspensions, notifications)
 
-Progress: [====================] 100%
+Progress: [====================] 100% v1.0
 
 ## Performance Metrics
 
-**Velocity:**
+**v1.0 Velocity:**
 - Total plans completed: 9
 - Average duration: 8 min
 - Total execution time: 1.26 hours
+- Timeline: 2 days (2026-02-21 → 2026-02-22)
 
 **By Phase:**
 
@@ -32,73 +32,21 @@ Progress: [====================] 100%
 | 3 | 2/2 | 7 min | 4 min |
 | 4 | 3/3 | 7 min | 2 min |
 
-**Recent Trend:**
-- Last 5 plans: 4min, 3min, 2min, 2min, 3min
-- Trend: Consistently fast execution (established patterns accelerating development)
-
-*Updated after each plan completion*
-| Phase 04 P03 | 3min | 2 tasks | 3 files |
-
 ## Accumulated Context
-
-### Decisions
-
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-- [Roadmap]: 4-phase linear pipeline (GPS -> Signs -> Schedule -> HA) derived from requirement dependencies
-- [Roadmap]: Suspensions, caching, and notifications deferred to v2 per REQUIREMENTS.md scoping
-- [01-01]: Used exceptions (not Result objects) for error handling -- cleaner for async pipeline
-- [01-01]: Confidence threshold default 0.6 based on GPS accuracy math
-- [01-01]: Hard cutoff at <10ft (centerline) and <30ft (intersection) returning 0.0 confidence
-- [01-01]: has_asp defaults to False, will be pre-computed by build script in Plan 02
-- [01-02]: R-tree built with index.insert() loop (not generator) -- generator produces empty files
-- [01-02]: Cross streets derived via 5ft-tolerance node-to-segment spatial lookup
-- [01-02]: has_asp pre-computed from SODA API parking signs with pagination
-- [01-02]: Integration tests use session-scoped fixtures, skip when index not built
-- [02-01]: Suffix expansion uses rsplit word-boundary matching to avoid false matches
-- [02-01]: Directional prefix expansion guards on next-char-is-digit (ESSEX != EAST+SSEX)
-- [02-01]: httpx.AsyncClient created fresh per fetch_signs call (not stored as instance state)
-- [02-01]: Per-page retry with IncompleteResultsError for partial pagination failures
-- [02-02]: Level 1 uses SODA-normalized names for highest-probability match
-- [02-02]: Level 2 iterates variant combos via itertools.product, short-circuits on first hit
-- [02-02]: Level 3 client-side cross-street matching tries from/to swapped (SODA directionality may differ)
-- [02-02]: Registered custom pytest integration marker for clean test output
-- [03-01]: ASPDay as IntEnum with Monday=0 matching datetime.weekday() for direct comparison
-- [03-01]: v2 suspension hook via suspended=False field on ScheduleFound and ASPActiveNow
-- [03-01]: Prefix-based rejection gate: signs must match standard NO PARKING prefix or return None
-- [03-01]: Day extraction order: EXCEPT -> dash range -> individual names (prevents MONDAY-FRIDAY misparse)
-- [03-02]: Conservative merge: earliest start, latest end when windows overlap (safer for tickets)
-- [03-02]: Source signs joined with "; " in merged TimeWindow for traceability
-- [03-02]: 8-day lookahead guarantees finding next weekly occurrence
-- [03-02]: Same-meridiem simplification and consecutive-day dash notation in summary
-- [03-02]: Start time inclusive, end time exclusive for active window detection
-- [04-01]: Custom coordinator (not DataUpdateCoordinator) since GPS events are the data source
-- [04-01]: ASPParkingData is mutable dataclass (not frozen) -- coordinator updates incrementally
-- [04-01]: Debouncer with 5s cooldown and immediate=False to coalesce GPS jitter
-- [04-01]: Pipeline errors retain last known schedule (fall back, not clear)
-- [04-01]: OutsideNYC and NoSegmentFound produce distinct special_state sentinels
-- [04-02]: No device_class on sensor -- text states break timestamp device class
-- [04-02]: Device tracker in entry.data (immutable), thresholds in entry.options (reconfigurable)
-- [04-02]: AllUnparseable and NoMatchSchedule treated as "No restrictions" fallback
-- [04-02]: Sensor retains last known attributes when special_state is set
-- [04-03]: HA-independent testing via data model mirroring and logic replication (no HA runtime needed)
-- [04-03]: ASPParkingData mirrored as test-local dataclass to avoid homeassistant import
-- [04-03]: 24 tests in 5 groups: sensor state, binary sensor, movement threshold, attributes, stale timeout
-- [Phase 04]: HA-independent testing via data model mirroring and logic replication
 
 ### Pending Todos
 
-- Add env config for caching area range
-- Parse non-ASP parking restrictions in future phase
+- Add env config for caching area range (v2)
+- Parse non-ASP parking restrictions in future phase (v2+)
 - Add HA diagnostics endpoint to asp_parking integration (v2)
+- Fix ScheduleFound.next_window type mismatch (tech debt from v1.0 audit)
 
 ### Blockers/Concerns
 
-- nyc311calendar is alpha -- relevant for v2 suspension handling but not v1
+- nyc311calendar is alpha -- relevant for v2 suspension handling
 
 ## Session Continuity
 
-Last session: 2026-02-22
-Stopped at: Completed 04-03-PLAN.md (tests and HACS config) -- ALL PHASES COMPLETE
+Last session: 2026-02-23
+Stopped at: v1.0 milestone complete and archived
 Resume file: None
