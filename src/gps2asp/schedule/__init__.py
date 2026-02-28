@@ -169,7 +169,7 @@ def compute_schedule(
 
     return ScheduleFound(
         status="schedule_found",
-        next_window=next_win,
+        next_window=next_win,  # CleaningWindow | None — find_next_window returns None only when WeeklySchedule has no windows
         weekly_schedule=merged_schedule,
         on_street=on_street,
         from_street=from_street,

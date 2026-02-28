@@ -71,6 +71,8 @@ def sensor_native_value(data: ASPParkingData) -> str | None:
 
     schedule = data.schedule_result
     if isinstance(schedule, ScheduleFound):
+        if schedule.next_window is None:
+            return None  # find_next_window returned None (no windows in schedule)
         return schedule.next_window.start_datetime.isoformat()
     if isinstance(schedule, ASPActiveNow):
         return schedule.active_window.end_datetime.isoformat()
@@ -129,9 +131,10 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
         attrs["borough"] = None
 
     if isinstance(schedule, ScheduleFound):
-        attrs["next_window_start"] = schedule.next_window.start_datetime.isoformat()
-        attrs["next_window_end"] = schedule.next_window.end_datetime.isoformat()
-        attrs["next_window_day"] = schedule.next_window.day.name.title()
+        if schedule.next_window is not None:
+            attrs["next_window_start"] = schedule.next_window.start_datetime.isoformat()
+            attrs["next_window_end"] = schedule.next_window.end_datetime.isoformat()
+            attrs["next_window_day"] = schedule.next_window.day.name.title()
     elif isinstance(schedule, ASPActiveNow):
         attrs["current_window_start"] = (
             schedule.active_window.start_datetime.isoformat()
@@ -311,6 +314,37 @@ class TestSensorStateMapping:
         """No schedule_result and no special_state -> None."""
         data = ASPParkingData()
         assert sensor_native_value(data) is None
+
+    def test_schedule_found_none_next_window_returns_none(self) -> None:
+        """Sensor returns None gracefully when ScheduleFound.next_window is None."""
+        tw = TimeWindow(
+            day=ASPDay.MONDAY,
+            start_time=time(8, 30),
+            end_time=time(10, 0),
+            source_sign="NO PARKING 8:30AM-10AM MON",
+        )
+        schedule = ScheduleFound(
+            status="schedule_found",
+            next_window=None,
+            weekly_schedule=WeeklySchedule(windows=(tw,)),
+            on_street="PROSPECT PLACE",
+            from_street="VANDERBILT AVENUE",
+            to_street="UNDERHILL AVENUE",
+            side_of_street="N",
+            source_signs=["NO PARKING 8:30AM-10AM MON"],
+            summary="Mon 8:30-10am",
+            parse_failures=[],
+        )
+        data = ASPParkingData(schedule_result=schedule)
+
+        # sensor returns None (not AttributeError) when next_window is None
+        assert sensor_native_value(data) is None
+
+        # extra_state_attributes should not crash and should omit next_window_* keys
+        attrs = sensor_extra_attributes(data)
+        assert "next_window_start" not in attrs
+        assert "next_window_end" not in attrs
+        assert "next_window_day" not in attrs
 
 
 # ===========================================================================

@@ -122,7 +122,8 @@ class ScheduleFound:
 
     Attributes:
         status: Discriminator literal "schedule_found".
-        next_window: The next upcoming ASP cleaning window.
+        next_window: The next upcoming ASP cleaning window, or None if no
+            upcoming window found within 7 days.
         weekly_schedule: Full parsed weekly schedule (all days/windows).
         on_street: Street name in CSCL format.
         from_street: Cross street at one end.
@@ -135,7 +136,7 @@ class ScheduleFound:
     """
 
     status: Literal["schedule_found"]
-    next_window: CleaningWindow
+    next_window: CleaningWindow | None
     weekly_schedule: WeeklySchedule
     on_street: str
     from_street: str

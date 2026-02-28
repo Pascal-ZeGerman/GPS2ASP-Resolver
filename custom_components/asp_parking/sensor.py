@@ -101,6 +101,8 @@ class ASPNextMoveTimeSensor(SensorEntity):
         schedule = data.schedule_result
 
         if isinstance(schedule, ScheduleFound):
+            if schedule.next_window is None:
+                return None  # find_next_window returned None (no windows in schedule)
             return schedule.next_window.start_datetime.isoformat()
 
         if isinstance(schedule, ASPActiveNow):
@@ -189,11 +191,12 @@ class ASPNextMoveTimeSensor(SensorEntity):
 
         # --- Window group ---
         if isinstance(schedule, ScheduleFound):
-            attrs["next_window_start"] = (
-                schedule.next_window.start_datetime.isoformat()
-            )
-            attrs["next_window_end"] = schedule.next_window.end_datetime.isoformat()
-            attrs["next_window_day"] = schedule.next_window.day.name.title()
+            if schedule.next_window is not None:
+                attrs["next_window_start"] = (
+                    schedule.next_window.start_datetime.isoformat()
+                )
+                attrs["next_window_end"] = schedule.next_window.end_datetime.isoformat()
+                attrs["next_window_day"] = schedule.next_window.day.name.title()
         elif isinstance(schedule, ASPActiveNow):
             attrs["current_window_start"] = (
                 schedule.active_window.start_datetime.isoformat()
