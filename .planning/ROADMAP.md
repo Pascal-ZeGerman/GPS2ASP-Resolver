@@ -52,11 +52,11 @@ Plans:
 **Plans:** 1 plan
 
 Plans:
-- [ ] 06-01-PLAN.md — Replace absolute near-centerline guard with width-relative formula; add rw_type fallback, NaN fix, and street_width_ft debug field
+- [x] 06-01-PLAN.md — Replace absolute near-centerline guard with width-relative formula; add rw_type fallback, NaN fix, and street_width_ft debug field
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 6. Improve Confidence Scoring | v1.1 | 0/1 | Not started | — |
+| 6. Improve Confidence Scoring | v1.1 | 1/1 | Complete | 2026-02-28 |
 
 #### Phase 7: Pipeline Stabilization — Importable Function with Debug Flag
 
