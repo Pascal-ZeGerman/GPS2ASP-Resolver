@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
-status: active
-last_updated: "2026-02-28T03:55:00.000Z"
+status: unknown
+last_updated: "2026-02-28T03:57:54.683Z"
 progress:
   total_phases: 3
   completed_phases: 2
@@ -18,17 +18,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-02-23)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP -- "next time to move is [datetime]"
-**Current focus:** v1.1 bug fixes — Phase 6 complete, move to Phase 7
+**Current focus:** v1.1 bug fixes — Phase 7 in progress (Plan 07-01 complete)
 
 ## Current Position
 
 Milestone: v1.1 Bug Fixes
-Phase: 06-improve-confidence-scoring-to-account-for-nyc-street-widths
-Current Plan: 1 of 1
-Status: Plan 06-01 complete
-Next: Phase 6 complete — move to Phase 7 (Pipeline Stabilization)
+Phase: 07-stabilize-pipeline-as-importable-function-with-debug-flag
+Current Plan: 1 of 2
+Status: Plan 07-01 complete (TDD RED — data models and failing tests)
+Next: Plan 07-02 — implement resolve_asp() to make tests pass (TDD GREEN)
 
-Progress: [====================] 100% v1.0 | Phase 6: [====================] 100%
+Progress: [====================] 100% v1.0 | Phase 7: [==========          ] 50%
 
 ## Performance Metrics
 
@@ -48,6 +48,7 @@ Progress: [====================] 100% v1.0 | Phase 6: [====================] 100
 | 4 | 3/3 | 7 min | 2 min |
 | 5 | 1/1 | 10 min | 10 min |
 | 6 | 1/1 | 8 min | 8 min |
+| 7 | 1/2 | 4 min | 4 min |
 
 ## Accumulated Context
 
@@ -73,11 +74,20 @@ Progress: [====================] 100% v1.0 | Phase 6: [====================] 100
 - Enriched AmbiguousResolutionError messages with street_width, perp_dist, endpoint_dist
 - Fixed NaN streetwidth in build_index.py (now stores 0.0 to trigger rw_type fallback)
 
+### Completed in Phase 7 (Plan 07-01)
+
+- Added soda_level: int = 1 field to SignRetrievalSuccess (all three return sites set explicitly)
+- Created src/gps2asp/api_models.py with ASPResult (3 fields) and ASPDebugResult (13 fields)
+- Wrote 8 failing async tests in tests/test_resolve_asp.py (TDD RED — ImportError expected)
+
 ### Decisions Made
 
 - _classify_ambiguity() retains 10ft absolute heuristic for debug log labels only (not confidence algorithm)
 - _NYC_DEFAULT_WIDTHS is a code constant, not runtime-configurable (per user decision)
 - Fallback width is logged at DEBUG level only, not surfaced in error messages
+- soda_level: int = 1 default on SignRetrievalSuccess preserves backwards compatibility
+- Test mocking targets gps2asp.* namespace for Plan 07-02's implementation
+- ASPDebugResult has exactly 13 fields per CONTEXT.md — parking_lane_fraction not exposed
 
 ### Roadmap Evolution
 
@@ -92,5 +102,5 @@ Progress: [====================] 100% v1.0 | Phase 6: [====================] 100
 ## Session Continuity
 
 Last session: 2026-02-28
-Stopped at: Completed 06-01-PLAN.md — Phase 6 plan 1 of 1 done
+Stopped at: Completed 07-01-PLAN.md — Phase 7 plan 1 of 2 done (TDD RED)
 Resume file: None
