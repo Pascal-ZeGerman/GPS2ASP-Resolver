@@ -5,15 +5,17 @@
 See: .planning/PROJECT.md (updated 2026-02-23)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP -- "next time to move is [datetime]"
-**Current focus:** v1.0 shipped — planning next milestone
+**Current focus:** v1.1 bug fixes — Phase 5 added, ready to plan
 
 ## Current Position
 
-Milestone: v1.0 MVP shipped 2026-02-23
-Status: All 4 phases (9 plans) complete, 213 tests passing
-Next: /gsd:new-milestone for v2 (caching, suspensions, notifications)
+Milestone: v1.1 Bug Fixes
+Phase: 05-bug-fixes-and-tech-debt
+Current Plan: 1 of 1
+Status: Plan 05-01 complete
+Next: Phase 5 complete — move to Phase 6 or close v1.1
 
-Progress: [====================] 100% v1.0
+Progress: [====================] 100% v1.0 | Phase 5: [====================] 100%
 
 ## Performance Metrics
 
@@ -31,6 +33,7 @@ Progress: [====================] 100% v1.0
 | 2 | 2/2 | 7 min | 4 min |
 | 3 | 2/2 | 7 min | 4 min |
 | 4 | 3/3 | 7 min | 2 min |
+| 5 | 1/1 | 10 min | 10 min |
 
 ## Accumulated Context
 
@@ -39,7 +42,17 @@ Progress: [====================] 100% v1.0
 - Add env config for caching area range (v2)
 - Parse non-ASP parking restrictions in future phase (v2+)
 - Add HA diagnostics endpoint to asp_parking integration (v2)
-- Fix ScheduleFound.next_window type mismatch (tech debt from v1.0 audit)
+
+### Completed in Phase 5
+
+- Fixed ScheduleFound.next_window type mismatch (BUG-02) — widened to CleaningWindow | None
+- Fixed venv pip wrapper shebangs stale after project directory rename (BUG-01)
+
+### Roadmap Evolution
+
+- Phase 5 added: Bug Fixes and Tech Debt (surfaced 2026-02-27 E2E test)
+- Phase 6 added: Improve Confidence Scoring for NYC Street Widths (confidence=0.0 on 9.2ft centerline offset)
+- Phase 7 added: Pipeline Stabilization — importable function with debug flag
 
 ### Blockers/Concerns
 
@@ -47,6 +60,6 @@ Progress: [====================] 100% v1.0
 
 ## Session Continuity
 
-Last session: 2026-02-23
-Stopped at: v1.0 milestone complete and archived
+Last session: 2026-02-27
+Stopped at: Completed 05-01-PLAN.md — Phase 5 plan 1 of 1 done
 Resume file: None

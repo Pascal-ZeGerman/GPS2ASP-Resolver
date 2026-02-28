@@ -38,11 +38,11 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 **Plans:** 1 plan
 
 Plans:
-- [ ] 05-01-PLAN.md — Fix venv path staleness (BUG-01) and ScheduleFound.next_window type mismatch (BUG-02)
+- [x] 05-01-PLAN.md — Fix venv path staleness (BUG-01) and ScheduleFound.next_window type mismatch (BUG-02)
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 5. Bug Fixes and Tech Debt | v1.1 | 0/1 | In progress | — |
+| 5. Bug Fixes and Tech Debt | v1.1 | 1/1 | Complete | 2026-02-27 |
 
 #### Phase 6: Improve Confidence Scoring for NYC Street Widths
 
