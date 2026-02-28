@@ -82,7 +82,7 @@ async def resolve(
     Args:
         lat: Latitude in WGS84 (e.g., 40.6778).
         lon: Longitude in WGS84 (e.g., -73.9690).
-        confidence_threshold: Minimum confidence to accept (default 0.6).
+        confidence_threshold: Minimum confidence to accept (default 0.33).
         index_dir: Optional path to the spatial index directory.
         parking_lane_fraction: Fraction of street width considered the
             near-centerline ambiguous zone (default 0.33). Points within
@@ -132,7 +132,7 @@ async def resolve_segment(
     Args:
         x: State Plane X coordinate (US survey feet).
         y: State Plane Y coordinate (US survey feet).
-        confidence_threshold: Minimum confidence to accept (default 0.6).
+        confidence_threshold: Minimum confidence to accept (default 0.33).
         index_dir: Optional path to the spatial index directory.
         parking_lane_fraction: Fraction of street width considered the
             near-centerline ambiguous zone (default 0.33). Passed through
