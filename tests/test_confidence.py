@@ -6,21 +6,26 @@ from gps2asp.resolver.confidence import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     compute_confidence,
     is_confident,
+    resolve_effective_width,
 )
 
 
 class TestComputeConfidence:
     """Test confidence scoring for side-of-street determination."""
 
-    def test_near_centerline_returns_zero(self):
-        """Point very close to centerline (5ft < 10ft threshold) -> 0.0.
-        Within GPS error, could be either side."""
+    def test_near_centerline_below_threshold(self):
+        """Point at 5ft on 30ft street: threshold=4.95ft; guard does NOT fire.
+
+        5ft > new 4.95ft threshold (width-relative), so confidence is computed.
+        offset_ratio = 5/15 = 0.333; confidence = 0.333 < 0.6 but > 0.0
+        """
         result = compute_confidence(
             perp_distance_ft=5.0,
             street_width_ft=30.0,
             distance_to_nearest_intersection_ft=200.0,
         )
-        assert result == 0.0
+        assert result > 0.0
+        assert result < DEFAULT_CONFIDENCE_THRESHOLD
 
     def test_near_intersection_returns_zero(self):
         """Point near intersection (20ft < 30ft threshold) -> 0.0.
@@ -57,15 +62,19 @@ class TestComputeConfidence:
         assert 0.4 < result < 0.8
 
     def test_exact_centerline_threshold(self):
-        """Point at exactly 10ft (threshold boundary) -> 0.0.
-        The threshold is < 10, so 10ft exactly should NOT be zero."""
+        """Point at 10ft on a 30ft street: well above width-relative threshold=4.95ft.
+
+        With the new width-relative guard: threshold = 30*0.33/2 = 4.95ft.
+        10ft > 4.95ft, so the guard does NOT fire.
+        offset_ratio = 10/15 = 0.667; confidence = 0.667 >= 0.6 -> confidently in parking lane.
+        """
         result = compute_confidence(
             perp_distance_ft=10.0,
             street_width_ft=30.0,
             distance_to_nearest_intersection_ft=200.0,
         )
-        # 10ft is not < 10ft, so this should NOT be 0.0
-        assert result > 0.0
+        # 10ft on 30ft street is confidently in the parking lane (above 0.6 threshold)
+        assert result > DEFAULT_CONFIDENCE_THRESHOLD
 
     def test_exact_intersection_threshold(self):
         """Point at exactly 30ft intersection distance (boundary) -> 0.0.
@@ -79,7 +88,11 @@ class TestComputeConfidence:
         assert result > 0.0
 
     def test_zero_street_width(self):
-        """Edge case: zero street width should use default half-width of 15ft."""
+        """Edge case: zero street width triggers rw_type fallback (rw_type defaults to 1 -> 30ft).
+
+        With rw_type=1 fallback: effective_width=30ft, half_width=15ft, threshold=4.95ft.
+        15ft > 4.95ft -> passes guard. offset_ratio = 15/15 = 1.0 -> confidence=1.0.
+        """
         result = compute_confidence(
             perp_distance_ft=15.0,
             street_width_ft=0.0,
@@ -92,7 +105,7 @@ class TestComputeConfidence:
         """Confidence should always be between 0.0 and 1.0."""
         # Test various inputs
         test_cases = [
-            (5.0, 30.0, 200.0),   # near centerline
+            (5.0, 30.0, 200.0),   # above width-relative guard, below confidence threshold
             (15.0, 30.0, 20.0),   # near intersection
             (18.0, 30.0, 200.0),  # high confidence
             (12.0, 30.0, 80.0),   # medium confidence
@@ -105,6 +118,92 @@ class TestComputeConfidence:
                 f"confidence={result} out of range for "
                 f"perp={perp}, width={width}, intersection={intersection}"
             )
+
+    def test_near_centerline_within_fraction_returns_zero(self):
+        """Point within parking_lane_fraction threshold returns 0.0.
+
+        new threshold = 30 * 0.33 / 2 = 4.95ft
+        3.0ft < 4.95ft -> returns 0.0
+        """
+        result = compute_confidence(
+            perp_distance_ft=3.0,
+            street_width_ft=30.0,
+            distance_to_nearest_intersection_ft=200.0,
+        )
+        assert result == 0.0
+
+    def test_regression_prospect_pl_9ft(self):
+        """Regression: 9.2ft from centerline on 30ft street passes 0.6 threshold.
+
+        This is the failing E2E case from 2026-02-27 (lat=40.677629, lng=-73.968527).
+        Before fix: 9.2 < 10.0 (absolute guard) -> confidence = 0.0
+        After fix:  9.2 > 4.95ft (width-relative) -> confidence ~= 0.6133 -> resolved
+        """
+        result = compute_confidence(
+            perp_distance_ft=9.2,
+            street_width_ft=30.0,
+            distance_to_nearest_intersection_ft=200.0,
+            rw_type=1,
+            parking_lane_fraction=0.33,
+        )
+        assert result >= DEFAULT_CONFIDENCE_THRESHOLD, (
+            f"Expected >= {DEFAULT_CONFIDENCE_THRESHOLD}, got {result:.4f} — "
+            f"PROSPECT PL regression"
+        )
+
+    def test_nan_streetwidth_uses_rw_type_fallback(self):
+        """NaN streetwidth falls back to _NYC_DEFAULT_WIDTHS[rw_type=1] = 30ft.
+
+        Result should match compute_confidence with explicit width=30.0.
+        """
+        result_nan = compute_confidence(
+            perp_distance_ft=9.2,
+            street_width_ft=float('nan'),
+            distance_to_nearest_intersection_ft=200.0,
+            rw_type=1,
+        )
+        result_explicit = compute_confidence(
+            perp_distance_ft=9.2,
+            street_width_ft=30.0,
+            distance_to_nearest_intersection_ft=200.0,
+            rw_type=1,
+        )
+        assert result_nan == result_explicit
+
+    def test_highway_width_fallback(self):
+        """rw_type=2 (highway) falls back to 60ft when streetwidth=0.
+
+        threshold = 60*0.33/2 = 9.9ft; 20ft > 9.9ft -> passes guard
+        half_width = 30ft; offset_ratio = 20/30 = 0.667; confidence ~= 0.667
+        """
+        result = compute_confidence(
+            perp_distance_ft=20.0,
+            street_width_ft=0.0,
+            distance_to_nearest_intersection_ft=200.0,
+            rw_type=2,
+        )
+        assert result > 0.6
+
+    def test_custom_parking_lane_fraction(self):
+        """Custom parking_lane_fraction changes the near-centerline threshold.
+
+        With fraction=0.5: threshold = 30*0.5/2 = 7.5ft; 9.2ft > 7.5ft -> passes
+        With fraction=0.7: threshold = 30*0.7/2 = 10.5ft; 9.2ft < 10.5ft -> 0.0
+        """
+        result_passes = compute_confidence(
+            perp_distance_ft=9.2,
+            street_width_ft=30.0,
+            distance_to_nearest_intersection_ft=200.0,
+            parking_lane_fraction=0.5,
+        )
+        result_zero = compute_confidence(
+            perp_distance_ft=9.2,
+            street_width_ft=30.0,
+            distance_to_nearest_intersection_ft=200.0,
+            parking_lane_fraction=0.7,
+        )
+        assert result_passes > 0.0
+        assert result_zero == 0.0
 
 
 class TestIsConfident:

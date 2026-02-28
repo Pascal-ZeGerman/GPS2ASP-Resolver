@@ -49,14 +49,14 @@ Plans:
 **Goal:** Improve the confidence scoring algorithm to use real NYC street width data so that the side-of-street determination is more accurate for wide vs narrow streets
 **Requirements**: Observed confidence=0.0 for coordinates 9.2ft from centerline — threshold is too sensitive on narrow streets
 **Depends on:** Phase 5
-**Plans:** 0 plans
+**Plans:** 1 plan
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 6 to break down)
+- [ ] 06-01-PLAN.md — Replace absolute near-centerline guard with width-relative formula; add rw_type fallback, NaN fix, and street_width_ft debug field
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 6. Improve Confidence Scoring | v1.1 | 0/? | Not started | — |
+| 6. Improve Confidence Scoring | v1.1 | 0/1 | Not started | — |
 
 #### Phase 7: Pipeline Stabilization — Importable Function with Debug Flag
 
