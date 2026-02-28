@@ -84,6 +84,8 @@ class ResolutionDebugInfo:
         confidence: Computed confidence score.
         side: Determined side of street (N/S/E/W), or None if ambiguous.
         outcome: Resolution outcome string.
+        street_width_ft: Effective street width used in confidence calculation (post-fallback
+            from _NYC_DEFAULT_WIDTHS if CSCL data was missing). None if not yet computed.
     """
 
     input_lat: float
@@ -96,3 +98,4 @@ class ResolutionDebugInfo:
     confidence: float = 0.0
     side: str | None = None
     outcome: str = "no_segment"
+    street_width_ft: float | None = None    # effective width used in confidence calc (post-fallback)

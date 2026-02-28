@@ -26,6 +26,7 @@ from gps2asp.resolver.confidence import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     compute_confidence,
     is_confident,
+    resolve_effective_width,
 )
 from gps2asp.resolver.converter import convert
 from gps2asp.resolver.exceptions import (
@@ -64,6 +65,7 @@ async def resolve(
     lon: float,
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
     index_dir: str | None = None,
+    parking_lane_fraction: float = 0.33,
 ) -> ResolutionResult:
     """Resolve GPS coordinates to a street segment and side of street.
 
@@ -82,6 +84,10 @@ async def resolve(
         lon: Longitude in WGS84 (e.g., -73.9690).
         confidence_threshold: Minimum confidence to accept (default 0.6).
         index_dir: Optional path to the spatial index directory.
+        parking_lane_fraction: Fraction of street width considered the
+            near-centerline ambiguous zone (default 0.33). Points within
+            (effective_width * parking_lane_fraction / 2) feet of center
+            return confidence=0.0.
 
     Returns:
         ResolutionResult with on_street, from_street, to_street,
@@ -102,6 +108,7 @@ async def resolve(
         x, y,
         confidence_threshold=confidence_threshold,
         index_dir=index_dir,
+        parking_lane_fraction=parking_lane_fraction,
         _input_lat=lat,
         _input_lon=lon,
     )
@@ -112,6 +119,7 @@ async def resolve_segment(
     y: float,
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
     index_dir: str | None = None,
+    parking_lane_fraction: float = 0.33,
     _input_lat: float | None = None,
     _input_lon: float | None = None,
 ) -> ResolutionResult:
@@ -126,6 +134,9 @@ async def resolve_segment(
         y: State Plane Y coordinate (US survey feet).
         confidence_threshold: Minimum confidence to accept (default 0.6).
         index_dir: Optional path to the spatial index directory.
+        parking_lane_fraction: Fraction of street width considered the
+            near-centerline ambiguous zone (default 0.33). Passed through
+            to compute_confidence().
         _input_lat: Original latitude (for debug logging, internal use).
         _input_lon: Original longitude (for debug logging, internal use).
 
@@ -173,11 +184,14 @@ async def resolve_segment(
         # Step 4: Determine side of street
         side = determine_side(x, y, best.geometry, best.nominaldir)
 
-        # Step 5: Compute confidence
+        # Step 5: Compute effective width (post-fallback) and confidence
+        effective_width = resolve_effective_width(best.streetwidth, best.rw_type)
         confidence = compute_confidence(
             perp_distance_ft=perp_distance,
             street_width_ft=best.streetwidth,
             distance_to_nearest_intersection_ft=dist_to_endpoints,
+            rw_type=best.rw_type,
+            parking_lane_fraction=parking_lane_fraction,
         )
 
         # Update debug info with results
@@ -195,6 +209,7 @@ async def resolve_segment(
                 "resolved" if is_confident(confidence, confidence_threshold)
                 else _classify_ambiguity(perp_distance, dist_to_endpoints)
             ),
+            street_width_ft=effective_width,
         )
 
         # Log every attempt
@@ -206,9 +221,10 @@ async def resolve_segment(
                 message=(
                     f"Resolution confidence {confidence:.2f} is below "
                     f"threshold {confidence_threshold:.2f} for segment "
-                    f"{best.full_street_name} (perpendicular distance: "
-                    f"{perp_distance:.1f}ft, endpoint distance: "
-                    f"{dist_to_endpoints:.1f}ft)"
+                    f"{best.full_street_name} "
+                    f"(street_width={effective_width:.0f}ft, "
+                    f"perp_dist={perp_distance:.1f}ft, "
+                    f"endpoint_dist={dist_to_endpoints:.1f}ft)"
                 ),
                 debug_info=debug_info,
                 confidence=confidence,
@@ -246,6 +262,11 @@ async def resolve_segment(
 
 def _classify_ambiguity(perp_distance: float, dist_to_endpoints: float) -> str:
     """Classify the type of ambiguity for debug logging.
+
+    The 10ft check here is a rough heuristic for log classification only —
+    it is NOT the confidence algorithm threshold (which is width-relative).
+    Width-relative classification would require passing effective_width; a
+    static 10ft approximation is sufficient for debug log labels.
 
     Args:
         perp_distance: Perpendicular distance to centerline in feet.

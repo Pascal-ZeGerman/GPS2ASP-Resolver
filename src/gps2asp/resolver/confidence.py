@@ -4,18 +4,27 @@ Computes a confidence score (0.0 to 1.0) indicating how reliable the
 side-of-street determination is. The score is based on:
 
 1. Perpendicular distance from the street centerline relative to street width:
-   Further from center = more confident the GPS point is truly on one side.
+   The near-centerline guard is width-relative (parking_lane_fraction * width / 2).
+   This ensures narrow streets (~30ft residential) are not penalised the same as
+   wide avenues (~60ft) — a point 9ft from the centerline on a 30ft street is
+   well within the parking lane, not ambiguous.
 
 2. Distance to the nearest intersection: Points near intersections are
    ambiguous because they could belong to either cross street.
 
-Per user decisions:
-- Near centerline (<10ft, within GPS error): confidence = 0.0 (ambiguous)
-- Near intersection (<30ft, ~10m): confidence = 0.0 (ambiguous)
+Per user decisions (see CONTEXT.md for rationale):
+- Near centerline (< effective_width * parking_lane_fraction / 2): confidence = 0.0
+- Near intersection (< 30ft, ~10m): confidence = 0.0 (ambiguous)
 - Otherwise: combine offset ratio and intersection proximity
+
+Width fallback: When CSCL streetwidth is missing (0 or NaN), the rw_type is used
+to look up a NYC-informed default via _NYC_DEFAULT_WIDTHS. Fallback is logged at
+DEBUG level only — not surfaced to users.
 """
 
 from __future__ import annotations
+
+import math
 
 # Default confidence threshold: 0.6
 # Rationale: GPS accuracy ~10-16ft, half street width ~15-20ft.
@@ -25,11 +34,48 @@ from __future__ import annotations
 # false positives (accepting incorrect side determinations).
 DEFAULT_CONFIDENCE_THRESHOLD = 0.6
 
+# CSCL rw_type -> approximate paved width in feet
+# NYC-informed estimates; code constant (not runtime-configurable) per user decision.
+# rw_type meanings from CSCL data dictionary (VEHICULAR_RW_TYPES = {1,2,3,4,5})
+_NYC_DEFAULT_WIDTHS: dict[int, float] = {
+    1: 30.0,   # Street — typical NYC residential/commercial block (~30ft curb-to-curb)
+    2: 60.0,   # Highway / expressway (~60ft, multiple lanes)
+    3: 60.0,   # Bridge — conservative wide estimate (~60ft deck width)
+    4: 30.0,   # Tunnel — conservative fallback (rarely parked on; width uncertain)
+    5: 30.0,   # Boardwalk / service road — treated conservatively as street width
+}
+_DEFAULT_WIDTH_FALLBACK = 30.0  # catch-all for unrecognized rw_types
+
+
+def resolve_effective_width(streetwidth_ft: float, rw_type: int) -> float:
+    """Return effective street width, falling back to rw_type table when CSCL data is missing.
+
+    Logs at DEBUG level when a fallback is used (not surfaced to the user per CONTEXT.md).
+
+    Args:
+        streetwidth_ft: Width from CSCL data. May be 0.0 (missing) or NaN (corrupt).
+        rw_type: CSCL road type code. Used for fallback width lookup.
+
+    Returns:
+        Positive float representing effective street width in feet.
+    """
+    if streetwidth_ft > 0 and not math.isnan(streetwidth_ft):
+        return streetwidth_ft
+    import logging
+    fallback = _NYC_DEFAULT_WIDTHS.get(rw_type, _DEFAULT_WIDTH_FALLBACK)
+    logging.getLogger(__name__).debug(
+        "streetwidth missing (got %s) for rw_type=%d; using fallback=%.0fft",
+        streetwidth_ft, rw_type, fallback,
+    )
+    return fallback
+
 
 def compute_confidence(
     perp_distance_ft: float,
     street_width_ft: float,
     distance_to_nearest_intersection_ft: float,
+    rw_type: int = 1,
+    parking_lane_fraction: float = 0.33,
 ) -> float:
     """Compute confidence score for side-of-street determination.
 
@@ -37,21 +83,36 @@ def compute_confidence(
     - Distance-based: How far off-center the point is (offset_ratio)
     - Intersection proximity: How far from the nearest intersection
 
+    The near-centerline guard is width-relative: points within
+    (effective_width * parking_lane_fraction / 2) feet of the centerline
+    are considered ambiguous (could be either lane or the center of the road).
+
     Returns 0.0 for clearly ambiguous cases (near centerline or intersection).
 
     Args:
         perp_distance_ft: Perpendicular distance from the point to the
             street centerline in feet.
         street_width_ft: Total paved width of the street in feet (from CSCL
-            streetwidth field). Typical NYC values: 25-60 feet.
+            streetwidth field). Typical NYC values: 25-60 feet. 0.0 or NaN
+            triggers rw_type fallback via _NYC_DEFAULT_WIDTHS.
         distance_to_nearest_intersection_ft: Distance from the point to the
             nearest segment endpoint (intersection) in feet.
+        rw_type: CSCL road type code (1=Street, 2=Highway, etc.). Used for
+            width fallback when streetwidth is missing. Defaults to 1 (Street).
+        parking_lane_fraction: Fraction of street width considered the
+            near-centerline ambiguous zone. Default 0.33 means the inner 33%
+            of the road (between the travel lanes) returns confidence=0.0.
+            Threshold = effective_width * parking_lane_fraction / 2.
 
     Returns:
         Confidence score from 0.0 (ambiguous) to 1.0 (certain).
     """
-    # Near centerline: within GPS error (~3m = ~10ft), could be either side
-    if perp_distance_ft < 10.0:
+    # Resolve effective width (handles 0.0 and NaN via rw_type fallback)
+    effective_width = resolve_effective_width(street_width_ft, rw_type)
+
+    # Near centerline: within the central travel-lane zone, could be either side
+    near_center_threshold = effective_width * parking_lane_fraction / 2.0
+    if perp_distance_ft < near_center_threshold:
         return 0.0
 
     # Near intersection: within ~10m = ~30ft, block face is ambiguous
@@ -59,7 +120,7 @@ def compute_confidence(
         return 0.0
 
     # Distance-based confidence: how far off-center as fraction of half-width
-    half_width = street_width_ft / 2.0 if street_width_ft > 0 else 15.0
+    half_width = effective_width / 2.0
     offset_ratio = perp_distance_ft / half_width
     distance_conf = min(1.0, offset_ratio)
 

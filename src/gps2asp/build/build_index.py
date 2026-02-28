@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -558,12 +559,18 @@ def _build_rtree_and_metadata(
         if has_asp_left or has_asp_right:
             asp_count += 1
 
-        # Get streetwidth safely
-        sw_raw = row.get("streetwidth", 30)
+        # Get streetwidth safely (handle None, NaN, and non-numeric from CSCL source)
+        # Store 0.0 for missing/corrupt values — confidence.py applies rw_type fallback
+        # at runtime via _NYC_DEFAULT_WIDTHS (per CONTEXT.md: fallback logic lives there)
+        sw_raw = row.get("streetwidth", None)
         try:
-            streetwidth = float(sw_raw) if sw_raw is not None else 30.0
+            sw = float(sw_raw) if sw_raw is not None else None
+            if sw is None or math.isnan(sw) or sw <= 0:
+                streetwidth = 0.0
+            else:
+                streetwidth = sw
         except (ValueError, TypeError):
-            streetwidth = 30.0
+            streetwidth = 0.0
 
         # Build segment metadata
         segments[str(pid)] = {
