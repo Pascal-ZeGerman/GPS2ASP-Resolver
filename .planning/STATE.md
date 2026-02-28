@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
 status: unknown
-last_updated: "2026-02-28T04:00:00.000Z"
+last_updated: "2026-02-28T15:48:54.675Z"
 progress:
   total_phases: 3
   completed_phases: 3
-  total_plans: 2
-  completed_plans: 2
+  total_plans: 4
+  completed_plans: 4
 ---
 
 # Project State
@@ -101,6 +101,13 @@ Progress: [====================] 100% v1.0 | Phase 7: [====================] 100
 - Phase 6 added: Improve Confidence Scoring for NYC Street Widths (confidence=0.0 on 9.2ft centerline offset)
 - Phase 7 added: Pipeline Stabilization — importable function with debug flag
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 1 | Fix gps2asp module not installed so pipeline script runs | 2026-02-28 | f835dc5 | [1-fix-gps2asp-module-not-installed-so-pipe](./quick/1-fix-gps2asp-module-not-installed-so-pipe/) |
+| 2 | Lower confidence threshold default from 0.60 to 0.33 for testing | 2026-02-28 | 8d655c0 | [2-lower-confidence-threshold-default-to-0-](./quick/2-lower-confidence-threshold-default-to-0-/) |
+
 ### Blockers/Concerns
 
 - nyc311calendar is alpha -- relevant for v2 suspension handling
@@ -108,5 +115,5 @@ Progress: [====================] 100% v1.0 | Phase 7: [====================] 100
 ## Session Continuity
 
 Last session: 2026-02-28
-Stopped at: Completed 07-02-PLAN.md — Phase 7 plan 2 of 2 done (TDD GREEN + CLI demo)
+Stopped at: Completed quick task 2 — DEFAULT_CONFIDENCE_THRESHOLD lowered to 0.33, all tests pass
 Resume file: None
