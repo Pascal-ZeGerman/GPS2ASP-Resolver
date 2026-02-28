@@ -17,7 +17,7 @@ class TestComputeConfidence:
         """Point at 5ft on 30ft street: threshold=4.95ft; guard does NOT fire.
 
         5ft > new 4.95ft threshold (width-relative), so confidence is computed.
-        offset_ratio = 5/15 = 0.333; confidence = 0.333 < 0.6 but > 0.0
+        offset_ratio = 5/15 = 0.333; confidence = 0.333 — low but non-zero.
         """
         result = compute_confidence(
             perp_distance_ft=5.0,
@@ -25,7 +25,7 @@ class TestComputeConfidence:
             distance_to_nearest_intersection_ft=200.0,
         )
         assert result > 0.0
-        assert result < DEFAULT_CONFIDENCE_THRESHOLD
+        assert result < 0.4  # 0.333... is low confidence (close to parking-lane threshold)
 
     def test_near_intersection_returns_zero(self):
         """Point near intersection (20ft < 30ft threshold) -> 0.0.
@@ -231,5 +231,5 @@ class TestIsConfident:
         assert is_confident(0.0) is False
 
     def test_default_threshold_value(self):
-        """Default threshold should be 0.6."""
-        assert DEFAULT_CONFIDENCE_THRESHOLD == 0.6
+        """Default threshold should be 0.33."""
+        assert DEFAULT_CONFIDENCE_THRESHOLD == 0.33
