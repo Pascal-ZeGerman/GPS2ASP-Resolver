@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
 status: unknown
-last_updated: "2026-02-28T03:57:54.683Z"
+last_updated: "2026-02-28T04:00:00.000Z"
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 2
   completed_plans: 2
 ---
@@ -18,17 +18,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-02-23)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP -- "next time to move is [datetime]"
-**Current focus:** v1.1 bug fixes — Phase 7 in progress (Plan 07-01 complete)
+**Current focus:** v1.1 bug fixes — Phase 7 complete
 
 ## Current Position
 
 Milestone: v1.1 Bug Fixes
 Phase: 07-stabilize-pipeline-as-importable-function-with-debug-flag
-Current Plan: 1 of 2
-Status: Plan 07-01 complete (TDD RED — data models and failing tests)
-Next: Plan 07-02 — implement resolve_asp() to make tests pass (TDD GREEN)
+Current Plan: 2 of 2
+Status: Plan 07-02 complete (TDD GREEN — resolve_asp() implemented, all tests pass)
+Next: Phase 7 complete — v1.1 milestone done
 
-Progress: [====================] 100% v1.0 | Phase 7: [==========          ] 50%
+Progress: [====================] 100% v1.0 | Phase 7: [====================] 100%
 
 ## Performance Metrics
 
@@ -48,7 +48,7 @@ Progress: [====================] 100% v1.0 | Phase 7: [==========          ] 50%
 | 4 | 3/3 | 7 min | 2 min |
 | 5 | 1/1 | 10 min | 10 min |
 | 6 | 1/1 | 8 min | 8 min |
-| 7 | 1/2 | 4 min | 4 min |
+| 7 | 2/2 | 6 min | 3 min |
 
 ## Accumulated Context
 
@@ -74,11 +74,15 @@ Progress: [====================] 100% v1.0 | Phase 7: [==========          ] 50%
 - Enriched AmbiguousResolutionError messages with street_width, perp_dist, endpoint_dist
 - Fixed NaN streetwidth in build_index.py (now stores 0.0 to trigger rw_type fallback)
 
-### Completed in Phase 7 (Plan 07-01)
+### Completed in Phase 7
 
 - Added soda_level: int = 1 field to SignRetrievalSuccess (all three return sites set explicitly)
 - Created src/gps2asp/api_models.py with ASPResult (3 fields) and ASPDebugResult (13 fields)
-- Wrote 8 failing async tests in tests/test_resolve_asp.py (TDD RED — ImportError expected)
+- Wrote 8 failing async tests in tests/test_resolve_asp.py (TDD RED — Plan 07-01)
+- Implemented resolve_asp() with @overload stubs wiring all three pipeline stages (Plan 07-02)
+- AmbiguousResolutionError caught internally; OutsideNYCError/NoSegmentFoundError propagate
+- Created examples/run_pipeline.py CLI live demo (PROSPECT PL default coordinates)
+- All 8 resolve_asp tests pass GREEN; full suite 221 passed
 
 ### Decisions Made
 
@@ -88,6 +92,8 @@ Progress: [====================] 100% v1.0 | Phase 7: [==========          ] 50%
 - soda_level: int = 1 default on SignRetrievalSuccess preserves backwards compatibility
 - Test mocking targets gps2asp.* namespace for Plan 07-02's implementation
 - ASPDebugResult has exactly 13 fields per CONTEXT.md — parking_lane_fraction not exposed
+- resolve_segment(x, y, ...) used instead of resolve(lat, lon) to avoid double coordinate conversion
+- soda_level=0 in debug result when sign_result is not SignRetrievalSuccess
 
 ### Roadmap Evolution
 
@@ -102,5 +108,5 @@ Progress: [====================] 100% v1.0 | Phase 7: [==========          ] 50%
 ## Session Continuity
 
 Last session: 2026-02-28
-Stopped at: Completed 07-01-PLAN.md — Phase 7 plan 1 of 2 done (TDD RED)
+Stopped at: Completed 07-02-PLAN.md — Phase 7 plan 2 of 2 done (TDD GREEN + CLI demo)
 Resume file: None
