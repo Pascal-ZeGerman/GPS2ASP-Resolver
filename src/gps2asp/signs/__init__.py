@@ -174,6 +174,7 @@ async def retrieve_signs(
                 from_street=from_street,
                 to_street=to_street,
                 side_of_street=side_of_street,
+                soda_level=1,
             )
 
     # ------------------------------------------------------------------
@@ -213,6 +214,7 @@ async def retrieve_signs(
                     from_street=from_street,
                     to_street=to_street,
                     side_of_street=side_of_street,
+                    soda_level=2,
                 )
 
     # ------------------------------------------------------------------
@@ -256,6 +258,7 @@ async def retrieve_signs(
                         from_street=from_street,
                         to_street=to_street,
                         side_of_street=side_of_street,
+                        soda_level=3,
                     )
 
     # ------------------------------------------------------------------
