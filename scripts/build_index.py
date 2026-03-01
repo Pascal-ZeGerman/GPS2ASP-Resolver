@@ -33,6 +33,8 @@ from pyproj import Transformer
 from rtree import index as rtree_index
 from shapely.geometry import MultiLineString, shape
 
+from gps2asp.signs.normalize import normalize_to_soda
+
 logger = logging.getLogger("gps2asp.build")
 
 # NYC Open Data SODA GeoJSON endpoint for the Centerline dataset.
@@ -57,46 +59,20 @@ SIGNS_BATCH_SIZE = 50000
 # WGS84 to EPSG:2263 transformer for reprojecting GeoJSON (which arrives in WGS84)
 _transformer = Transformer.from_crs("EPSG:4326", "EPSG:2263", always_xy=True)
 
-# Street name abbreviation expansions.
-# The CSCL centerline uses abbreviations (AVE, ST, PL) while the parking
-# signs dataset uses full names (AVENUE, STREET, PLACE). We expand centerline
-# abbreviations to match the parking signs format for ASP matching.
-_STREET_TYPE_EXPANSIONS = {
-    " AVE": " AVENUE",
-    " ST": " STREET",
-    " PL": " PLACE",
-    " BLVD": " BOULEVARD",
-    " DR": " DRIVE",
-    " CT": " COURT",
-    " RD": " ROAD",
-    " LN": " LANE",
-    " TER": " TERRACE",
-    " PKWY": " PARKWAY",
-    " EXPY": " EXPRESSWAY",
-    " HWY": " HIGHWAY",
-    " SQ": " SQUARE",
-    " CIR": " CIRCLE",
-}
-
-
 def _normalize_street_name(name: str) -> str:
-    """Normalize a street name by expanding abbreviations.
+    """Normalize a street name by expanding abbreviations and directional prefixes.
 
-    Converts centerline-style abbreviations (AVE, ST, PL) to full names
-    (AVENUE, STREET, PLACE) to match the parking signs dataset format.
+    Delegates to normalize_to_soda() for exact parity with the runtime
+    normalization used in sign queries (CSCL abbreviated format ->
+    SODA full-word format).
 
     Args:
-        name: Street name from the centerline dataset (uppercase).
+        name: Street name from the centerline dataset.
 
     Returns:
-        Normalized street name with expanded abbreviations.
+        Normalized street name in SODA format.
     """
-    name = name.upper().strip()
-    for abbrev, full in _STREET_TYPE_EXPANSIONS.items():
-        if name.endswith(abbrev):
-            name = name[: -len(abbrev)] + full
-            break
-    return name
+    return normalize_to_soda(name)
 
 
 def _setup_logging() -> None:
@@ -298,7 +274,7 @@ def _find_cross_street(
         node_lookup: The node-to-segments lookup.
 
     Returns:
-        Cross street name, or "DEAD END" if no cross street found.
+        Cross street name, or '' (empty string) if no cross street found.
     """
     # Check a small neighborhood around the rounded node for tolerance
     candidates: list[tuple[int, str]] = []
@@ -319,7 +295,7 @@ def _find_cross_street(
             cross_streets.append(name_upper)
 
     if not cross_streets:
-        return "DEAD END"
+        return ""
 
     # Pick the most common cross street name
     counts = Counter(cross_streets)
@@ -373,7 +349,7 @@ def _compute_cross_streets(
     logger.info("Computed cross streets for %d segments", count)
     dead_end_count = sum(
         1 for fs, ts in cross_streets.values()
-        if fs == "DEAD END" or ts == "DEAD END"
+        if fs == "" or ts == ""
     )
     logger.info(
         "Dead ends: %d segments have at least one dead-end node",
@@ -402,7 +378,7 @@ def _fetch_asp_signs() -> set[tuple[str, str, str, str]]:
         params = {
             "$where": (
                 "sign_description LIKE '%SANITATION BROOM%'"
-                " AND record_type='Current'"
+                " AND sign_design_voided_on_date IS NULL"
             ),
             "$select": "on_street,from_street,to_street,side_of_street",
             "$group": "on_street,from_street,to_street,side_of_street",
