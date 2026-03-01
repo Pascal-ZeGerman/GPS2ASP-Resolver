@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
 status: unknown
-last_updated: "2026-02-28T15:48:54.675Z"
+last_updated: "2026-03-01T14:43:43.273Z"
 progress:
-  total_phases: 3
+  total_phases: 6
   completed_phases: 3
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 7
+  completed_plans: 5
 ---
 
 # Project State
@@ -23,12 +23,12 @@ See: .planning/PROJECT.md (updated 2026-02-23)
 ## Current Position
 
 Milestone: v1.1 Bug Fixes
-Phase: 07-stabilize-pipeline-as-importable-function-with-debug-flag
-Current Plan: 2 of 2
-Status: Plan 07-02 complete (TDD GREEN — resolve_asp() implemented, all tests pass)
-Next: Phase 7 complete — v1.1 milestone done
+Phase: 08-refactor-architecture-and-streamline-pipeline
+Current Plan: 1 of 2
+Status: Plan 08-01 complete — pipeline.py created, __init__.py thinned, build/ moved to scripts/, 221 tests pass
+Next: Plan 08-02 — rename _input_lat/_input_lon parameters and further pipeline cleanup
 
-Progress: [====================] 100% v1.0 | Phase 7: [====================] 100%
+Progress: [====================] 100% v1.0 | Phase 8: [==========          ] 50%
 
 ## Performance Metrics
 
@@ -49,6 +49,7 @@ Progress: [====================] 100% v1.0 | Phase 7: [====================] 100
 | 5 | 1/1 | 10 min | 10 min |
 | 6 | 1/1 | 8 min | 8 min |
 | 7 | 2/2 | 6 min | 3 min |
+| 8 | 1/2 | 2 min | 2 min |
 
 ## Accumulated Context
 
@@ -94,12 +95,18 @@ Progress: [====================] 100% v1.0 | Phase 7: [====================] 100
 - ASPDebugResult has exactly 13 fields per CONTEXT.md — parking_lane_fraction not exposed
 - resolve_segment(x, y, ...) used instead of resolve(lat, lon) to avoid double coordinate conversion
 - soda_level=0 in debug result when sign_result is not SignRetrievalSuccess
+- [Phase 08]: resolve_asp() moved to pipeline.py; __init__.py is a 22-line thin re-export
+- [Phase 08]: ASPDebugResult gains from_resolution() and from_error() classmethods
+- [Phase 08]: Build tools moved from src/gps2asp/build/ to scripts/ at project root
 
 ### Roadmap Evolution
 
 - Phase 5 added: Bug Fixes and Tech Debt (surfaced 2026-02-27 E2E test)
 - Phase 6 added: Improve Confidence Scoring for NYC Street Widths (confidence=0.0 on 9.2ft centerline offset)
 - Phase 7 added: Pipeline Stabilization — importable function with debug flag
+- Phase 8 added: Refactor architecture and streamline pipeline
+- Phase 9 added: Rebuild the spatial index
+- Phase 10 added: Update documentation
 
 ### Quick Tasks Completed
 
@@ -114,6 +121,6 @@ Progress: [====================] 100% v1.0 | Phase 7: [====================] 100
 
 ## Session Continuity
 
-Last session: 2026-02-28
-Stopped at: Completed quick task 2 — DEFAULT_CONFIDENCE_THRESHOLD lowered to 0.33, all tests pass
+Last session: 2026-03-01
+Stopped at: Completed 08-01-PLAN.md — pipeline.py, thin __init__.py, scripts/, 221 tests pass
 Resume file: None
