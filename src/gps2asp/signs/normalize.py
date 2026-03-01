@@ -41,9 +41,14 @@ _DIRECTIONAL_EXPANSIONS: dict[str, str] = {
 def normalize_to_soda(cscl_name: str) -> str:
     """Convert CSCL street name format to SODA parking signs format.
 
-    Applies directional prefix expansion first (only when followed by
-    a digit, to avoid false positives like "ESSEX" -> "EASTSSEX"),
-    then suffix expansion.
+    Expansion order:
+    1. Directional prefix: "E/W/N/S " followed by any non-empty continuation.
+       The "abbrev + space" guard prevents false positives like ESSEX (no
+       space after E) and NORTHERN (starts with "N" not "N ").
+    2. Suffix abbreviation: last word matched against _SUFFIX_EXPANSIONS.
+    3. Directional suffix: last word matched against _DIRECTIONAL_EXPANSIONS,
+       e.g., "CENTRAL PARK W" -> "CENTRAL PARK WEST". Must run after step 2
+       so "W END AVE" becomes "WEST END AVENUE", not "WEST END AVE".
 
     Args:
         cscl_name: Street name in CSCL format (e.g., "3 AVE").
@@ -60,27 +65,43 @@ def normalize_to_soda(cscl_name: str) -> str:
         'PROSPECT PLACE'
         >>> normalize_to_soda("ESSEX ST")
         'ESSEX STREET'
+        >>> normalize_to_soda("W BROADWAY")
+        'WEST BROADWAY'
+        >>> normalize_to_soda("CENTRAL PARK W")
+        'CENTRAL PARK WEST'
+        >>> normalize_to_soda("W END AVE")
+        'WEST END AVENUE'
     """
     name = cscl_name.upper().strip()
 
-    # Expand directional prefix: only if the character after the
-    # abbreviation + space is a digit (e.g., "E 100 ST" but NOT "ESSEX ST")
+    # Step 1: Expand directional prefix.
+    # The "abbrev + space" guard ensures "ESSEX" (no space after E) and
+    # "NORTHERN" (starts with "N" not "N ") are never candidates.
     for abbrev, full in _DIRECTIONAL_EXPANSIONS.items():
         prefix = abbrev + " "
         if name.startswith(prefix):
             rest = name[len(prefix):]
-            # Check if the next non-space character is a digit
             stripped_rest = rest.lstrip()
-            if stripped_rest and stripped_rest[0].isdigit():
+            if stripped_rest:
                 name = full + " " + rest
                 break
 
-    # Expand suffix abbreviation: match the last word against known suffixes
+    # Step 2: Expand suffix abbreviation: match the last word against known
+    # suffixes (e.g., "W END AVE" -> "WEST END AVENUE").
     parts = name.rsplit(maxsplit=1)
     if len(parts) == 2:
         prefix_part, suffix_part = parts
         if suffix_part in _SUFFIX_EXPANSIONS:
             name = prefix_part + " " + _SUFFIX_EXPANSIONS[suffix_part]
+
+    # Step 3: Expand directional suffix: last word as standalone directional
+    # token (e.g., "CENTRAL PARK W" -> "CENTRAL PARK WEST").
+    # Must run after step 2 so suffix abbreviations are already expanded.
+    parts = name.rsplit(maxsplit=1)
+    if len(parts) == 2:
+        prefix_part, last_word = parts
+        if last_word in _DIRECTIONAL_EXPANSIONS:
+            name = prefix_part + " " + _DIRECTIONAL_EXPANSIONS[last_word]
 
     return name
 

@@ -85,6 +85,45 @@ class TestNormalizeToSoda:
     def test_mixed_case_input(self) -> None:
         assert normalize_to_soda("Court St") == "COURT STREET"
 
+    # Named directional prefix cases (prefix + named street, not prefix + digit)
+    def test_named_directional_prefix_w_broadway(self) -> None:
+        """W BROADWAY should become WEST BROADWAY."""
+        assert normalize_to_soda("W BROADWAY") == "WEST BROADWAY"
+
+    def test_named_directional_prefix_e_broadway(self) -> None:
+        """E BROADWAY should become EAST BROADWAY."""
+        assert normalize_to_soda("E BROADWAY") == "EAST BROADWAY"
+
+    def test_named_directional_prefix_n_henry_st(self) -> None:
+        """N HENRY ST should become NORTH HENRY STREET."""
+        assert normalize_to_soda("N HENRY ST") == "NORTH HENRY STREET"
+
+    def test_named_directional_prefix_s_elliott_pl(self) -> None:
+        """S ELLIOTT PL should become SOUTH ELLIOTT PLACE."""
+        assert normalize_to_soda("S ELLIOTT PL") == "SOUTH ELLIOTT PLACE"
+
+    def test_named_directional_prefix_w_end_ave(self) -> None:
+        """W END AVE should become WEST END AVENUE."""
+        assert normalize_to_soda("W END AVE") == "WEST END AVENUE"
+
+    # Named directional suffix cases (street name + directional suffix)
+    def test_named_directional_suffix_central_park_w(self) -> None:
+        """CENTRAL PARK W should become CENTRAL PARK WEST."""
+        assert normalize_to_soda("CENTRAL PARK W") == "CENTRAL PARK WEST"
+
+    def test_named_directional_suffix_central_park_s(self) -> None:
+        """CENTRAL PARK S should become CENTRAL PARK SOUTH."""
+        assert normalize_to_soda("CENTRAL PARK S") == "CENTRAL PARK SOUTH"
+
+    # No false positives for words that begin with directional letters
+    def test_no_false_positive_northern_blvd(self) -> None:
+        """NORTHERN BLVD should NOT expand N prefix."""
+        assert normalize_to_soda("NORTHERN BLVD") == "NORTHERN BOULEVARD"
+
+    def test_no_false_positive_western_ave(self) -> None:
+        """WESTERN AVE should NOT expand W prefix."""
+        assert normalize_to_soda("WESTERN AVE") == "WESTERN AVENUE"
+
 
 # ── name_variants ────────────────────────────────────────────────────
 
