@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from gps2asp import resolve, convert, resolve_segment
+from gps2asp.resolver import resolve, convert, resolve_segment
 from gps2asp.resolver.exceptions import AmbiguousResolutionError
 from gps2asp.resolver.models import ResolutionResult
 

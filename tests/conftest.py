@@ -35,7 +35,7 @@ def spatial_index_dir():
     if not _index_exists():
         pytest.skip(
             "Spatial index not built. "
-            "Run: python -m gps2asp.build.build_index"
+            "Run: python scripts/build_index.py"
         )
     return str(INDEX_DIR)
 

@@ -6,8 +6,8 @@ streets and has_asp flags, and builds a persistent R-tree index for
 sub-millisecond nearest-neighbor queries at runtime.
 
 Usage:
-    python -m gps2asp.build.build_index
-    python -m gps2asp.build.build_index --output-dir /path/to/index
+    python scripts/build_index.py
+    python scripts/build_index.py --output-dir /path/to/index
 
 Produces:
     - segments.idx + segments.dat  (R-tree index files)

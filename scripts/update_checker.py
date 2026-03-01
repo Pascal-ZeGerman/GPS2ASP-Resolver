@@ -5,8 +5,8 @@ was last updated, compares it to the local build timestamp, and reports
 whether an update is available.
 
 Usage:
-    python -m gps2asp.build.update_checker
-    python -m gps2asp.build.update_checker --build-info /path/to/build_info.json
+    python scripts/update_checker.py
+    python scripts/update_checker.py --build-info /path/to/build_info.json
 """
 
 from __future__ import annotations

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from gps2asp import resolve, convert, resolve_segment
+from gps2asp.resolver import resolve, convert, resolve_segment
 from gps2asp.resolver.exceptions import (
     AmbiguousResolutionError,
     NoSegmentFoundError,

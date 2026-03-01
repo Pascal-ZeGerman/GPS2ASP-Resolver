@@ -115,10 +115,10 @@ async def test_resolve_asp_returns_asp_result_by_default() -> None:
     schedule = _make_schedule_found()
 
     with (
-        patch("gps2asp.convert", return_value=(987654.0, 178432.0)),
-        patch("gps2asp.resolve_segment", new_callable=AsyncMock, return_value=resolution),
-        patch("gps2asp.retrieve_signs", new_callable=AsyncMock, return_value=signs),
-        patch("gps2asp.compute_schedule", return_value=schedule),
+        patch("gps2asp.pipeline.convert", return_value=(987654.0, 178432.0)),
+        patch("gps2asp.pipeline.resolve_segment", new_callable=AsyncMock, return_value=resolution),
+        patch("gps2asp.pipeline.retrieve_signs", new_callable=AsyncMock, return_value=signs),
+        patch("gps2asp.pipeline.compute_schedule", return_value=schedule),
     ):
         result = await resolve_asp(40.677629, -73.968527)
 
@@ -137,10 +137,10 @@ async def test_resolve_asp_debug_true_returns_asp_debug_result() -> None:
     schedule = _make_schedule_found()
 
     with (
-        patch("gps2asp.convert", return_value=(987654.0, 178432.0)),
-        patch("gps2asp.resolve_segment", new_callable=AsyncMock, return_value=resolution),
-        patch("gps2asp.retrieve_signs", new_callable=AsyncMock, return_value=signs),
-        patch("gps2asp.compute_schedule", return_value=schedule),
+        patch("gps2asp.pipeline.convert", return_value=(987654.0, 178432.0)),
+        patch("gps2asp.pipeline.resolve_segment", new_callable=AsyncMock, return_value=resolution),
+        patch("gps2asp.pipeline.retrieve_signs", new_callable=AsyncMock, return_value=signs),
+        patch("gps2asp.pipeline.compute_schedule", return_value=schedule),
     ):
         result = await resolve_asp(40.677629, -73.968527, debug=True)
 
@@ -168,8 +168,8 @@ async def test_ambiguous_resolution_error_caught_returns_asp_result() -> None:
     )
 
     with (
-        patch("gps2asp.convert", return_value=(987654.0, 178432.0)),
-        patch("gps2asp.resolve_segment", new_callable=AsyncMock, side_effect=err),
+        patch("gps2asp.pipeline.convert", return_value=(987654.0, 178432.0)),
+        patch("gps2asp.pipeline.resolve_segment", new_callable=AsyncMock, side_effect=err),
     ):
         result = await resolve_asp(40.677629, -73.968527)
 
@@ -195,8 +195,8 @@ async def test_ambiguous_resolution_error_caught_debug_true() -> None:
     )
 
     with (
-        patch("gps2asp.convert", return_value=(987654.0, 178432.0)),
-        patch("gps2asp.resolve_segment", new_callable=AsyncMock, side_effect=err),
+        patch("gps2asp.pipeline.convert", return_value=(987654.0, 178432.0)),
+        patch("gps2asp.pipeline.resolve_segment", new_callable=AsyncMock, side_effect=err),
     ):
         result = await resolve_asp(40.677629, -73.968527, debug=True)
 
@@ -215,7 +215,7 @@ async def test_ambiguous_resolution_error_caught_debug_true() -> None:
 async def test_outside_nyc_error_propagates() -> None:
     """OutsideNYCError is NOT caught by resolve_asp() — it propagates to the caller."""
     with (
-        patch("gps2asp.convert", side_effect=OutsideNYCError(0.0, 0.0)),
+        patch("gps2asp.pipeline.convert", side_effect=OutsideNYCError(0.0, 0.0)),
     ):
         with pytest.raises(OutsideNYCError):
             await resolve_asp(0.0, 0.0)
@@ -233,10 +233,10 @@ async def test_successful_pipeline_asp_result_fields() -> None:
     schedule = _make_schedule_found()
 
     with (
-        patch("gps2asp.convert", return_value=(987654.0, 178432.0)),
-        patch("gps2asp.resolve_segment", new_callable=AsyncMock, return_value=resolution),
-        patch("gps2asp.retrieve_signs", new_callable=AsyncMock, return_value=signs),
-        patch("gps2asp.compute_schedule", return_value=schedule),
+        patch("gps2asp.pipeline.convert", return_value=(987654.0, 178432.0)),
+        patch("gps2asp.pipeline.resolve_segment", new_callable=AsyncMock, return_value=resolution),
+        patch("gps2asp.pipeline.retrieve_signs", new_callable=AsyncMock, return_value=signs),
+        patch("gps2asp.pipeline.compute_schedule", return_value=schedule),
     ):
         result = await resolve_asp(40.677629, -73.968527)
 
@@ -259,10 +259,10 @@ async def test_successful_pipeline_debug_result_fields() -> None:
     sp_x, sp_y = 987654.0, 178432.0
 
     with (
-        patch("gps2asp.convert", return_value=(sp_x, sp_y)),
-        patch("gps2asp.resolve_segment", new_callable=AsyncMock, return_value=resolution),
-        patch("gps2asp.retrieve_signs", new_callable=AsyncMock, return_value=signs),
-        patch("gps2asp.compute_schedule", return_value=schedule),
+        patch("gps2asp.pipeline.convert", return_value=(sp_x, sp_y)),
+        patch("gps2asp.pipeline.resolve_segment", new_callable=AsyncMock, return_value=resolution),
+        patch("gps2asp.pipeline.retrieve_signs", new_callable=AsyncMock, return_value=signs),
+        patch("gps2asp.pipeline.compute_schedule", return_value=schedule),
     ):
         result = await resolve_asp(40.677629, -73.968527, debug=True)
 
@@ -297,10 +297,10 @@ async def test_soda_level_zero_for_no_match_found() -> None:
     no_match_schedule = NoMatchSchedule()
 
     with (
-        patch("gps2asp.convert", return_value=(987654.0, 178432.0)),
-        patch("gps2asp.resolve_segment", new_callable=AsyncMock, return_value=resolution),
-        patch("gps2asp.retrieve_signs", new_callable=AsyncMock, return_value=no_match),
-        patch("gps2asp.compute_schedule", return_value=no_match_schedule),
+        patch("gps2asp.pipeline.convert", return_value=(987654.0, 178432.0)),
+        patch("gps2asp.pipeline.resolve_segment", new_callable=AsyncMock, return_value=resolution),
+        patch("gps2asp.pipeline.retrieve_signs", new_callable=AsyncMock, return_value=no_match),
+        patch("gps2asp.pipeline.compute_schedule", return_value=no_match_schedule),
     ):
         result = await resolve_asp(40.677629, -73.968527, debug=True)
 
