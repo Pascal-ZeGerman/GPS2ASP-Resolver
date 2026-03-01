@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
 status: unknown
-last_updated: "2026-03-01T14:43:43.273Z"
+last_updated: "2026-03-01T15:01:50.785Z"
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 7
-  completed_plans: 5
+  completed_plans: 7
 ---
 
 # Project State
@@ -24,8 +24,8 @@ See: .planning/PROJECT.md (updated 2026-02-23)
 
 Milestone: v1.1 Bug Fixes
 Phase: 08-refactor-architecture-and-streamline-pipeline
-Current Plan: 2 of 2
-Status: Plan 08-02 complete — compute_confidence simplified, _input_lat renamed, blockfaceid removed, _try_query extracted, 221 tests pass
+Current Plan: 3 of 3
+Status: Plan 08-03 complete — assert replaced with TypeError, magic numbers named, SpatialIndex annotated, cross_streets_match clarified, 221 tests pass
 Next: Phase 9 (Rebuild spatial index) or Phase 10 (Update documentation)
 
 Progress: [====================] 100% v1.0 | Phase 8: [====================] 100%
@@ -49,7 +49,7 @@ Progress: [====================] 100% v1.0 | Phase 8: [====================] 100
 | 5 | 1/1 | 10 min | 10 min |
 | 6 | 1/1 | 8 min | 8 min |
 | 7 | 2/2 | 6 min | 3 min |
-| 8 | 2/2 | 10 min | 5 min |
+| 8 | 3/3 | 14 min | 5 min |
 
 ## Accumulated Context
 
@@ -101,6 +101,9 @@ Progress: [====================] 100% v1.0 | Phase 8: [====================] 100
 - [Phase 08-02]: compute_confidence() accepts effective_width_ft (pre-resolved by caller, no rw_type param)
 - [Phase 08-02]: _try_query() accepts optional prefetched_records for Level 3 broad-query+client-filter pattern
 - [Phase 08-02]: resolve_segment() params renamed input_lat/input_lon (removed underscore prefix)
+- [Phase 08-03]: Per-file named constants for magic numbers (not shared constants.py) — keeps modules independently testable and self-contained
+- [Phase 08-03]: _NEAR_INTERSECTION_THRESHOLD_FT duplicated in resolver/__init__.py and confidence.py with comment noting they must match — acceptable for two-file duplication
+- [Phase 08-03]: Double normalization in _cross_streets_match() retained as-is — clarified by comments, no behavior change needed
 
 ### Roadmap Evolution
 
@@ -125,5 +128,5 @@ Progress: [====================] 100% v1.0 | Phase 8: [====================] 100
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 08-02-PLAN.md — compute_confidence simplified (effective_width_ft), _input_lat renamed, blockfaceid fields removed, _try_query extracted, 221 tests pass
+Stopped at: Completed 08-03-PLAN.md — assert replaced with TypeError, magic numbers named as constants, SpatialIndex dict[str,Any] annotated, _cross_streets_match clarified, all 221 tests pass. Phase 8 complete.
 Resume file: None

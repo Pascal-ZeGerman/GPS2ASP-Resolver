@@ -77,7 +77,7 @@ Plans:
 **Goal:** Clean up API surface, module layout, and code quality — move `resolve_asp()` to `pipeline.py`, thin `__init__.py`, relocate build tools to `scripts/`, and address all 22 identified rough edges
 **Requirements**: Internal code quality and architecture improvement (no new capabilities)
 **Depends on:** Phase 7
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [ ] 08-01-PLAN.md — API surface + module layout: create `pipeline.py`, thin `__init__.py`, move `build/` to `scripts/`, add `ASPDebugResult` factory classmethods, update test imports
