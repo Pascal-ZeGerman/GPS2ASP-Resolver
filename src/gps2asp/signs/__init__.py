@@ -85,10 +85,12 @@ def _cross_streets_match(
     Returns:
         True if cross streets match in either direction.
     """
+    # Normalize the raw SODA record fields (lowercase, strip, no punctuation)
     record_from = _normalize_street(record.get("from_street", ""))
     record_to = _normalize_street(record.get("to_street", ""))
 
-    # Normalize expected cross streets using all variants
+    # Generate all known variants of the CSCL cross-street names for matching
+    # (name_variants expands abbreviations like AVE→AVENUE, PL→PLACE, etc.)
     from_variants = {v.upper().strip() for v in name_variants(from_street)}
     to_variants = {v.upper().strip() for v in name_variants(to_street)}
 
@@ -296,7 +298,8 @@ async def retrieve_signs(
                         len(result.signs),
                     )
                     return result
-                # filtered had records but dedup yielded no signs; treat as any_soda_results
+                # filtered had records but dedup yielded no signs
+                # treat as any_soda_results (no ASP signs on this block)
 
     # ------------------------------------------------------------------
     # All three levels exhausted
