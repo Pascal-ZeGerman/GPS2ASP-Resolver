@@ -122,7 +122,7 @@ def compute_confidence(
     offset_ratio = perp_distance_ft / half_width
     distance_conf = min(1.0, offset_ratio)
 
-    # Intersection proximity factor: scales from 0 at _NEAR_INTERSECTION_THRESHOLD_FT to 1.0 at 100ft
+    # Intersection proximity factor: scales from 0.3 at _NEAR_INTERSECTION_THRESHOLD_FT (30ft) to 1.0 at 100ft
     intersection_conf = min(1.0, distance_to_nearest_intersection_ft / 100.0)
 
     return distance_conf * intersection_conf

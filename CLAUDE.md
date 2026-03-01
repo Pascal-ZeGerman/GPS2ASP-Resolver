@@ -7,7 +7,7 @@ GPS → State Plane → street segment/side → SODA API signs → parsed schedu
 
 - `src/gps2asp/` — main package
   - `resolver/` — GPS-to-street resolution (Phase 1, complete)
-  - `build/` — offline build scripts (CSCL download, R-tree index)
+- `scripts/` — offline build scripts at project root (CSCL download, R-tree index)
 - `tests/` — pytest tests
 - `.planning/` — GSD workflow (roadmap, phases, plans)
 

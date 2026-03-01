@@ -1,5 +1,7 @@
 """Tests for confidence scoring."""
 
+from __future__ import annotations
+
 import pytest
 
 from gps2asp.resolver.confidence import (

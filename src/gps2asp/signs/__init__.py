@@ -85,7 +85,7 @@ def _cross_streets_match(
     Returns:
         True if cross streets match in either direction.
     """
-    # Normalize the raw SODA record fields (lowercase, strip, no punctuation)
+    # Normalize the raw SODA record fields (uppercase, strip, expand abbreviations)
     record_from = _normalize_street(record.get("from_street", ""))
     record_to = _normalize_street(record.get("to_street", ""))
 
