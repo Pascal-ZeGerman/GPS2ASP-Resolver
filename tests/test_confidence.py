@@ -21,7 +21,7 @@ class TestComputeConfidence:
         """
         result = compute_confidence(
             perp_distance_ft=5.0,
-            street_width_ft=30.0,
+            effective_width_ft=30.0,
             distance_to_nearest_intersection_ft=200.0,
         )
         assert result > 0.0
@@ -32,7 +32,7 @@ class TestComputeConfidence:
         At intersection, block face is ambiguous."""
         result = compute_confidence(
             perp_distance_ft=15.0,
-            street_width_ft=30.0,
+            effective_width_ft=30.0,
             distance_to_nearest_intersection_ft=20.0,
         )
         assert result == 0.0
@@ -44,7 +44,7 @@ class TestComputeConfidence:
         confidence = 1.0 * 1.0 = 1.0"""
         result = compute_confidence(
             perp_distance_ft=18.0,
-            street_width_ft=30.0,
+            effective_width_ft=30.0,
             distance_to_nearest_intersection_ft=200.0,
         )
         assert result > 0.8
@@ -56,7 +56,7 @@ class TestComputeConfidence:
         confidence = 0.8 * 0.8 = 0.64"""
         result = compute_confidence(
             perp_distance_ft=12.0,
-            street_width_ft=30.0,
+            effective_width_ft=30.0,
             distance_to_nearest_intersection_ft=80.0,
         )
         assert 0.4 < result < 0.8
@@ -70,7 +70,7 @@ class TestComputeConfidence:
         """
         result = compute_confidence(
             perp_distance_ft=10.0,
-            street_width_ft=30.0,
+            effective_width_ft=30.0,
             distance_to_nearest_intersection_ft=200.0,
         )
         # 10ft on 30ft street is confidently in the parking lane (above 0.6 threshold)
@@ -81,21 +81,23 @@ class TestComputeConfidence:
         The threshold is < 30, so 30ft exactly should NOT be zero."""
         result = compute_confidence(
             perp_distance_ft=15.0,
-            street_width_ft=30.0,
+            effective_width_ft=30.0,
             distance_to_nearest_intersection_ft=30.0,
         )
         # 30ft is not < 30ft, so this should NOT be 0.0
         assert result > 0.0
 
-    def test_zero_street_width(self):
-        """Edge case: zero street width triggers rw_type fallback (rw_type defaults to 1 -> 30ft).
+    def test_zero_street_width_uses_fallback(self):
+        """Edge case: zero street width — caller resolves via resolve_effective_width first.
 
-        With rw_type=1 fallback: effective_width=30ft, half_width=15ft, threshold=4.95ft.
+        resolve_effective_width(0.0, rw_type=1) -> 30ft fallback.
+        With effective_width=30ft: half_width=15ft, threshold=4.95ft.
         15ft > 4.95ft -> passes guard. offset_ratio = 15/15 = 1.0 -> confidence=1.0.
         """
+        effective_width = resolve_effective_width(0.0, rw_type=1)
         result = compute_confidence(
             perp_distance_ft=15.0,
-            street_width_ft=0.0,
+            effective_width_ft=effective_width,
             distance_to_nearest_intersection_ft=200.0,
         )
         # 15/15 = 1.0 offset, 200/100 = 2.0 capped to 1.0 -> 1.0
@@ -127,7 +129,7 @@ class TestComputeConfidence:
         """
         result = compute_confidence(
             perp_distance_ft=3.0,
-            street_width_ft=30.0,
+            effective_width_ft=30.0,
             distance_to_nearest_intersection_ft=200.0,
         )
         assert result == 0.0
@@ -141,9 +143,8 @@ class TestComputeConfidence:
         """
         result = compute_confidence(
             perp_distance_ft=9.2,
-            street_width_ft=30.0,
+            effective_width_ft=30.0,
             distance_to_nearest_intersection_ft=200.0,
-            rw_type=1,
             parking_lane_fraction=0.33,
         )
         assert result >= DEFAULT_CONFIDENCE_THRESHOLD, (
@@ -154,19 +155,18 @@ class TestComputeConfidence:
     def test_nan_streetwidth_uses_rw_type_fallback(self):
         """NaN streetwidth falls back to _NYC_DEFAULT_WIDTHS[rw_type=1] = 30ft.
 
-        Result should match compute_confidence with explicit width=30.0.
+        resolve_effective_width resolves the fallback; result matches explicit 30ft.
         """
+        width_from_nan = resolve_effective_width(float('nan'), rw_type=1)
         result_nan = compute_confidence(
             perp_distance_ft=9.2,
-            street_width_ft=float('nan'),
+            effective_width_ft=width_from_nan,
             distance_to_nearest_intersection_ft=200.0,
-            rw_type=1,
         )
         result_explicit = compute_confidence(
             perp_distance_ft=9.2,
-            street_width_ft=30.0,
+            effective_width_ft=30.0,
             distance_to_nearest_intersection_ft=200.0,
-            rw_type=1,
         )
         assert result_nan == result_explicit
 
@@ -176,11 +176,11 @@ class TestComputeConfidence:
         threshold = 60*0.33/2 = 9.9ft; 20ft > 9.9ft -> passes guard
         half_width = 30ft; offset_ratio = 20/30 = 0.667; confidence ~= 0.667
         """
+        effective_width = resolve_effective_width(0.0, rw_type=2)
         result = compute_confidence(
             perp_distance_ft=20.0,
-            street_width_ft=0.0,
+            effective_width_ft=effective_width,
             distance_to_nearest_intersection_ft=200.0,
-            rw_type=2,
         )
         assert result > 0.6
 
@@ -192,13 +192,13 @@ class TestComputeConfidence:
         """
         result_passes = compute_confidence(
             perp_distance_ft=9.2,
-            street_width_ft=30.0,
+            effective_width_ft=30.0,
             distance_to_nearest_intersection_ft=200.0,
             parking_lane_fraction=0.5,
         )
         result_zero = compute_confidence(
             perp_distance_ft=9.2,
-            street_width_ft=30.0,
+            effective_width_ft=30.0,
             distance_to_nearest_intersection_ft=200.0,
             parking_lane_fraction=0.7,
         )
