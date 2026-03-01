@@ -24,11 +24,11 @@ See: .planning/PROJECT.md (updated 2026-02-23)
 
 Milestone: v1.1 Bug Fixes
 Phase: 08-refactor-architecture-and-streamline-pipeline
-Current Plan: 1 of 2
-Status: Plan 08-01 complete — pipeline.py created, __init__.py thinned, build/ moved to scripts/, 221 tests pass
-Next: Plan 08-02 — rename _input_lat/_input_lon parameters and further pipeline cleanup
+Current Plan: 2 of 2
+Status: Plan 08-02 complete — compute_confidence simplified, _input_lat renamed, blockfaceid removed, _try_query extracted, 221 tests pass
+Next: Phase 9 (Rebuild spatial index) or Phase 10 (Update documentation)
 
-Progress: [====================] 100% v1.0 | Phase 8: [==========          ] 50%
+Progress: [====================] 100% v1.0 | Phase 8: [====================] 100%
 
 ## Performance Metrics
 
@@ -49,7 +49,7 @@ Progress: [====================] 100% v1.0 | Phase 8: [==========          ] 50%
 | 5 | 1/1 | 10 min | 10 min |
 | 6 | 1/1 | 8 min | 8 min |
 | 7 | 2/2 | 6 min | 3 min |
-| 8 | 1/2 | 2 min | 2 min |
+| 8 | 2/2 | 10 min | 5 min |
 
 ## Accumulated Context
 
@@ -98,6 +98,9 @@ Progress: [====================] 100% v1.0 | Phase 8: [==========          ] 50%
 - [Phase 08]: resolve_asp() moved to pipeline.py; __init__.py is a 22-line thin re-export
 - [Phase 08]: ASPDebugResult gains from_resolution() and from_error() classmethods
 - [Phase 08]: Build tools moved from src/gps2asp/build/ to scripts/ at project root
+- [Phase 08-02]: compute_confidence() accepts effective_width_ft (pre-resolved by caller, no rw_type param)
+- [Phase 08-02]: _try_query() accepts optional prefetched_records for Level 3 broad-query+client-filter pattern
+- [Phase 08-02]: resolve_segment() params renamed input_lat/input_lon (removed underscore prefix)
 
 ### Roadmap Evolution
 
@@ -122,5 +125,5 @@ Progress: [====================] 100% v1.0 | Phase 8: [==========          ] 50%
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 08-01-PLAN.md — pipeline.py, thin __init__.py, scripts/, 221 tests pass
+Stopped at: Completed 08-02-PLAN.md — compute_confidence simplified (effective_width_ft), _input_lat renamed, blockfaceid fields removed, _try_query extracted, 221 tests pass
 Resume file: None
