@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from rtree import index as rtree_index
 from shapely import wkt
@@ -38,9 +38,11 @@ class SpatialIndex:
     3. Default: src/gps2asp/data/index/ relative to package
     """
 
-    _instance: ClassVar[SpatialIndex | None] = None
+    _instance: ClassVar[SpatialIndex | None] = None  # singleton; cleared by reset()
+
+    # Instance vars — assigned in __init__ and _load()
     _index: rtree_index.Index | None
-    _segments: dict | None
+    _segments: dict[str, Any] | None
     _index_dir: Path
 
     def __init__(self, index_dir: str | None = None) -> None:
@@ -135,7 +137,9 @@ class SpatialIndex:
             NoSegmentFoundError: If no segments are within max_distance_ft.
         """
         if self._index is None or self._segments is None:
-            raise RuntimeError("SpatialIndex not loaded. Call await SpatialIndex.get() first.")
+            raise RuntimeError(
+                "SpatialIndex not loaded. Call await SpatialIndex.get() first."
+            )
 
         # Query R-tree for nearest candidates by bounding box
         candidate_ids = list(self._index.nearest((x, y, x, y), n))

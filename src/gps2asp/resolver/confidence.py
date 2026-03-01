@@ -27,6 +27,9 @@ from __future__ import annotations
 import logging
 import math
 
+# Named constant for intersection proximity threshold (must match resolver/__init__.py)
+_NEAR_INTERSECTION_THRESHOLD_FT: float = 30.0  # ~10m: block-face ambiguity zone
+
 # Default confidence threshold: 0.33 (lowered for testing — permits PROSPECT PL score of 0.57)
 # Rationale: GPS accuracy ~10-16ft, half street width ~15-20ft.
 # An offset_ratio > 0.5 means the point is clearly off-center.
@@ -111,7 +114,7 @@ def compute_confidence(
         return 0.0
 
     # Near intersection: within ~10m = ~30ft, block face is ambiguous
-    if distance_to_nearest_intersection_ft < 30.0:
+    if distance_to_nearest_intersection_ft < _NEAR_INTERSECTION_THRESHOLD_FT:
         return 0.0
 
     # Distance-based confidence: how far off-center as fraction of half-width
@@ -119,7 +122,7 @@ def compute_confidence(
     offset_ratio = perp_distance_ft / half_width
     distance_conf = min(1.0, offset_ratio)
 
-    # Intersection proximity factor: scales from 0 at 30ft to 1.0 at 100ft
+    # Intersection proximity factor: scales from 0 at _NEAR_INTERSECTION_THRESHOLD_FT to 1.0 at 100ft
     intersection_conf = min(1.0, distance_to_nearest_intersection_ft / 100.0)
 
     return distance_conf * intersection_conf

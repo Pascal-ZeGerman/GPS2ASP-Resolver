@@ -101,7 +101,11 @@ def compute_schedule(
         return NoMatchSchedule(status="no_match")
 
     # SignRetrievalSuccess: parse each sign.
-    assert isinstance(sign_result, SignRetrievalSuccess)
+    # Use explicit TypeError rather than assert (assert can be stripped by -O).
+    if not isinstance(sign_result, SignRetrievalSuccess):
+        raise TypeError(
+            f"Expected SignRetrievalSuccess, got {type(sign_result).__name__}"
+        )
 
     all_windows: list[TimeWindow] = []
     parse_failures: list[ParseFailure] = []
