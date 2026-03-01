@@ -86,3 +86,54 @@ class ASPDebugResult:
     state_plane_x: float
     state_plane_y: float
     soda_level: int
+
+    @classmethod
+    def from_resolution(
+        cls,
+        resolution: ResolutionResult,
+        sign_result: SignRetrievalResult,
+        schedule: ScheduleResult,
+        state_plane_x: float,
+        state_plane_y: float,
+        soda_level: int,
+    ) -> ASPDebugResult:
+        """Build ASPDebugResult for the successful pipeline resolution path."""
+        return cls(
+            schedule=schedule,
+            resolution_failed=False,
+            resolution_error=None,
+            on_street=resolution.on_street,
+            from_street=resolution.from_street,
+            to_street=resolution.to_street,
+            side_of_street=resolution.side_of_street,
+            resolution=resolution,
+            sign_result=sign_result,
+            confidence=resolution.confidence,
+            state_plane_x=state_plane_x,
+            state_plane_y=state_plane_y,
+            soda_level=soda_level,
+        )
+
+    @classmethod
+    def from_error(
+        cls,
+        error: str,
+        state_plane_x: float,
+        state_plane_y: float,
+    ) -> ASPDebugResult:
+        """Build ASPDebugResult when AmbiguousResolutionError is caught."""
+        return cls(
+            schedule=None,
+            resolution_failed=True,
+            resolution_error=error,
+            on_street=None,
+            from_street=None,
+            to_street=None,
+            side_of_street=None,
+            resolution=None,
+            sign_result=None,
+            confidence=0.0,
+            state_plane_x=state_plane_x,
+            state_plane_y=state_plane_y,
+            soda_level=0,
+        )
