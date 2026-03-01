@@ -43,8 +43,6 @@ class SegmentCandidate:
         nominaldir: Nominal compass direction of the segment.
         rw_type: Road type (1=Street, 2=Highway, etc.).
         streetwidth: Paved width in feet.
-        l_blockfaceid: Block face ID for the left side (relative to digitized direction).
-        r_blockfaceid: Block face ID for the right side (relative to digitized direction).
         borocode: Borough code (1=Manhattan, 2=Bronx, 3=Brooklyn, 4=Queens, 5=Staten Island).
         distance_ft: Distance from the query point to the segment centerline in feet.
     """
@@ -58,8 +56,6 @@ class SegmentCandidate:
     nominaldir: str
     rw_type: int
     streetwidth: float
-    l_blockfaceid: str
-    r_blockfaceid: str
     borocode: str
     has_asp_left: bool
     has_asp_right: bool

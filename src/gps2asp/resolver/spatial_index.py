@@ -163,8 +163,6 @@ class SpatialIndex:
                         nominaldir=seg_data.get("nominaldir", ""),
                         rw_type=int(seg_data.get("rw_type", 0)),
                         streetwidth=float(seg_data.get("streetwidth", 30.0)),
-                        l_blockfaceid=seg_data.get("l_blockfaceid", ""),
-                        r_blockfaceid=seg_data.get("r_blockfaceid", ""),
                         borocode=seg_data.get("borocode", ""),
                         has_asp_left=bool(seg_data.get("has_asp_left", False)),
                         has_asp_right=bool(seg_data.get("has_asp_right", False)),

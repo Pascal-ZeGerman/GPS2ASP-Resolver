@@ -64,7 +64,7 @@ async def resolve_asp(
 
     # Stage 1: GPS -> street segment + side
     try:
-        resolution = await resolve_segment(x, y, _input_lat=lat, _input_lon=lon)
+        resolution = await resolve_segment(x, y, input_lat=lat, input_lon=lon)
     except AmbiguousResolutionError as err:
         if debug:
             return ASPDebugResult.from_error(str(err), x, y)

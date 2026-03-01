@@ -103,6 +103,62 @@ def _cross_streets_match(
     return False
 
 
+async def _try_query(
+    client: SODAClient,
+    on_var: str,
+    from_var: str,
+    to_var: str,
+    side_of_street: str,
+    on_street: str,
+    from_street: str,
+    to_street: str,
+    soda_level: int,
+    prefetched_records: list[dict] | None = None,
+) -> SignRetrievalSuccess | None:
+    """Attempt one SODA query level. Returns SignRetrievalSuccess or None.
+
+    Deduplicates sign descriptions from records and returns a success result
+    or None if no matching signs were found. If prefetched_records is provided,
+    those records are used directly (skipping the network query). This supports
+    Level 3's broad-fetch-then-filter pattern.
+
+    Args:
+        client: SODAClient instance to use for the query.
+        on_var: on_street name variant for the SODA block query.
+        from_var: from_street name variant for the SODA block query.
+        to_var: to_street name variant for the SODA block query.
+        side_of_street: Compass direction side (N, S, E, or W).
+        on_street: Canonical on_street name (used in result, not in query).
+        from_street: Canonical from_street name (used in result, not in query).
+        to_street: Canonical to_street name (used in result, not in query).
+        soda_level: Fallback level number (1, 2, or 3) for the result.
+        prefetched_records: If provided, use these records instead of fetching.
+            Used by Level 3 to pass pre-filtered broad-query results.
+
+    Returns:
+        SignRetrievalSuccess if matching signs found, None otherwise.
+    """
+    if prefetched_records is not None:
+        records = prefetched_records
+    else:
+        query = client.build_block_query(on_var, from_var, to_var, side_of_street)
+        records = await client.fetch_signs(query)
+    if not records:
+        return None
+    signs = _deduplicate(records)
+    if not signs:
+        return None
+    return SignRetrievalSuccess(
+        status="signs_found",
+        signs=signs,
+        on_street=on_street,
+        from_street=from_street,
+        to_street=to_street,
+        side_of_street=side_of_street,
+        soda_level=soda_level,
+    )
+
+
 async def retrieve_signs(
     on_street: str,
     from_street: str,
@@ -150,32 +206,22 @@ async def retrieve_signs(
         to_variants[0],
         side_of_street,
     )
-    query = client.build_block_query(
-        on_variants[0], from_variants[0], to_variants[0], side_of_street
+    result = await _try_query(
+        client,
+        on_variants[0], from_variants[0], to_variants[0], side_of_street,
+        on_street, from_street, to_street,
+        soda_level=1,
     )
-    records = await client.fetch_signs(query)
-    logger.debug("Level 1: received %d raw records", len(records))
-
-    if records:
+    if result is not None:
         any_soda_results = True
-        signs = _deduplicate(records)
-        if signs:
-            logger.info(
-                "Level 1 matched: on_street=%r, from=%r, to=%r (%d unique signs)",
-                on_variants[0],
-                from_variants[0],
-                to_variants[0],
-                len(signs),
-            )
-            return SignRetrievalSuccess(
-                status="signs_found",
-                signs=signs,
-                on_street=on_street,
-                from_street=from_street,
-                to_street=to_street,
-                side_of_street=side_of_street,
-                soda_level=1,
-            )
+        logger.info(
+            "Level 1 matched: on_street=%r, from=%r, to=%r (%d unique signs)",
+            on_variants[0],
+            from_variants[0],
+            to_variants[0],
+            len(result.signs),
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Level 2: Try remaining variant combinations (skip the first, which
@@ -192,30 +238,22 @@ async def retrieve_signs(
             from_var,
             to_var,
         )
-        query = client.build_block_query(on_var, from_var, to_var, side_of_street)
-        records = await client.fetch_signs(query)
-        logger.debug("Level 2: received %d raw records", len(records))
-
-        if records:
+        result = await _try_query(
+            client,
+            on_var, from_var, to_var, side_of_street,
+            on_street, from_street, to_street,
+            soda_level=2,
+        )
+        if result is not None:
             any_soda_results = True
-            signs = _deduplicate(records)
-            if signs:
-                logger.info(
-                    "Level 2 matched: on_street=%r, from=%r, to=%r (%d unique signs)",
-                    on_var,
-                    from_var,
-                    to_var,
-                    len(signs),
-                )
-                return SignRetrievalSuccess(
-                    status="signs_found",
-                    signs=signs,
-                    on_street=on_street,
-                    from_street=from_street,
-                    to_street=to_street,
-                    side_of_street=side_of_street,
-                    soda_level=2,
-                )
+            logger.info(
+                "Level 2 matched: on_street=%r, from=%r, to=%r (%d unique signs)",
+                on_var,
+                from_var,
+                to_var,
+                len(result.signs),
+            )
+            return result
 
     # ------------------------------------------------------------------
     # Level 3: Broad match (on_street + side only), client-side filtering
@@ -243,23 +281,22 @@ async def retrieve_signs(
             )
 
             if filtered:
-                signs = _deduplicate(filtered)
-                if signs:
+                result = await _try_query(
+                    client,
+                    on_var, from_variants[0], to_variants[0], side_of_street,
+                    on_street, from_street, to_street,
+                    soda_level=3,
+                    prefetched_records=filtered,
+                )
+                if result is not None:
                     logger.info(
                         "Level 3 matched: on_street=%r (broad), "
                         "client-side filtered (%d unique signs)",
                         on_var,
-                        len(signs),
+                        len(result.signs),
                     )
-                    return SignRetrievalSuccess(
-                        status="signs_found",
-                        signs=signs,
-                        on_street=on_street,
-                        from_street=from_street,
-                        to_street=to_street,
-                        side_of_street=side_of_street,
-                        soda_level=3,
-                    )
+                    return result
+                # filtered had records but dedup yielded no signs; treat as any_soda_results
 
     # ------------------------------------------------------------------
     # All three levels exhausted

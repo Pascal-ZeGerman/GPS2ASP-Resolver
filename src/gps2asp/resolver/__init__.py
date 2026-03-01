@@ -109,8 +109,8 @@ async def resolve(
         confidence_threshold=confidence_threshold,
         index_dir=index_dir,
         parking_lane_fraction=parking_lane_fraction,
-        _input_lat=lat,
-        _input_lon=lon,
+        input_lat=lat,
+        input_lon=lon,
     )
 
 
@@ -120,8 +120,8 @@ async def resolve_segment(
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
     index_dir: str | None = None,
     parking_lane_fraction: float = 0.33,
-    _input_lat: float | None = None,
-    _input_lon: float | None = None,
+    input_lat: float | None = None,
+    input_lon: float | None = None,
 ) -> ResolutionResult:
     """Resolve State Plane coordinates to a street segment and side.
 
@@ -137,8 +137,9 @@ async def resolve_segment(
         parking_lane_fraction: Fraction of street width considered the
             near-centerline ambiguous zone (default 0.33). Passed through
             to compute_confidence().
-        _input_lat: Original latitude (for debug logging, internal use).
-        _input_lon: Original longitude (for debug logging, internal use).
+        input_lat: Original latitude (for debug logging). Pass when calling
+            from resolve() or the pipeline so logs contain GPS coordinates.
+        input_lon: Original longitude (for debug logging).
 
     Returns:
         ResolutionResult with street segment and side information.
@@ -148,16 +149,8 @@ async def resolve_segment(
         AmbiguousResolutionError: Confidence below threshold.
         IndexNotFoundError: Spatial index files not found on disk.
     """
-    input_lat = _input_lat if _input_lat is not None else 0.0
-    input_lon = _input_lon if _input_lon is not None else 0.0
-
-    # Initialize debug info for logging
-    debug_info = ResolutionDebugInfo(
-        input_lat=input_lat,
-        input_lon=input_lon,
-        state_plane_x=x,
-        state_plane_y=y,
-    )
+    input_lat = input_lat if input_lat is not None else 0.0
+    input_lon = input_lon if input_lon is not None else 0.0
 
     try:
         # Step 2: Query spatial index for nearest segments
@@ -185,12 +178,12 @@ async def resolve_segment(
         side = determine_side(x, y, best.geometry, best.nominaldir)
 
         # Step 5: Compute effective width (post-fallback) and confidence
+        # Resolve width once here; pass as effective_width_ft to avoid a second call inside compute_confidence
         effective_width = resolve_effective_width(best.streetwidth, best.rw_type)
         confidence = compute_confidence(
             perp_distance_ft=perp_distance,
-            street_width_ft=best.streetwidth,
+            effective_width_ft=effective_width,
             distance_to_nearest_intersection_ft=dist_to_endpoints,
-            rw_type=best.rw_type,
             parking_lane_fraction=parking_lane_fraction,
         )
 
@@ -248,7 +241,9 @@ async def resolve_segment(
         raise
 
     except Exception as e:
-        # Log unexpected errors and re-raise
+        # Log and re-raise unexpected errors (e.g., IndexNotFoundError, shapely errors).
+        # NoSegmentFoundError and AmbiguousResolutionError are handled above.
+        # Exception excludes BaseException subclasses (KeyboardInterrupt, SystemExit).
         debug_info = ResolutionDebugInfo(
             input_lat=input_lat,
             input_lon=input_lon,
