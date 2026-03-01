@@ -607,13 +607,12 @@ async def build_index(output_dir: Path | None = None) -> None:
 
     Args:
         output_dir: Output directory for index files. Defaults to
-            src/gps2asp/data/index/ relative to this package.
+            src/gps2asp/data/index/ relative to the project root.
     """
     _setup_logging()
 
     if output_dir is None:
-        package_dir = Path(__file__).parent.parent
-        output_dir = package_dir / "data" / "index"
+        output_dir = Path(__file__).parent.parent / "src" / "gps2asp" / "data" / "index"
 
     logger.info("Building spatial index -> %s", output_dir)
     start_time = time.time()
