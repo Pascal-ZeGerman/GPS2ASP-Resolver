@@ -132,5 +132,5 @@ Progress: [====================] 100% v1.0 | Phase 9: [==========          ] 50%
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 09-01-PLAN.md — fixed three bugs in scripts/build_index.py (directional prefix expansion, voided-sign SODA filter, dead-end sentinel ''), created tests/test_build_index.py with 10 tests, 231 tests pass.
+Stopped at: Reached Task 3 (human-verify checkpoint) in 09-02-PLAN.md — index rebuilt (21,768 ASP segments, up from 18,315), Manhattan coverage 16.8% (up from 4.1%), but plan targets (Manhattan >= 40%, total > 35K) not met due to normalization design limitation (W BROADWAY, CENTRAL PARK W not expanded). Human review required.
 Resume file: None
