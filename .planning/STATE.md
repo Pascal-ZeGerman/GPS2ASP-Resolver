@@ -120,6 +120,7 @@ Progress: [====================] 100% v1.0 | Phase 8: [====================] 100
 |---|-------------|------|--------|-----------|
 | 1 | Fix gps2asp module not installed so pipeline script runs | 2026-02-28 | f835dc5 | [1-fix-gps2asp-module-not-installed-so-pipe](./quick/1-fix-gps2asp-module-not-installed-so-pipe/) |
 | 2 | Lower confidence threshold default from 0.60 to 0.33 for testing | 2026-02-28 | 8d655c0 | [2-lower-confidence-threshold-default-to-0-](./quick/2-lower-confidence-threshold-default-to-0-/) |
+| 3 | Fix five code review issues: CLAUDE.md stale, missing future-import, wrong comments, dead fields | 2026-03-01 | 77f3ba4 | [3-fix-5-code-review-issues-claude-md-stale](./quick/3-fix-5-code-review-issues-claude-md-stale/) |
 
 ### Blockers/Concerns
 
@@ -128,5 +129,5 @@ Progress: [====================] 100% v1.0 | Phase 8: [====================] 100
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 08-03-PLAN.md — assert replaced with TypeError, magic numbers named as constants, SpatialIndex dict[str,Any] annotated, _cross_streets_match clarified, all 221 tests pass. Phase 8 complete.
+Stopped at: Completed quick task 3 — fixed 5 code review issues: CLAUDE.md scripts/ path, from __future__ import in test_confidence.py, wrong "lowercase" comment in signs/__init__.py, misleading "scales from 0" in confidence.py, dead l/r_blockfaceid fields in build_index.py. 221 tests pass.
 Resume file: None
