@@ -71,3 +71,35 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 7. Pipeline Stabilization | 2/2 | Complete   | 2026-02-28 | — |
+
+### Phase 8: Refactor architecture and streamline pipeline
+
+**Goal:** Clean up API surface, module layout, and code quality — move `resolve_asp()` to `pipeline.py`, thin `__init__.py`, relocate build tools to `scripts/`, and address all 22 identified rough edges
+**Requirements**: Internal code quality and architecture improvement (no new capabilities)
+**Depends on:** Phase 7
+**Plans:** 3 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — API surface + module layout: create `pipeline.py`, thin `__init__.py`, move `build/` to `scripts/`, add `ASPDebugResult` factory classmethods, update test imports
+- [ ] 08-02-PLAN.md — Must-Fix + High Priority quality items: rename `_input_lat`/`_input_lon`, fix bare except, eliminate duplicate `resolve_effective_width()` call, `compute_confidence()` signature, module-level `import logging`, extract `_try_query()` helper, remove dead `SegmentCandidate` fields
+- [ ] 08-03-PLAN.md — Medium + Nice-to-Have quality items: replace `assert isinstance`, name magic number constants, annotate `SpatialIndex` types, clarify double normalization in `_cross_streets_match()`
+
+### Phase 9: Rebuild the spatial index
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 8
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 9 to break down)
+
+### Phase 10: Update documentation
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 9
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 10 to break down)
