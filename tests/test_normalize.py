@@ -39,7 +39,9 @@ class TestNormalizeToSoda:
         assert normalize_to_soda("PARK TER") == "PARK TERRACE"
 
     def test_directional_expansion_east(self) -> None:
-        assert normalize_to_soda("E  100 ST") == "EAST  100 STREET"
+        # Internal whitespace is collapsed before expansion so double-space
+        # in CSCL "E  100 ST" is normalized to single-space "EAST 100 STREET".
+        assert normalize_to_soda("E  100 ST") == "EAST 100 STREET"
 
     def test_directional_expansion_west(self) -> None:
         assert normalize_to_soda("W 4 ST") == "WEST 4 STREET"
@@ -75,9 +77,14 @@ class TestNormalizeToSoda:
     def test_whitespace_leading_trailing_stripped(self) -> None:
         assert normalize_to_soda("  3 AVE  ") == "3 AVENUE"
 
-    def test_whitespace_internal_preserved(self) -> None:
-        """Internal whitespace is preserved (SODA may have extra spaces)."""
-        assert normalize_to_soda("E  100 ST") == "EAST  100 STREET"
+    def test_whitespace_internal_collapsed(self) -> None:
+        """Internal multiple spaces are collapsed to single space.
+
+        CSCL uses variable spacing (e.g., "E  100 ST" with two spaces) but
+        SODA uses different variable spacing (e.g., "EAST   100 STREET" with
+        three spaces). Collapsing to single spaces ensures consistent matching.
+        """
+        assert normalize_to_soda("E  100 ST") == "EAST 100 STREET"
 
     def test_lowercase_input(self) -> None:
         assert normalize_to_soda("prospect pl") == "PROSPECT PLACE"

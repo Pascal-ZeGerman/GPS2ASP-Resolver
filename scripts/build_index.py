@@ -408,9 +408,12 @@ def _fetch_asp_signs() -> set[tuple[str, str, str, str]]:
             break
 
         for record in records:
-            on_street = (record.get("on_street") or "").upper().strip()
-            from_street = (record.get("from_street") or "").upper().strip()
-            to_street = (record.get("to_street") or "").upper().strip()
+            # Collapse internal whitespace so "EAST   22 STREET" (3 spaces
+            # from SODA) matches "EAST 22 STREET" (1 space after normalization
+            # of CSCL "E  22 ST").
+            on_street = " ".join((record.get("on_street") or "").upper().split())
+            from_street = " ".join((record.get("from_street") or "").upper().split())
+            to_street = " ".join((record.get("to_street") or "").upper().split())
             side = (record.get("side_of_street") or "").upper().strip()
 
             if on_street and side:

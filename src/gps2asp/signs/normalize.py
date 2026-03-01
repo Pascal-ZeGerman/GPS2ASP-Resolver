@@ -60,7 +60,7 @@ def normalize_to_soda(cscl_name: str) -> str:
         >>> normalize_to_soda("3 AVE")
         '3 AVENUE'
         >>> normalize_to_soda("E  100 ST")
-        'EAST  100 STREET'
+        'EAST 100 STREET'
         >>> normalize_to_soda("PROSPECT PL")
         'PROSPECT PLACE'
         >>> normalize_to_soda("ESSEX ST")
@@ -72,7 +72,10 @@ def normalize_to_soda(cscl_name: str) -> str:
         >>> normalize_to_soda("W END AVE")
         'WEST END AVENUE'
     """
-    name = cscl_name.upper().strip()
+    # Collapse internal whitespace: CSCL may have "E  100 ST" (2 spaces) and
+    # SODA has "EAST   100 STREET" (3 spaces). Normalizing to single spaces
+    # ensures consistent matching between the two datasets.
+    name = " ".join(cscl_name.upper().split())
 
     # Step 1: Expand directional prefix.
     # The "abbrev + space" guard ensures "ESSEX" (no space after E) and
