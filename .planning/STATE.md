@@ -23,12 +23,12 @@ See: .planning/PROJECT.md (updated 2026-02-23)
 ## Current Position
 
 Milestone: v1.1 Bug Fixes
-Phase: 08-refactor-architecture-and-streamline-pipeline
-Current Plan: 3 of 3
-Status: Plan 08-03 complete — assert replaced with TypeError, magic numbers named, SpatialIndex annotated, cross_streets_match clarified, 221 tests pass
-Next: Phase 9 (Rebuild spatial index) or Phase 10 (Update documentation)
+Phase: 09-rebuild-the-spatial-index
+Current Plan: 1 of 2
+Status: Plan 09-01 complete — three build_index.py bugs fixed (directional prefix expansion, voided-sign filter, dead-end sentinel), 10 new tests, 231 tests pass
+Next: Plan 09-02 (run actual spatial index rebuild with fixed script)
 
-Progress: [====================] 100% v1.0 | Phase 8: [====================] 100%
+Progress: [====================] 100% v1.0 | Phase 9: [==========          ] 50%
 
 ## Performance Metrics
 
@@ -104,6 +104,9 @@ Progress: [====================] 100% v1.0 | Phase 8: [====================] 100
 - [Phase 08-03]: Per-file named constants for magic numbers (not shared constants.py) — keeps modules independently testable and self-contained
 - [Phase 08-03]: _NEAR_INTERSECTION_THRESHOLD_FT duplicated in resolver/__init__.py and confidence.py with comment noting they must match — acceptable for two-file duplication
 - [Phase 08-03]: Double normalization in _cross_streets_match() retained as-is — clarified by comments, no behavior change needed
+- [Phase 09-01]: _normalize_street_name() delegates to normalize_to_soda() — eliminates duplication and ensures build-time parity with runtime sign queries
+- [Phase 09-01]: Dead-end sentinel changed from "DEAD END" to "" (empty string) — SODA API uses empty strings for missing cross streets
+- [Phase 09-01]: SODA filter changed to sign_design_voided_on_date IS NULL — record_type='Current' was a no-op (all records have that type)
 
 ### Roadmap Evolution
 
@@ -129,5 +132,5 @@ Progress: [====================] 100% v1.0 | Phase 8: [====================] 100
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed quick task 3 — fixed 5 code review issues: CLAUDE.md scripts/ path, from __future__ import in test_confidence.py, wrong "lowercase" comment in signs/__init__.py, misleading "scales from 0" in confidence.py, dead l/r_blockfaceid fields in build_index.py. 221 tests pass.
+Stopped at: Completed 09-01-PLAN.md — fixed three bugs in scripts/build_index.py (directional prefix expansion, voided-sign SODA filter, dead-end sentinel ''), created tests/test_build_index.py with 10 tests, 231 tests pass.
 Resume file: None

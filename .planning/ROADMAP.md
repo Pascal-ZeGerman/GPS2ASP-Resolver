@@ -86,13 +86,14 @@ Plans:
 
 ### Phase 9: Rebuild the spatial index
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Fix three bugs in scripts/build_index.py that cause systematic false negatives in has_asp_left/has_asp_right flags, then rebuild the on-disk spatial index so the flags are correct
+**Requirements**: Internal data quality fix — directional prefix normalization, voided sign filter, dead-end alignment with SODA format
 **Depends on:** Phase 8
-**Plans:** 0 plans
+**Plans:** 1/2 plans executed
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 9 to break down)
+- [ ] 09-01-PLAN.md — Fix all three bugs in build_index.py and add unit tests
+- [ ] 09-02-PLAN.md — Run the spatial index rebuild and validate per-borough coverage
 
 ### Phase 10: Update documentation
 
