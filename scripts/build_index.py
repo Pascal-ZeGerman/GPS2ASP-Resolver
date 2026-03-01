@@ -582,8 +582,6 @@ def _build_rtree_and_metadata(
             "nominaldir": str(row.get("nominaldir", "") or ""),
             "rw_type": int(row.get("rw_type_int", row.get("rw_type", 0))),
             "streetwidth": streetwidth,
-            "l_blockfaceid": str(row.get("l_blockfaceid", "")),
-            "r_blockfaceid": str(row.get("r_blockfaceid", "")),
             "borocode": str(row.get("boroughcode", row.get("borocode", ""))),
             "has_asp_left": has_asp_left,
             "has_asp_right": has_asp_right,
