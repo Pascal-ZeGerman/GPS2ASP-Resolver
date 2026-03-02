@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
 status: unknown
-last_updated: "2026-03-01T15:22:45.462Z"
+last_updated: "2026-03-02T00:07:23.337Z"
 progress:
-  total_phases: 6
-  completed_phases: 4
-  total_plans: 7
-  completed_plans: 7
+  total_phases: 7
+  completed_phases: 5
+  total_plans: 9
+  completed_plans: 9
 ---
 
 # Project State
@@ -24,11 +24,11 @@ See: .planning/PROJECT.md (updated 2026-02-23)
 
 Milestone: v1.1 Bug Fixes
 Phase: 09-rebuild-the-spatial-index
-Current Plan: 1 of 2
-Status: Plan 09-01 complete — three build_index.py bugs fixed (directional prefix expansion, voided-sign filter, dead-end sentinel), 10 new tests, 231 tests pass
-Next: Plan 09-02 (run actual spatial index rebuild with fixed script)
+Current Plan: 2 of 2 (complete)
+Status: Phase 09 complete — Plan 09-01 fixed three bugs in build_index.py; Quick-4 fixed normalize_to_soda; Plan 09-02 rebuilt index to 26,374 ASP segments (Manhattan 29.5%, Brooklyn 47.9%), human-approved; remaining coverage gap (multi-block SODA spans) deferred to Phase 11
+Next: Phase 10 (update documentation)
 
-Progress: [====================] 100% v1.0 | Phase 9: [==========          ] 50%
+Progress: [====================] 100% v1.0 | Phase 9: [====================] 100%
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Progress: [====================] 100% v1.0 | Phase 9: [==========          ] 50%
 | 6 | 1/1 | 8 min | 8 min |
 | 7 | 2/2 | 6 min | 3 min |
 | 8 | 3/3 | 14 min | 5 min |
+| 9 | 2/2 | 15 min | 8 min |
 
 ## Accumulated Context
 
@@ -107,6 +108,12 @@ Progress: [====================] 100% v1.0 | Phase 9: [==========          ] 50%
 - [Phase 09-01]: _normalize_street_name() delegates to normalize_to_soda() — eliminates duplication and ensures build-time parity with runtime sign queries
 - [Phase 09-01]: Dead-end sentinel changed from "DEAD END" to "" (empty string) — SODA API uses empty strings for missing cross streets
 - [Phase 09-01]: SODA filter changed to sign_design_voided_on_date IS NULL — record_type='Current' was a no-op (all records have that type)
+- [Quick-4]: normalize_to_soda() directional prefix expansion widened from digit-only to any continuation — safe because startswith('abbrev + space') guard already prevents false positives
+- [Quick-4]: Directional suffix expansion added as final step so W END AVE -> WEST END AVENUE (not WEST END AVE)
+- [Quick-4]: Internal whitespace collapsed to single space in normalize_to_soda() to handle CSCL/SODA spacing inconsistencies
+- [Quick-4]: Remaining Manhattan coverage gap (29.5% vs 40% target) is due to multi-block SODA spans vs single-block CSCL granularity — deferred to Phase 11
+- [Phase 09-rebuild-the-spatial-index]: Remaining Manhattan coverage gap (29.5% vs 40% target) deferred to Phase 11 — multi-block SODA spans vs single-block CSCL granularity
+- [Phase 09-rebuild-the-spatial-index]: Staten Island 0.0% coverage is a SODA data gap — deferred to Phase 11 triage
 
 ### Roadmap Evolution
 
@@ -116,6 +123,7 @@ Progress: [====================] 100% v1.0 | Phase 9: [==========          ] 50%
 - Phase 8 added: Refactor architecture and streamline pipeline
 - Phase 9 added: Rebuild the spatial index
 - Phase 10 added: Update documentation
+- Phase 11 added: Improve ASP coverage through mid-span coverage
 
 ### Quick Tasks Completed
 
@@ -124,6 +132,7 @@ Progress: [====================] 100% v1.0 | Phase 9: [==========          ] 50%
 | 1 | Fix gps2asp module not installed so pipeline script runs | 2026-02-28 | f835dc5 | [1-fix-gps2asp-module-not-installed-so-pipe](./quick/1-fix-gps2asp-module-not-installed-so-pipe/) |
 | 2 | Lower confidence threshold default from 0.60 to 0.33 for testing | 2026-02-28 | 8d655c0 | [2-lower-confidence-threshold-default-to-0-](./quick/2-lower-confidence-threshold-default-to-0-/) |
 | 3 | Fix five code review issues: CLAUDE.md stale, missing future-import, wrong comments, dead fields | 2026-03-01 | 77f3ba4 | [3-fix-5-code-review-issues-claude-md-stale](./quick/3-fix-5-code-review-issues-claude-md-stale/) |
+| 4 | Fix named directional normalization: expand W BROADWAY/CENTRAL PARK W, collapse whitespace, rebuild index | 2026-03-01 | 094a9f5 | [4-fix-named-directional-normalization-in-n](./quick/4-fix-named-directional-normalization-in-n/) |
 
 ### Blockers/Concerns
 
@@ -131,6 +140,6 @@ Progress: [====================] 100% v1.0 | Phase 9: [==========          ] 50%
 
 ## Session Continuity
 
-Last session: 2026-03-01
-Stopped at: Reached Task 3 (human-verify checkpoint) in 09-02-PLAN.md — index rebuilt (21,768 ASP segments, up from 18,315), Manhattan coverage 16.8% (up from 4.1%), but plan targets (Manhattan >= 40%, total > 35K) not met due to normalization design limitation (W BROADWAY, CENTRAL PARK W not expanded). Human review required.
+Last session: 2026-03-02
+Stopped at: Plan 09-02 complete — spatial index rebuilt to 26,374 ASP segments (+44%), human-approved at checkpoint. Manhattan 29.5%, Brooklyn 47.9%. Remaining coverage gap (multi-block SODA spans) deferred to Phase 11. Phase 09 fully complete.
 Resume file: None
