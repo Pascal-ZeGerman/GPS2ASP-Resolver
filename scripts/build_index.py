@@ -24,7 +24,7 @@ import math
 import os
 import sys
 import time
-from collections import Counter
+from collections import Counter, deque
 from pathlib import Path
 
 import geopandas as gpd
@@ -357,6 +357,238 @@ def _compute_cross_streets(
     )
 
     return cross_streets
+
+
+def _build_street_adjacency(
+    node_lookup: dict[tuple[float, float], list[tuple[int, str]]],
+) -> dict[int, set[int]]:
+    """Build a segment adjacency graph for same-street connectivity.
+
+    Two segments are adjacent if they share a node coordinate (within a 3x3
+    foot neighborhood) AND have the same normalized street name. This reuses
+    the same coordinate-rounding and 3x3 tolerance pattern as
+    _find_cross_street().
+
+    Args:
+        node_lookup: Dict mapping rounded (x, y) to list of (physicalid, street_name).
+
+    Returns:
+        Dict mapping physicalid to the set of adjacent physicalids (same street,
+        shared node). Bidirectional.
+    """
+    adjacency: dict[int, set[int]] = {}
+
+    # For each node, find all segments within the 3x3 neighborhood and group
+    # by normalized street name. Connect all same-street segments at that node.
+    processed_pairs: set[frozenset] = set()
+
+    for node, segments in node_lookup.items():
+        # Gather all segments within the 3x3 neighborhood
+        neighborhood_segments: list[tuple[int, str]] = []
+        for dx in range(-1, 2):
+            for dy in range(-1, 2):
+                neighbor_node = (node[0] + dx, node[1] + dy)
+                if neighbor_node in node_lookup:
+                    neighborhood_segments.extend(node_lookup[neighbor_node])
+
+        # Group by normalized street name
+        by_street: dict[str, list[int]] = {}
+        for pid, name in neighborhood_segments:
+            normalized = _normalize_street_name(name)
+            if normalized:
+                by_street.setdefault(normalized, []).append(pid)
+
+        # Connect all segments with the same street name
+        for _street, pids in by_street.items():
+            unique_pids = list(dict.fromkeys(pids))  # deduplicate, preserve order
+            for i, pid_a in enumerate(unique_pids):
+                for pid_b in unique_pids[i + 1:]:
+                    pair = frozenset((pid_a, pid_b))
+                    if pair not in processed_pairs:
+                        processed_pairs.add(pair)
+                        adjacency.setdefault(pid_a, set()).add(pid_b)
+                        adjacency.setdefault(pid_b, set()).add(pid_a)
+
+    return adjacency
+
+
+def _build_intersection_index(
+    cross_streets: dict[int, tuple[str, str]],
+    gdf_street_names: dict[int, str],
+) -> dict[tuple[str, str], set[int]]:
+    """Build a lookup from (on_street, cross_street) to segment PIDs.
+
+    For each segment, maps both (on_street, from_street) and
+    (on_street, to_street) to the segment's PID. All names are normalized
+    via _normalize_street_name() for parity with SODA span endpoint names.
+
+    This index is used by _propagate_asp_to_interior_blocks() to find the
+    starting and ending segments for BFS traversal.
+
+    Args:
+        cross_streets: Dict mapping physicalid to (from_street, to_street).
+        gdf_street_names: Dict mapping physicalid to full_street_name.
+
+    Returns:
+        Dict mapping (normalized_on_street, normalized_cross_street) to set of PIDs.
+    """
+    index: dict[tuple[str, str], set[int]] = {}
+
+    for pid, (from_cs, to_cs) in cross_streets.items():
+        on_street = _normalize_street_name(gdf_street_names.get(pid, ""))
+        if not on_street:
+            continue
+        for cs in (from_cs, to_cs):
+            cs_norm = _normalize_street_name(cs)
+            if cs_norm:
+                index.setdefault((on_street, cs_norm), set()).add(pid)
+
+    return index
+
+
+def _bfs_between(
+    start_pids: set[int],
+    end_pids: set[int],
+    adjacency: dict[int, set[int]],
+    max_depth: int = 30,
+) -> set[int]:
+    """BFS from start_pids toward end_pids using the adjacency graph.
+
+    Traverses the street adjacency graph from ``start_pids`` toward
+    ``end_pids``. Stops expanding past any endpoint segment (does not
+    traverse *beyond* the span boundary). Respects ``max_depth`` to
+    prevent runaway traversal on long avenues (e.g., Broadway).
+
+    If BFS never reaches any ``end_pid``, the traversal is considered
+    invalid and an empty set is returned (Pitfall 4: discard incomplete
+    traversals to avoid overcounting ASP segments).
+
+    Args:
+        start_pids: Set of starting segment PIDs (span from-street intersections).
+        end_pids: Set of ending segment PIDs (span to-street intersections).
+        adjacency: Dict mapping physicalid to its adjacent physicalids.
+        max_depth: Maximum BFS depth to prevent runaway on long streets.
+
+    Returns:
+        Set of all visited PIDs including start and end if reachable.
+        Empty set if end_pids are never reached.
+    """
+    visited: set[int] = set()
+    queue: deque[tuple[int, int]] = deque()  # (pid, depth)
+
+    for pid in start_pids:
+        if pid not in visited:
+            visited.add(pid)
+            queue.append((pid, 0))
+
+    reached_end = any(pid in end_pids for pid in start_pids)
+
+    while queue:
+        current, depth = queue.popleft()
+        if current in end_pids:
+            reached_end = True
+            continue  # reached endpoint, don't traverse beyond
+        if depth >= max_depth:
+            continue  # safety limit -- stop expanding, but keep visited
+        for neighbor in adjacency.get(current, set()):
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append((neighbor, depth + 1))
+
+    if not reached_end:
+        return set()
+
+    return visited
+
+
+def _propagate_asp_to_interior_blocks(
+    asp_lookup: set[tuple[str, str, str, str]],
+    adjacency: dict[int, set[int]],
+    intersection_index: dict[tuple[str, str], set[int]],
+    cross_streets: dict[int, tuple[str, str]],
+    gdf_street_names: dict[int, str],
+) -> tuple[set[tuple[str, str, str, str]], dict]:
+    """Expand asp_lookup to include interior blocks of multi-block SODA spans.
+
+    For each unique SODA span (on_street, from_street, to_street), performs
+    BFS along the street adjacency graph from the from_street intersection to
+    the to_street intersection. All interior segment PIDs found are added to
+    asp_lookup with the same side(s) as the original span.
+
+    This is the build-time fix for the mid-span coverage gap: SODA stores signs
+    that span multiple CSCL blocks, but _check_has_asp() does exact matching.
+    Interior blocks (e.g., 73rd-74th within a 72nd-86th SODA span) would
+    otherwise get has_asp=False and never be queried at runtime.
+
+    Args:
+        asp_lookup: Current set of (on_street, from_street, to_street, side) tuples.
+        adjacency: Street adjacency graph from _build_street_adjacency().
+        intersection_index: Intersection lookup from _build_intersection_index().
+        cross_streets: Dict mapping physicalid to (from_street, to_street).
+        gdf_street_names: Dict mapping physicalid to full_street_name.
+
+    Returns:
+        Tuple of (expanded_asp_lookup, propagation_stats_dict) where:
+        - expanded_asp_lookup includes all original tuples plus interior blocks
+        - propagation_stats_dict has keys: spans_processed, spans_resolved,
+          interior_blocks_added
+    """
+    # Collect unique (on_street, from_street, to_street) spans with their sides
+    span_sides: dict[tuple[str, str, str], set[str]] = {}
+    for on_street, from_street, to_street, side in asp_lookup:
+        key = (on_street, from_street, to_street)
+        span_sides.setdefault(key, set()).add(side)
+
+    expanded = set(asp_lookup)
+    spans_processed = 0
+    spans_resolved = 0
+    interior_blocks_added = 0
+
+    for (on_street, from_street, to_street), sides in span_sides.items():
+        spans_processed += 1
+
+        # Look up starting segments at (on_street, from_street)
+        start_pids = intersection_index.get((on_street, from_street), set())
+        # Look up ending segments at (on_street, to_street)
+        end_pids = intersection_index.get((on_street, to_street), set())
+
+        if not start_pids or not end_pids:
+            continue  # Cannot resolve span endpoints -- skip
+
+        # BFS between the two endpoint sets
+        visited = _bfs_between(start_pids, end_pids, adjacency)
+
+        if not visited:
+            continue  # BFS failed to reach endpoint -- discard
+
+        spans_resolved += 1
+
+        # Add interior block tuples to asp_lookup for all sides the span had
+        for pid in visited:
+            pid_from, pid_to = cross_streets.get(pid, ("", ""))
+            pid_from_norm = _normalize_street_name(pid_from)
+            pid_to_norm = _normalize_street_name(pid_to)
+
+            if not pid_from_norm and not pid_to_norm:
+                continue
+
+            for side in sides:
+                new_tuple = (on_street, pid_from_norm, pid_to_norm, side)
+                if new_tuple not in expanded:
+                    expanded.add(new_tuple)
+                    interior_blocks_added += 1
+
+    logger.info(
+        "ASP propagation: %d spans processed, %d resolved, %d interior blocks added",
+        spans_processed, spans_resolved, interior_blocks_added,
+    )
+
+    stats = {
+        "spans_processed": spans_processed,
+        "spans_resolved": spans_resolved,
+        "interior_blocks_added": interior_blocks_added,
+    }
+    return expanded, stats
 
 
 def _fetch_asp_signs() -> set[tuple[str, str, str, str]]:
