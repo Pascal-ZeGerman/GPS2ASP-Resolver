@@ -2,13 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
-status: unknown
-last_updated: "2026-03-03T14:36:59.376Z"
+current_plan: 2 of 3 (complete)
+status: completed
+stopped_at: Phase 11 complete — Plan 11-03 done; spatial index rebuilt with BFS propagation; 62,455 interior blocks added; Manhattan 58.2%, Brooklyn 74.1%; graph.json 7.9MB; 273 tests pass
+last_updated: "2026-03-03T15:44:45.385Z"
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 13
-  completed_plans: 12
+  completed_plans: 13
+  percent: 100
 ---
 
 # Project State
@@ -18,17 +21,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-02-23)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP -- "next time to move is [datetime]"
-**Current focus:** v1.1 bug fixes — Phase 11 in progress
+**Current focus:** v1.1 complete — all phases done (Phase 11 ASP coverage improvement delivered)
 
 ## Current Position
 
 Milestone: v1.1 Bug Fixes
 Phase: 11-improve-asp-coverage-through-mid-span-coverage
-Current Plan: 2 of 3 (complete)
-Status: Phase 11 Plan 02 complete — StreetGraph class with BFS span_distance scoring; Level 4 wired into retrieve_signs(); 253 tests pass
-Next: Phase 11 Plan 03 (if exists) or Phase 11 complete
+Current Plan: 3 of 3 (complete)
+Status: Phase 11 complete — spatial index rebuilt with BFS propagation; 62,455 interior blocks added; Manhattan 58.2%, Brooklyn 74.1%; graph.json 7.9 MB; 273 tests pass
+Next: Phase 11 complete — all phases done
 
-Progress: [====================] 100% v1.0 | Phase 9: [====================] 100%
+Progress: [██████████] 100% (13/13 plans complete)
 
 ## Performance Metrics
 
@@ -51,6 +54,7 @@ Progress: [====================] 100% v1.0 | Phase 9: [====================] 100
 | 7 | 2/2 | 6 min | 3 min |
 | 8 | 3/3 | 14 min | 5 min |
 | 9 | 2/2 | 15 min | 8 min |
+| Phase 11-improve-asp-coverage-through-mid-span-coverage P03 | 10 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -120,6 +124,9 @@ Progress: [====================] 100% v1.0 | Phase 9: [====================] 100
 - [Phase 11-01]: max_depth=30 for BFS prevents runaway on long avenues; propagation_stats added to build_info.json for observability
 - [Phase Phase 11]: span_distance BFS returns 0 for adjacent spans sharing an endpoint cross street (correct behavior -- those segments cover the block)
 - [Phase Phase 11]: Level 4 only fires when any_soda_results is False (no records from Levels 1-3) -- not when records exist but have no broom signs
+- [Phase 11-03]: Manhattan 58.2% accepted as close enough to 60-80% target (was 29.5% — near-double improvement)
+- [Phase 11-03]: Brooklyn 74.1% accepted above 50-65% ceiling — user approved, no action required
+- [Phase 11-03]: 6 pre-existing socket-blocked integration tests not counted as regressions from this phase
 
 ### Roadmap Evolution
 
@@ -146,6 +153,6 @@ Progress: [====================] 100% v1.0 | Phase 9: [====================] 100
 
 ## Session Continuity
 
-Last session: 2026-03-03
-Stopped at: Plan 11-02 complete — Level 4 mid-span fallback implemented; StreetGraph class in graph.py with BFS span_distance scoring and lazy singleton; Level 4 wired into retrieve_signs() after Level 3; soda_level=4 set on results; graceful degradation when graph.json absent; 253 tests pass.
+Last session: 2026-03-03T15:44:45.377Z
+Stopped at: Phase 11 complete — Plan 11-03 done; spatial index rebuilt with BFS propagation; 62,455 interior blocks added; Manhattan 58.2%, Brooklyn 74.1%; graph.json 7.9MB; 273 tests pass
 Resume file: None

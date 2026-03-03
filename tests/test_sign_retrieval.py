@@ -400,6 +400,15 @@ def test_find_best_covering_span_picks_lowest_distance() -> None:
     assert best[0]["sign_description"] == "SANITATION BROOM EXACT"
 
 
+def test_find_best_covering_span_empty_records() -> None:
+    """_find_best_covering_span returns None when given an empty records list."""
+    from gps2asp.signs.graph import _find_best_covering_span
+
+    graph = _make_graph()
+    result = _find_best_covering_span([], "72 STREET", "73 STREET", graph)
+    assert result is None
+
+
 def test_find_best_covering_span_returns_none_when_all_inf() -> None:
     """_find_best_covering_span returns None when all spans are unreachable."""
     from gps2asp.signs.graph import _find_best_covering_span
@@ -438,6 +447,21 @@ def test_find_best_covering_span_groups_records_by_span() -> None:
     assert len(best) == 2
     descs = {r["sign_description"] for r in best}
     assert descs == {"SIGN A", "SIGN B"}
+
+
+# ── _bfs_min_hops edge cases ─────────────────────────────────────────
+
+
+def test_bfs_min_hops_empty_start_pids() -> None:
+    """_bfs_min_hops returns inf when start_pids is empty."""
+    graph = _make_graph()
+    assert graph._bfs_min_hops(set(), {"10"}) == float("inf")
+
+
+def test_bfs_min_hops_empty_target_pids() -> None:
+    """_bfs_min_hops returns inf when target_pids is empty."""
+    graph = _make_graph()
+    assert graph._bfs_min_hops({"10"}, set()) == float("inf")
 
 
 # ── Level 4 integration with retrieve_signs() ────────────────────────
@@ -538,6 +562,52 @@ async def test_level_4_gracefully_degrades_when_graph_missing() -> None:
 
     # No SODA results at all, no graph -> NoMatchFound
     assert isinstance(result, NoMatchFound)
+
+
+async def test_level_4_returns_all_records_including_non_broom() -> None:
+    """Level 4 returns SignRetrievalSuccess even for non-broom records.
+
+    retrieve_signs() does not filter for SANITATION BROOM signs -- that
+    filtering happens downstream in the schedule parser. When Level 4 finds a
+    reachable best span, it returns all records from that span as-is.
+    """
+    graph = _make_graph()
+
+    # Records at an exact-match span with a non-broom sign description
+    non_broom_records = [
+        {
+            "from_street": "72 STREET",
+            "to_street": "73 STREET",
+            "sign_description": "NO PARKING",
+            "side_of_street": "N",
+        }
+    ]
+
+    mock_client = MagicMock()
+    mock_client.build_block_query.return_value = "mock_block_query"
+    mock_client.build_on_street_query.return_value = "mock_broad_query"
+    mock_client.fetch_signs = AsyncMock(side_effect=[
+        [],                 # Level 1 block query
+        [],                 # Level 3 broad query
+        non_broom_records,  # Level 4 broad query
+    ])
+
+    with (
+        patch("gps2asp.signs.SODAClient", return_value=mock_client),
+        patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+    ):
+        result = await retrieve_signs(
+            on_street="BROADWAY",
+            from_street="72 STREET",
+            to_street="73 STREET",
+            side_of_street="N",
+        )
+
+    # Level 4 found a reachable span: returns SignRetrievalSuccess with all records.
+    # Broom-sign filtering is the caller's responsibility (schedule parser), not ours.
+    assert isinstance(result, SignRetrievalSuccess)
+    assert result.soda_level == 4
+    assert len(result.signs) >= 1
 
 
 async def test_level_4_returns_no_match_when_best_span_is_none() -> None:

@@ -377,6 +377,24 @@ class TestPropagateAspToInteriorBlocks:
         assert "interior_blocks_added" in stats
         assert stats["spans_processed"] >= 1
 
+    def test_propagate_asp_left_side_only(self):
+        """When asp_lookup has only one side, interior blocks get only that side."""
+        cross_streets, gdf_street_names, adjacency, intersection_index = self._make_fixtures()
+
+        # Only North side in asp_lookup
+        asp_lookup = {("BROADWAY", "72 STREET", "75 STREET", "N")}
+
+        expanded, _ = _propagate_asp_to_interior_blocks(
+            asp_lookup, adjacency, intersection_index, cross_streets, gdf_street_names
+        )
+
+        # All tuples added should have side "N" only -- no "S" side should be added
+        sides_in_expanded = {t[3] for t in expanded}
+        assert "S" not in sides_in_expanded, (
+            "South side should not be added when only North side is in asp_lookup"
+        )
+        assert "N" in sides_in_expanded
+
 
 class TestGraphJson:
     """Tests for graph.json serialization (Task 2 integration)."""
