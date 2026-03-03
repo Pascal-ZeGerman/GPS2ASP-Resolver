@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
 status: unknown
-last_updated: "2026-03-02T21:41:34.562Z"
+last_updated: "2026-03-03T14:36:59.376Z"
 progress:
   total_phases: 7
   completed_phases: 6
-  total_plans: 10
-  completed_plans: 10
+  total_plans: 13
+  completed_plans: 12
 ---
 
 # Project State
@@ -18,15 +18,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-02-23)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP -- "next time to move is [datetime]"
-**Current focus:** v1.1 bug fixes — Phase 7 complete
+**Current focus:** v1.1 bug fixes — Phase 11 in progress
 
 ## Current Position
 
 Milestone: v1.1 Bug Fixes
-Phase: 09-rebuild-the-spatial-index
-Current Plan: 2 of 2 (complete)
-Status: Phase 09 complete — Plan 09-01 fixed three bugs in build_index.py; Quick-4 fixed normalize_to_soda; Plan 09-02 rebuilt index to 26,374 ASP segments (Manhattan 29.5%, Brooklyn 47.9%), human-approved; remaining coverage gap (multi-block SODA spans) deferred to Phase 11
-Next: Phase 10 (update documentation)
+Phase: 11-improve-asp-coverage-through-mid-span-coverage
+Current Plan: 2 of 3 (complete)
+Status: Phase 11 Plan 02 complete — StreetGraph class with BFS span_distance scoring; Level 4 wired into retrieve_signs(); 253 tests pass
+Next: Phase 11 Plan 03 (if exists) or Phase 11 complete
 
 Progress: [====================] 100% v1.0 | Phase 9: [====================] 100%
 
@@ -114,6 +114,12 @@ Progress: [====================] 100% v1.0 | Phase 9: [====================] 100
 - [Quick-4]: Remaining Manhattan coverage gap (29.5% vs 40% target) is due to multi-block SODA spans vs single-block CSCL granularity — deferred to Phase 11
 - [Phase 09-rebuild-the-spatial-index]: Remaining Manhattan coverage gap (29.5% vs 40% target) deferred to Phase 11 — multi-block SODA spans vs single-block CSCL granularity
 - [Phase 09-rebuild-the-spatial-index]: Staten Island 0.0% coverage is a SODA data gap — deferred to Phase 11 triage
+- [Phase 11-01]: _compute_cross_streets() accepts optional node_lookup to avoid double computation when caller also needs it for graph construction
+- [Phase 11-01]: graph.json written for all segments with adjacency (not filtered to ASP-only) — Level 4 can navigate between any adjacent blocks
+- [Phase 11-01]: BFS discards traversal if end_pids never reached — prevents false-positive has_asp flags (Pitfall 4)
+- [Phase 11-01]: max_depth=30 for BFS prevents runaway on long avenues; propagation_stats added to build_info.json for observability
+- [Phase Phase 11]: span_distance BFS returns 0 for adjacent spans sharing an endpoint cross street (correct behavior -- those segments cover the block)
+- [Phase Phase 11]: Level 4 only fires when any_soda_results is False (no records from Levels 1-3) -- not when records exist but have no broom signs
 
 ### Roadmap Evolution
 
@@ -140,6 +146,6 @@ Progress: [====================] 100% v1.0 | Phase 9: [====================] 100
 
 ## Session Continuity
 
-Last session: 2026-03-02
-Stopped at: Plan 09-02 complete — spatial index rebuilt to 26,374 ASP segments (+44%), human-approved at checkpoint. Manhattan 29.5%, Brooklyn 47.9%. Remaining coverage gap (multi-block SODA spans) deferred to Phase 11. Phase 09 fully complete.
+Last session: 2026-03-03
+Stopped at: Plan 11-02 complete — Level 4 mid-span fallback implemented; StreetGraph class in graph.py with BFS span_distance scoring and lazy singleton; Level 4 wired into retrieve_signs() after Level 3; soda_level=4 set on results; graceful degradation when graph.json absent; 253 tests pass.
 Resume file: None

@@ -110,7 +110,7 @@ Plans:
 **Goal:** Increase ASP coverage by propagating has_asp flags to interior CSCL blocks via BFS graph traversal of multi-block SODA spans, and add a Level 4 runtime fallback to retrieve signs for mid-span blocks
 **Requirements**: Manhattan 29.5% coverage (target 60-80%), Brooklyn 47.9% (target 50-65%) -- root cause is multi-block SODA spans vs single-block CSCL granularity
 **Depends on:** Phase 10
-**Plans:** 3 plans
+**Plans:** 2/3 plans executed
 
 Plans:
 - [ ] 11-01-PLAN.md — Build-time graph construction and BFS propagation for mid-span ASP coverage
