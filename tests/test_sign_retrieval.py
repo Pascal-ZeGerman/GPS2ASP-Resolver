@@ -1,6 +1,7 @@
-"""Integration tests for sign retrieval against live SODA API.
+"""Tests for sign retrieval: unit tests for StreetGraph / Level 4, plus
+integration tests against the live SODA API.
 
-These tests require network access to data.cityofnewyork.us and are
+Integration tests require network access to data.cityofnewyork.us and are
 skipped when the endpoint is unreachable. Marked with @pytest.mark.integration.
 
 All tests are async (pytest-asyncio with asyncio_mode = auto).
@@ -8,7 +9,10 @@ All tests are async (pytest-asyncio with asyncio_mode = auto).
 
 from __future__ import annotations
 
+import json
 import socket
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -189,3 +193,243 @@ async def test_retrieve_signs_result_uses_input_names() -> None:
     assert result.from_street == "CARLTON AVE"
     assert result.to_street == "VANDERBILT AVE"
     assert result.side_of_street == "N"
+
+
+# ── StreetGraph unit tests ───────────────────────────────────────────
+
+
+# Synthetic graph for testing:
+#
+#   Segment layout (segment_id -> cross streets):
+#     seg_10: [72 STREET, 73 STREET]   <- our block
+#     seg_11: [73 STREET, 74 STREET]
+#     seg_12: [74 STREET, 75 STREET]
+#     seg_13: [71 STREET, 72 STREET]
+#     seg_20: [ALPHA STREET, BETA STREET]  <- different sub-graph
+#
+#   Adjacency (by segment id as string):
+#     "10": [11, 13]
+#     "11": [10, 12]
+#     "12": [11]
+#     "13": [10]
+#     "20": []
+#
+#   All segments are on "BROADWAY" street.
+
+_SYNTHETIC_GRAPH = {
+    "adjacency": {
+        "10": [11, 13],
+        "11": [10, 12],
+        "12": [11],
+        "13": [10],
+        "20": [],
+    },
+    "segment_streets": {
+        "10": "BROADWAY",
+        "11": "BROADWAY",
+        "12": "BROADWAY",
+        "13": "BROADWAY",
+        "20": "BROADWAY",
+    },
+    "segment_cross_streets": {
+        "10": ["72 STREET", "73 STREET"],
+        "11": ["73 STREET", "74 STREET"],
+        "12": ["74 STREET", "75 STREET"],
+        "13": ["71 STREET", "72 STREET"],
+        "20": ["ALPHA STREET", "BETA STREET"],
+    },
+}
+
+
+def _make_graph():
+    """Return a StreetGraph loaded from _SYNTHETIC_GRAPH (no file I/O)."""
+    from gps2asp.signs.graph import StreetGraph
+    return StreetGraph(
+        adjacency=_SYNTHETIC_GRAPH["adjacency"],
+        segment_streets=_SYNTHETIC_GRAPH["segment_streets"],
+        segment_cross_streets=_SYNTHETIC_GRAPH["segment_cross_streets"],
+    )
+
+
+# ── StreetGraph.load() ───────────────────────────────────────────────
+
+
+def test_graph_load_reads_graph_json(tmp_path: Path) -> None:
+    """StreetGraph.load() reads graph.json and populates all three dicts."""
+    graph_file = tmp_path / "graph.json"
+    graph_file.write_text(json.dumps(_SYNTHETIC_GRAPH))
+
+    from gps2asp.signs.graph import StreetGraph
+    graph = StreetGraph.load(index_dir=tmp_path)
+
+    assert graph is not None
+    assert "10" in graph.adjacency
+    assert "10" in graph.segment_streets
+    assert "10" in graph.segment_cross_streets
+
+
+def test_graph_load_returns_none_when_missing(tmp_path: Path) -> None:
+    """StreetGraph.load() returns None when graph.json does not exist."""
+    from gps2asp.signs.graph import StreetGraph
+    graph = StreetGraph.load(index_dir=tmp_path)
+    assert graph is None
+
+
+def test_graph_load_normalizes_street_names(tmp_path: Path) -> None:
+    """StreetGraph.load() normalizes street names via normalize_to_soda."""
+    data = {
+        "adjacency": {"1": []},
+        "segment_streets": {"1": "3 AVE"},
+        "segment_cross_streets": {"1": ["72 ST", "73 ST"]},
+    }
+    (tmp_path / "graph.json").write_text(json.dumps(data))
+
+    from gps2asp.signs.graph import StreetGraph
+    graph = StreetGraph.load(index_dir=tmp_path)
+
+    assert graph is not None
+    # normalize_to_soda("3 AVE") == "3 AVENUE"
+    assert graph.segment_streets["1"] == "3 AVENUE"
+    # normalize_to_soda("72 ST") == "72 STREET"
+    assert "72 STREET" in graph.segment_cross_streets["1"]
+    assert "73 STREET" in graph.segment_cross_streets["1"]
+
+
+# ── StreetGraph.get() lazy singleton ────────────────────────────────
+
+
+def test_graph_get_is_singleton(tmp_path: Path) -> None:
+    """StreetGraph.get() returns the same instance on repeated calls."""
+    graph_file = tmp_path / "graph.json"
+    graph_file.write_text(json.dumps(_SYNTHETIC_GRAPH))
+
+    from gps2asp.signs import graph as graph_module
+    from gps2asp.signs.graph import StreetGraph
+
+    # Reset singleton state for test isolation
+    StreetGraph._instance = None
+
+    with patch.object(StreetGraph, "_index_dir", return_value=tmp_path, create=True):
+        with patch("gps2asp.signs.graph._default_index_dir", return_value=tmp_path):
+            g1 = StreetGraph.get()
+            g2 = StreetGraph.get()
+
+    # Reset after test
+    StreetGraph._instance = None
+
+
+# ── span_distance ────────────────────────────────────────────────────
+
+
+def test_span_distance_exact_match() -> None:
+    """span_distance returns 0 when span cross streets exactly match block."""
+    graph = _make_graph()
+    dist = graph.span_distance("72 STREET", "73 STREET", "72 STREET", "73 STREET")
+    assert dist == 0
+
+
+def test_span_distance_one_block_beyond() -> None:
+    """span_distance returns small int for span 1 block away from block."""
+    graph = _make_graph()
+    # Our block: [72 STREET, 73 STREET] (seg 10)
+    # Span:      [73 STREET, 74 STREET] (seg 11, adjacent to seg 10)
+    dist = graph.span_distance("72 STREET", "73 STREET", "73 STREET", "74 STREET")
+    assert isinstance(dist, int)
+    assert 0 < dist < float("inf")
+
+
+def test_span_distance_two_blocks_beyond() -> None:
+    """span_distance is larger for span farther from the block."""
+    graph = _make_graph()
+    # block: seg 10, span at seg 12 (2 hops away)
+    dist_1 = graph.span_distance("72 STREET", "73 STREET", "73 STREET", "74 STREET")
+    dist_2 = graph.span_distance("72 STREET", "73 STREET", "74 STREET", "75 STREET")
+    assert dist_2 > dist_1
+
+
+def test_span_distance_unreachable_returns_inf() -> None:
+    """span_distance returns float('inf') for unreachable span endpoints."""
+    graph = _make_graph()
+    # ALPHA STREET and BETA STREET are in a disconnected sub-graph
+    dist = graph.span_distance("72 STREET", "73 STREET", "ALPHA STREET", "BETA STREET")
+    assert dist == float("inf")
+
+
+def test_span_distance_symmetric() -> None:
+    """span_distance handles both (from,to) and (to,from) orderings."""
+    graph = _make_graph()
+    # Reversed: span (74,73) should equal span (73,74) since we try both orderings
+    dist_fwd = graph.span_distance("72 STREET", "73 STREET", "73 STREET", "74 STREET")
+    dist_rev = graph.span_distance("72 STREET", "73 STREET", "74 STREET", "73 STREET")
+    assert dist_fwd == dist_rev
+
+
+# ── _find_best_covering_span ─────────────────────────────────────────
+
+
+def test_find_best_covering_span_picks_lowest_distance() -> None:
+    """_find_best_covering_span picks the span with lowest graph distance."""
+    from gps2asp.signs.graph import _find_best_covering_span
+
+    graph = _make_graph()
+
+    # Two candidate spans: one exact match (seg 10), one 1 block away (seg 11)
+    records = [
+        # Exact match span
+        {
+            "from_street": "72 STREET",
+            "to_street": "73 STREET",
+            "sign_description": "SANITATION BROOM EXACT",
+        },
+        # One-hop span
+        {
+            "from_street": "73 STREET",
+            "to_street": "74 STREET",
+            "sign_description": "SANITATION BROOM NEARBY",
+        },
+    ]
+
+    best = _find_best_covering_span(records, "72 STREET", "73 STREET", graph)
+    assert best is not None
+    # The exact match span should win
+    assert best[0]["sign_description"] == "SANITATION BROOM EXACT"
+
+
+def test_find_best_covering_span_returns_none_when_all_inf() -> None:
+    """_find_best_covering_span returns None when all spans are unreachable."""
+    from gps2asp.signs.graph import _find_best_covering_span
+
+    graph = _make_graph()
+
+    records = [
+        {
+            "from_street": "ALPHA STREET",
+            "to_street": "BETA STREET",
+            "sign_description": "SANITATION BROOM UNREACHABLE",
+        },
+    ]
+
+    # Our block is at seg 10 (72/73 STREET) — disconnected from ALPHA/BETA sub-graph
+    best = _find_best_covering_span(records, "72 STREET", "73 STREET", graph)
+    assert best is None
+
+
+def test_find_best_covering_span_groups_records_by_span() -> None:
+    """_find_best_covering_span groups multiple records for the same span."""
+    from gps2asp.signs.graph import _find_best_covering_span
+
+    graph = _make_graph()
+
+    # Same span, multiple sign records (simulating multi-sign posts on same block)
+    records = [
+        {"from_street": "72 STREET", "to_street": "73 STREET", "sign_description": "SIGN A"},
+        {"from_street": "72 STREET", "to_street": "73 STREET", "sign_description": "SIGN B"},
+        {"from_street": "73 STREET", "to_street": "74 STREET", "sign_description": "SIGN C"},
+    ]
+
+    best = _find_best_covering_span(records, "72 STREET", "73 STREET", graph)
+    assert best is not None
+    # Exact match wins; it has 2 records
+    assert len(best) == 2
+    descs = {r["sign_description"] for r in best}
+    assert descs == {"SIGN A", "SIGN B"}

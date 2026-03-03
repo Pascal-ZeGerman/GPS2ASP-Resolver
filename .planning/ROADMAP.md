@@ -107,10 +107,12 @@ Plans:
 
 ### Phase 11: Improve ASP coverage through mid-span coverage
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Increase ASP coverage by propagating has_asp flags to interior CSCL blocks via BFS graph traversal of multi-block SODA spans, and add a Level 4 runtime fallback to retrieve signs for mid-span blocks
+**Requirements**: Manhattan 29.5% coverage (target 60-80%), Brooklyn 47.9% (target 50-65%) -- root cause is multi-block SODA spans vs single-block CSCL granularity
 **Depends on:** Phase 10
-**Plans:** 0 plans
+**Plans:** 3 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 11 to break down)
+- [ ] 11-01-PLAN.md — Build-time graph construction and BFS propagation for mid-span ASP coverage
+- [ ] 11-02-PLAN.md — Runtime Level 4 fallback with StreetGraph for mid-span sign retrieval
+- [ ] 11-03-PLAN.md — Rebuild spatial index with graph propagation and validate coverage targets
