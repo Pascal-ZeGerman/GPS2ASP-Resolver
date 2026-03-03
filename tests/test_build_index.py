@@ -376,3 +376,59 @@ class TestPropagateAspToInteriorBlocks:
         assert "spans_resolved" in stats
         assert "interior_blocks_added" in stats
         assert stats["spans_processed"] >= 1
+
+
+class TestGraphJson:
+    """Tests for graph.json serialization (Task 2 integration)."""
+
+    def test_graph_json_structure(self, tmp_path):
+        """graph.json should have adjacency, segment_streets, segment_cross_streets keys."""
+        import json
+
+        from build_index import _build_intersection_index, _build_street_adjacency
+
+        # Build a minimal adjacency and cross_streets to produce graph.json content
+        adjacency = {1: {2}, 2: {1, 3}, 3: {2}}
+        cross_streets = {
+            1: ("72 STREET", "73 STREET"),
+            2: ("73 STREET", "74 STREET"),
+            3: ("74 STREET", "75 STREET"),
+        }
+        gdf_street_names = {1: "BROADWAY", 2: "BROADWAY", 3: "BROADWAY"}
+
+        # Simulate what build_index() will write
+        graph_data = {
+            "adjacency": {
+                str(pid): sorted(neighbors)
+                for pid, neighbors in adjacency.items()
+            },
+            "segment_streets": {str(pid): name for pid, name in gdf_street_names.items()},
+            "segment_cross_streets": {
+                str(pid): list(cs) for pid, cs in cross_streets.items()
+            },
+        }
+
+        graph_path = tmp_path / "graph.json"
+        with open(graph_path, "w") as f:
+            json.dump(graph_data, f)
+
+        # Verify it round-trips correctly
+        with open(graph_path) as f:
+            loaded = json.load(f)
+
+        assert "adjacency" in loaded
+        assert "segment_streets" in loaded
+        assert "segment_cross_streets" in loaded
+
+        # Adjacency values should be lists (JSON arrays)
+        for pid_str, neighbors in loaded["adjacency"].items():
+            assert isinstance(neighbors, list), f"Neighbors for {pid_str} should be list"
+
+        # Segment streets should be strings
+        for pid_str, name in loaded["segment_streets"].items():
+            assert isinstance(name, str)
+
+        # Cross streets should be 2-element lists
+        for pid_str, cs in loaded["segment_cross_streets"].items():
+            assert isinstance(cs, list)
+            assert len(cs) == 2

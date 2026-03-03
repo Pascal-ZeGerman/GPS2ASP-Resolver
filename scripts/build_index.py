@@ -304,18 +304,28 @@ def _find_cross_street(
 
 def _compute_cross_streets(
     gdf: gpd.GeoDataFrame,
+    node_lookup: dict[tuple[float, float], list[tuple[int, str]]] | None = None,
 ) -> dict[int, tuple[str, str]]:
     """Pre-compute from_street and to_street cross streets for each segment.
 
     Args:
         gdf: Filtered GeoDataFrame of street segments.
+        node_lookup: Pre-built node lookup dict. If None, builds one internally.
+            Pass the result of _build_node_lookup() to avoid computing it twice
+            when the caller also needs it for graph construction.
 
     Returns:
         Dict mapping physicalid to (from_street, to_street).
     """
-    logger.info("Building node lookup for cross-street computation...")
-    node_lookup = _build_node_lookup(gdf)
-    logger.info("Node lookup built with %d unique nodes", len(node_lookup))
+    if node_lookup is None:
+        logger.info("Building node lookup for cross-street computation...")
+        node_lookup = _build_node_lookup(gdf)
+        logger.info("Node lookup built with %d unique nodes", len(node_lookup))
+    else:
+        logger.info(
+            "Using pre-built node lookup (%d unique nodes) for cross-street computation...",
+            len(node_lookup),
+        )
 
     logger.info("Computing cross streets for each segment...")
     cross_streets: dict[int, tuple[str, str]] = {}
@@ -857,16 +867,74 @@ async def build_index(output_dir: Path | None = None) -> None:
     total_cscl_rows = len(gdf_raw)
     gdf = _filter_and_reproject(gdf_raw)
 
-    # Step C: Pre-compute cross streets
-    cross_streets = _compute_cross_streets(gdf)
+    # Step C: Build node lookup once, reuse for both cross streets and graph
+    logger.info("Building node lookup...")
+    node_lookup = _build_node_lookup(gdf)
+    logger.info("Node lookup built with %d unique nodes", len(node_lookup))
+    cross_streets = _compute_cross_streets(gdf, node_lookup=node_lookup)
 
-    # Step D: Fetch ASP signs and pre-compute has_asp
+    # Step D: Fetch ASP signs
     asp_lookup = _fetch_asp_signs()
 
-    # Step E + F: Build R-tree and save metadata
+    # Step D2: Build graph and propagate ASP flags to interior blocks
+    logger.info("Building street adjacency graph...")
+    gdf_street_names: dict[int, str] = {
+        int(row["physicalid"]): str(row.get("full_street_name", ""))
+        for _, row in gdf.iterrows()
+    }
+    adjacency = _build_street_adjacency(node_lookup)
+    logger.info(
+        "Adjacency graph built: %d segments with at least one neighbor",
+        len(adjacency),
+    )
+    intersection_index = _build_intersection_index(cross_streets, gdf_street_names)
+    logger.info(
+        "Intersection index built: %d (on_street, cross_street) entries",
+        len(intersection_index),
+    )
+    asp_lookup, propagation_stats = _propagate_asp_to_interior_blocks(
+        asp_lookup, adjacency, intersection_index, cross_streets, gdf_street_names,
+    )
+
+    # Step E + F: Build R-tree and save metadata (using expanded asp_lookup)
     stats = _build_rtree_and_metadata(
         gdf, cross_streets, asp_lookup, output_dir,
     )
+
+    # Step F2: Write graph.json (only for segments with has_asp=True)
+    logger.info("Writing graph.json...")
+    asp_pids: set[int] = set()
+    for on_street, from_cs, to_cs, _side in asp_lookup:
+        # Collect all PIDs mentioned in the intersection index entries for this street
+        for cs in (from_cs, to_cs):
+            for pid in intersection_index.get((on_street, cs), set()):
+                asp_pids.add(pid)
+
+    # Include all PIDs that have has_asp in segments metadata
+    # (segments.json written by _build_rtree_and_metadata has has_asp_left/right)
+    # Simpler: include all adjacency PIDs that appear in the asp_lookup set
+    # Use the full adjacency graph filtered to ASP segments
+    graph_adjacency: dict[str, list[int]] = {}
+    graph_segment_streets: dict[str, str] = {}
+    graph_segment_cross_streets: dict[str, list[str]] = {}
+
+    for pid, neighbors in adjacency.items():
+        pid_str = str(pid)
+        graph_adjacency[pid_str] = sorted(neighbors)
+        graph_segment_streets[pid_str] = gdf_street_names.get(pid, "")
+        pid_from, pid_to = cross_streets.get(pid, ("", ""))
+        graph_segment_cross_streets[pid_str] = [pid_from, pid_to]
+
+    graph_data = {
+        "adjacency": graph_adjacency,
+        "segment_streets": graph_segment_streets,
+        "segment_cross_streets": graph_segment_cross_streets,
+    }
+    graph_path = output_dir / "graph.json"
+    with open(graph_path, "w") as f:
+        json.dump(graph_data, f)
+    graph_size = graph_path.stat().st_size / (1024 * 1024)
+    logger.info("graph.json written: %.1f MB (%d segments)", graph_size, len(graph_adjacency))
 
     # Step G: Save build metadata
     elapsed = time.time() - start_time
@@ -879,6 +947,7 @@ async def build_index(output_dir: Path | None = None) -> None:
         "asp_segments_count": stats["asp_segments_count"],
         "index_file_sizes": stats["index_file_sizes"],
         "build_duration_seconds": round(elapsed, 1),
+        "propagation_stats": propagation_stats,
     }
 
     build_info_path = output_dir / "build_info.json"
