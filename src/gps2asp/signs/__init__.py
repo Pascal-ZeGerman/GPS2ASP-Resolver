@@ -2,8 +2,18 @@
 
 Public API: retrieve_signs() queries the SODA Parking Regulation Locations
 and Signs dataset for current, non-voided ASP/broom signs on a given
-block-face. Implements a three-level fallback strategy to handle street
+block-face. Implements a four-level fallback strategy to handle street
 name mismatches between CSCL and SODA formats.
+
+  Level 1: Exact four-field match with SODA-normalized names
+  Level 2: Try all abbreviation variant combinations
+  Level 3: Broad on_street + side query with client-side cross-street filtering
+  Level 4: Best-covering span via street graph distance (mid-span blocks)
+
+Level 4 activates only when Levels 1-3 return no SODA results at all,
+and requires graph.json to be present in the index directory. It queries
+all signs on the street+side and picks the SODA span whose endpoints are
+graph-distance closest to the block's cross streets.
 
 This module is standalone -- no Home Assistant dependency.
 """
@@ -19,6 +29,7 @@ from gps2asp.signs.exceptions import (
     SODAAPIError,
     SignRetrievalError,
 )
+from gps2asp.signs.graph import StreetGraph, _find_best_covering_span
 from gps2asp.signs.models import (
     NoASPSigns,
     NoMatchFound,
@@ -170,10 +181,11 @@ async def retrieve_signs(
 ) -> SignRetrievalResult:
     """Retrieve ASP/broom signs for a block-face from the SODA API.
 
-    Implements a three-level fallback strategy:
+    Implements a four-level fallback strategy:
       Level 1: Exact four-field match with SODA-normalized names
       Level 2: Try all abbreviation variant combinations
       Level 3: Broad on_street + side query with client-side cross-street filtering
+      Level 4: Best-covering span via graph distance (mid-span blocks, requires graph.json)
 
     Args:
         on_street: Street name in CSCL format (e.g., "PROSPECT PL").
@@ -302,7 +314,54 @@ async def retrieve_signs(
                 # treat as any_soda_results (no ASP signs on this block)
 
     # ------------------------------------------------------------------
-    # All three levels exhausted
+    # Level 4: Best-covering span (mid-span blocks)
+    # ------------------------------------------------------------------
+    # Only attempt if no SODA results from Levels 1-3. When any_soda_results
+    # is True but no ASP signs were found, the records existed but contained no
+    # broom signs -- Level 4 won't help in that case.
+    if not any_soda_results:
+        graph = StreetGraph.get()
+        if graph is None:
+            logger.warning(
+                "Level 4: graph.json not available -- skipping mid-span fallback"
+            )
+        else:
+            for on_var in on_variants:
+                logger.debug(
+                    "Level 4: broad query on_street=%r, side=%r",
+                    on_var,
+                    side_of_street,
+                )
+                query = client.build_on_street_query(on_var, side_of_street)
+                records = await client.fetch_signs(query)
+                logger.debug(
+                    "Level 4: received %d raw records for broad query", len(records)
+                )
+
+                if records:
+                    any_soda_results = True
+                    best_span = _find_best_covering_span(
+                        records, from_street, to_street, graph
+                    )
+                    if best_span is not None:
+                        result = await _try_query(
+                            client,
+                            on_var, from_variants[0], to_variants[0], side_of_street,
+                            on_street, from_street, to_street,
+                            soda_level=4,
+                            prefetched_records=best_span,
+                        )
+                        if result is not None:
+                            logger.info(
+                                "Level 4 matched: on_street=%r (best-covering span, "
+                                "%d unique signs)",
+                                on_var,
+                                len(result.signs),
+                            )
+                            return result
+
+    # ------------------------------------------------------------------
+    # All four levels exhausted
     # ------------------------------------------------------------------
     if any_soda_results:
         # SODA returned records, but none were broom signs after filtering

@@ -438,3 +438,145 @@ def test_find_best_covering_span_groups_records_by_span() -> None:
     assert len(best) == 2
     descs = {r["sign_description"] for r in best}
     assert descs == {"SIGN A", "SIGN B"}
+
+
+# ── Level 4 integration with retrieve_signs() ────────────────────────
+
+
+_BROOM_SIGN_RECORD = {
+    "from_street": "72 STREET",
+    "to_street": "73 STREET",
+    "sign_description": "SANITATION BROOM UP",
+    "side_of_street": "N",
+}
+
+
+async def test_level_4_activates_when_levels_1_2_3_return_nothing() -> None:
+    """Level 4 fires when Levels 1-3 produce no SODA results at all.
+
+    Setup: SODAClient returns no records for exact/variant queries but
+    returns records on the broad on_street query. StreetGraph.get() returns
+    a graph that picks the best span, and _try_query returns SignRetrievalSuccess.
+    """
+    graph = _make_graph()
+
+    # Build SODA broad-query records (on BROADWAY, side N)
+    broad_records = [dict(_BROOM_SIGN_RECORD)]
+
+    mock_client = MagicMock()
+    mock_client.build_block_query.return_value = "mock_block_query"
+    mock_client.build_on_street_query.return_value = "mock_broad_query"
+    # fetch_signs: empty for block queries (Levels 1+2), records for broad query (Level 3+4)
+    mock_client.fetch_signs = AsyncMock(side_effect=[
+        [],          # Level 1 block query
+        [],          # Level 3 broad query (Level 2 has no extra combos for single-variant names)
+        broad_records,  # Level 4 broad query
+    ])
+
+    with (
+        patch("gps2asp.signs.SODAClient", return_value=mock_client),
+        patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+    ):
+        result = await retrieve_signs(
+            on_street="BROADWAY",
+            from_street="72 STREET",
+            to_street="73 STREET",
+            side_of_street="N",
+        )
+
+    assert isinstance(result, SignRetrievalSuccess), (
+        f"Expected SignRetrievalSuccess from Level 4, got {type(result).__name__}"
+    )
+    assert result.soda_level == 4
+
+
+async def test_level_4_does_not_activate_when_level_1_succeeds() -> None:
+    """Level 4 is skipped when Level 1 already returns results."""
+    graph = _make_graph()
+
+    mock_client = MagicMock()
+    mock_client.build_block_query.return_value = "mock_block_query"
+    mock_client.build_on_street_query.return_value = "mock_broad_query"
+    # Level 1 returns records directly
+    mock_client.fetch_signs = AsyncMock(return_value=[_BROOM_SIGN_RECORD])
+
+    with (
+        patch("gps2asp.signs.SODAClient", return_value=mock_client),
+        patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+    ):
+        result = await retrieve_signs(
+            on_street="BROADWAY",
+            from_street="72 STREET",
+            to_street="73 STREET",
+            side_of_street="N",
+        )
+
+    assert isinstance(result, SignRetrievalSuccess)
+    assert result.soda_level == 1
+    # StreetGraph.get should not have been called for Level 4 lookup
+    # (Level 1 succeeded, so Level 4 was never reached)
+
+
+async def test_level_4_gracefully_degrades_when_graph_missing() -> None:
+    """Level 4 falls through to NoMatchFound when graph.json is absent."""
+    mock_client = MagicMock()
+    mock_client.build_block_query.return_value = "mock_block_query"
+    mock_client.build_on_street_query.return_value = "mock_broad_query"
+    # All queries return empty (simulates SODA having no records for this block)
+    mock_client.fetch_signs = AsyncMock(return_value=[])
+
+    with (
+        patch("gps2asp.signs.SODAClient", return_value=mock_client),
+        patch("gps2asp.signs.graph.StreetGraph.get", return_value=None),  # no graph
+    ):
+        result = await retrieve_signs(
+            on_street="BROADWAY",
+            from_street="72 STREET",
+            to_street="73 STREET",
+            side_of_street="N",
+        )
+
+    # No SODA results at all, no graph -> NoMatchFound
+    assert isinstance(result, NoMatchFound)
+
+
+async def test_level_4_returns_no_match_when_best_span_is_none() -> None:
+    """Level 4 returns NoMatchFound when _find_best_covering_span returns None.
+
+    This happens when the broad on_street query returns records but none
+    of them are reachable from our block in the graph.
+    """
+    graph = _make_graph()
+
+    # Records from a disconnected sub-graph (ALPHA/BETA streets)
+    unreachable_records = [
+        {
+            "from_street": "ALPHA STREET",
+            "to_street": "BETA STREET",
+            "sign_description": "SANITATION BROOM UNREACHABLE",
+        }
+    ]
+
+    mock_client = MagicMock()
+    mock_client.build_block_query.return_value = "mock_block_query"
+    mock_client.build_on_street_query.return_value = "mock_broad_query"
+    mock_client.fetch_signs = AsyncMock(side_effect=[
+        [],                # Level 1
+        [],                # Level 3 broad
+        unreachable_records,  # Level 4 broad
+    ])
+
+    with (
+        patch("gps2asp.signs.SODAClient", return_value=mock_client),
+        patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+    ):
+        result = await retrieve_signs(
+            on_street="BROADWAY",
+            from_street="72 STREET",
+            to_street="73 STREET",
+            side_of_street="N",
+        )
+
+    # best span is None (all distances inf) -> no Level 4 result
+    # SODA had results (any_soda_results=True) -> NoASPSigns
+    assert isinstance(result, (NoASPSigns, NoMatchFound))
