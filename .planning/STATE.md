@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Bug Fixes
-current_plan: 2 of 3 (complete)
+current_plan: 3 of 3 (complete)
 status: completed
 stopped_at: Phase 11 complete — Plan 11-03 done; spatial index rebuilt with BFS propagation; 62,455 interior blocks added; Manhattan 58.2%, Brooklyn 74.1%; graph.json 7.9MB; 273 tests pass
-last_updated: "2026-03-03T15:44:45.385Z"
+last_updated: "2026-03-07T15:51:51.111Z"
 progress:
   total_phases: 7
   completed_phases: 7
@@ -18,10 +18,10 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-02-23)
+See: .planning/PROJECT.md (updated 2026-03-07)
 
-**Core value:** Tell the user exactly when they need to move their car for ASP -- "next time to move is [datetime]"
-**Current focus:** v1.1 complete — all phases done (Phase 11 ASP coverage improvement delivered)
+**Core value:** Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]"
+**Current focus:** Between milestones — v1.1 archived, planning next milestone
 
 ## Current Position
 
@@ -63,6 +63,11 @@ Progress: [██████████] 100% (13/13 plans complete)
 - Add env config for caching area range (v2)
 - Parse non-ASP parking restrictions in future phase (v2+)
 - Add HA diagnostics endpoint to asp_parking integration (v2)
+- Schedule monthly spatial index rebuild in HA integration
+- Investigate Manhattan mid-span coverage gap (58.2% vs 60% target)
+- Improve Queens coverage via BFS tuning (currently 36.8%)
+- Add Level 4 hit rate observability metrics
+- Reduce graph.json size for faster Level 4 startup (currently 7.9 MB)
 
 ### Completed in Phase 5
 

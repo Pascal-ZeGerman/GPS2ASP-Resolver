@@ -10,11 +10,11 @@ Tell the user exactly when they need to move their car for ASP — "next time to
 
 ## Current State
 
-**Shipped:** v1.0 MVP (2026-02-23)
-**Code:** 7,314 lines Python, 41 files, 213 tests
+**Shipped:** v1.1 Bug Fixes (2026-03-07)
+**Code:** 7,585 lines Python, 37 files, 273 tests
 **Stack:** Python 3.11+, pyproj, shapely, rtree, httpx, Home Assistant custom component
 
-The full pipeline is operational: GPS → State Plane → street segment/side → SODA API signs → parsed schedule → next move datetime → HA sensor. Installable via HACS or manual copy to `custom_components/`.
+The full pipeline is operational with a clean public API: `resolve_asp(lat, lon)` → `ASPResult`. The spatial index covers 26,374 ASP segments (+44% from v1.0) with BFS graph propagation covering 62,455 interior mid-span blocks. ASP coverage: Manhattan 58.2%, Brooklyn 74.1%, Bronx 52.4%, Queens 36.8%.
 
 ## Requirements
 
@@ -22,21 +22,25 @@ The full pipeline is operational: GPS → State Plane → street segment/side �
 
 - ✓ GPS-01: WGS84 to NY State Plane coordinate conversion — v1.0
 - ✓ GPS-02: GPS point to street segment + side resolution — v1.0
-- ✓ GPS-03: Confidence scoring for GPS accuracy limitations — v1.0
-- ✓ SIGN-01: SODA API query for ASP/broom signs — v1.0
-- ✓ SIGN-02: Filter current signs only (exclude voided/superseded) — v1.0
+- ✓ GPS-03: Confidence scoring for GPS accuracy limitations — v1.0 (improved v1.1: width-relative formula)
+- ✓ SIGN-01: SODA API query for ASP/broom signs — v1.0 (improved v1.1: voided sign filter fixed, Level 4 mid-span fallback added)
+- ✓ SIGN-02: Filter current signs only (exclude voided/superseded) — v1.0 (fixed v1.1: was using record_type='Current' no-op)
 - ✓ SIGN-03: SODA API pagination handling — v1.0
 - ✓ SCHED-01: Parse cleaning days from sign descriptions — v1.0
 - ✓ SCHED-02: Parse time windows from sign descriptions — v1.0
 - ✓ SCHED-03: Handle sign format variations (EXCEPT, dash ranges, etc.) — v1.0
-- ✓ SCHED-04: Compute next upcoming ASP window datetime — v1.0
+- ✓ SCHED-04: Compute next upcoming ASP window datetime — v1.0 (fixed v1.1: CleaningWindow|None type mismatch)
 - ✓ HA-01: Read GPS from VW CarNet device_tracker entity — v1.0
 - ✓ HA-02: Expose sensor with datetime value for next move time — v1.0
 - ✓ HA-03: Expose sensor attributes with schedule details — v1.0
 - ✓ HA-04: Auto re-resolve on GPS movement >50m — v1.0
+- ✓ API-01: Single importable `resolve_asp(lat, lon, debug=False)` function — v1.1
+- ✓ COV-01: BFS graph propagation for mid-span ASP coverage (Manhattan ≥50%, Brooklyn ≥50%) — v1.1
 
 ### Active
 
+- [ ] COV-02: Improve Queens coverage via BFS tuning (currently 36.8%)
+- [ ] COV-03: Migrate HA coordinator to use `resolve_asp()` (currently calls three stages manually)
 - [ ] CACHE-01: Cache ASP sign data per block segment in SQLite with weekly refresh
 - [ ] CACHE-02: Configurable caching area (center + radius) for pre-seeding
 - [ ] CACHE-03: Fall back to live SODA API on cache miss
@@ -60,11 +64,12 @@ The full pipeline is operational: GPS → State Plane → street segment/side �
 ## Context
 
 - **Data source**: NYC Open Data `nfid-uabd` via SODA API. ASP signs identifiable by `"SANITATION BROOM SYMBOL"` in `sign_description`.
-- **Coordinate systems**: GPS WGS84 → NY State Plane (EPSG:2263) via pyproj. R-tree spatial index with 105K vehicular segments.
-- **Street name normalization**: CSCL format (abbreviated) to SODA format (expanded) with three-level fallback for name mismatches.
+- **Coordinate systems**: GPS WGS84 → NY State Plane (EPSG:2263) via pyproj. R-tree spatial index with 26,374 ASP vehicular segments.
+- **Street name normalization**: CSCL format (abbreviated) to SODA format (expanded) with three-level fallback + directional prefix/suffix expansion.
+- **Coverage**: Manhattan 58.2%, Brooklyn 74.1%, Bronx 52.4%, Queens 36.8% (BFS graph propagation active, graph.json 7.9 MB).
 - **Primary area**: Prospect Heights, Brooklyn and surrounding neighborhoods. Works for all NYC.
 - **Integration**: VW CarNet / WeConnect HA integration provides `device_tracker` entity with `latitude`/`longitude` attributes.
-- **Known tech debt**: ScheduleFound.next_window type mismatch (edge case), SODA app_token not in config flow, IndexNotFoundError produces no distinct sensor state.
+- **Known tech debt**: HA coordinator uses manual three-stage pipeline (not `resolve_asp()`), SODA app_token not in config flow, Queens 36.8% coverage below target.
 
 ## Constraints
 
@@ -88,6 +93,11 @@ The full pipeline is operational: GPS → State Plane → street segment/side �
 | 50m movement threshold with 5s debounce | Filters GPS jitter while catching real movement | — Pending (needs real-world testing) |
 | Retain last known state on errors | SODA errors don't clear schedule; user keeps useful data | ✓ Good — graceful degradation |
 | Entity ID via has_entity_name=True | HA recommended pattern; generates sensor.asp_parking_next_move_time | — Pending (docs say sensor.asp_next_move_time) |
+| Width-relative confidence threshold (v1.1) | Street width varies 20-60ft in NYC; absolute 10ft guard too sensitive on narrow streets | ✓ Good — PROSPECT PL case fixed |
+| resolve_asp() as single public API (v1.1) | Callers shouldn't wire three pipeline stages; debug flag enables introspection | ✓ Good — clean ergonomics, @overload stubs |
+| BFS graph propagation for mid-span coverage (v1.1) | SODA spans cover multiple CSCL blocks; interior blocks were missing has_asp flags | ✓ Good — near-doubles Manhattan coverage |
+| SODA voided sign filter IS NULL (v1.1) | record_type='Current' was a no-op (all records have that type) | ✓ Good — fixes false negatives |
+| graph.json covers all segments (not ASP-only) (v1.1) | Level 4 must navigate between any adjacent blocks to find covering span | ✓ Good — correct for BFS traversal |
 
 ---
-*Last updated: 2026-02-23 after v1.0 milestone*
+*Last updated: 2026-03-07 after v1.1 milestone*

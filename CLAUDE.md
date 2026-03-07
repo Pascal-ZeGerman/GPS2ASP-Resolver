@@ -14,25 +14,10 @@ GPS → State Plane → street segment/side → SODA API signs → parsed schedu
 ## Development
 
 - Python >=3.11, build system: hatchling
-- Virtual env: `.venv/`
-- Run tests: `pytest` (asyncio_mode = auto)
-- Install dev: `pip install -e ".[dev]"`
-- Install build tools: `pip install -e ".[build]"`
-
-### pip / venv convention
-
-Always use `python -m pip` (not `.venv/bin/pip`) when the venv was created in a
-directory path that may have been renamed or moved. The `.venv/bin/pip` wrapper
-script embeds an absolute shebang that becomes stale after a directory rename.
-
-After any project directory rename, regenerate `.pth` and wrapper scripts:
-
-```bash
-python -m pip install -e ".[dev]"
-```
-
-This ensures `.venv/lib/pythonX.Y/site-packages/_gps2asp.pth` and
-`.venv/bin/pip*` shebangs all point to the current path.
+- Virtual env: `.venv/` — always use `.venv/bin/python` and `.venv/bin/pytest` (system Python is externally managed)
+- Run tests: `.venv/bin/pytest` (asyncio_mode = auto)
+- Install dev: `.venv/bin/python -m pip install -e ".[dev]"`
+- Install build tools: `.venv/bin/python -m pip install -e ".[build]"`
 
 ## Conventions
 
