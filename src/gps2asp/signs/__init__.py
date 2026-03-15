@@ -23,21 +23,21 @@ from __future__ import annotations
 import logging
 from itertools import product
 
-from gps2asp.signs.client import SODAClient
-from gps2asp.signs.exceptions import (
+from .client import SODAClient
+from .exceptions import (
     IncompleteResultsError,
     SODAAPIError,
     SignRetrievalError,
 )
-from gps2asp.signs.graph import StreetGraph, _find_best_covering_span
-from gps2asp.signs.models import (
+from .graph import StreetGraph, _find_best_covering_span
+from .models import (
     NoASPSigns,
     NoMatchFound,
     SignRecord,
     SignRetrievalResult,
     SignRetrievalSuccess,
 )
-from gps2asp.signs.normalize import name_variants, normalize_to_soda
+from .normalize import name_variants, normalize_to_soda
 
 __all__ = [
     "retrieve_signs",
@@ -326,6 +326,14 @@ async def retrieve_signs(
                 "Level 4: graph.json not available -- skipping mid-span fallback"
             )
         else:
+            logger.info(
+                "l4_event=l4_entry on_street=%r from=%r to=%r side=%r "
+                'reason="levels 1-3 returned no SODA results"',
+                on_street,
+                from_street,
+                to_street,
+                side_of_street,
+            )
             for on_var in on_variants:
                 logger.debug(
                     "Level 4: broad query on_street=%r, side=%r",
@@ -340,10 +348,23 @@ async def retrieve_signs(
 
                 if records:
                     any_soda_results = True
+                    span_count = len({
+                        (r.get("from_street", ""), r.get("to_street", ""))
+                        for r in records
+                    })
                     best_span = _find_best_covering_span(
                         records, from_street, to_street, graph
                     )
                     if best_span is not None:
+                        span_from = best_span[0].get("from_street", "")
+                        span_to = best_span[0].get("to_street", "")
+                        logger.info(
+                            "l4_event=l4_match on_street=%r span_from=%r span_to=%r signs=%d",
+                            on_var,
+                            span_from,
+                            span_to,
+                            len(best_span),
+                        )
                         result = await _try_query(
                             client,
                             on_var, from_variants[0], to_variants[0], side_of_street,
@@ -352,13 +373,27 @@ async def retrieve_signs(
                             prefetched_records=best_span,
                         )
                         if result is not None:
-                            logger.info(
-                                "Level 4 matched: on_street=%r (best-covering span, "
-                                "%d unique signs)",
-                                on_var,
-                                len(result.signs),
-                            )
                             return result
+                    else:
+                        logger.info(
+                            "l4_event=l4_no_span on_var=%r on_street=%r from=%r to=%r side=%r "
+                            "span_candidates=%d",
+                            on_var,
+                            on_street,
+                            from_street,
+                            to_street,
+                            side_of_street,
+                            span_count,
+                        )
+                else:
+                    logger.info(
+                        "l4_event=l4_no_records on_var=%r on_street=%r from=%r to=%r side=%r",
+                        on_var,
+                        on_street,
+                        from_street,
+                        to_street,
+                        side_of_street,
+                    )
 
     # ------------------------------------------------------------------
     # All four levels exhausted
