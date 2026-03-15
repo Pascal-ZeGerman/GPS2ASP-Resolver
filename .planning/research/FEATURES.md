@@ -1,178 +1,212 @@
 # Feature Research
 
-**Domain:** NYC Alternate Side Parking (ASP) GPS resolver for Home Assistant
-**Researched:** 2026-02-21
-**Confidence:** MEDIUM-HIGH
+**Domain:** GPS-to-ASP resolver — spatial coverage and observability improvements (v2.0 milestone)
+**Researched:** 2026-03-13
+**Confidence:** HIGH (all claims sourced directly from codebase — build_index.py, graph.py, signs/__init__.py, coordinator.py, sensor.py, normalize.py, PROJECT.md, STATE.md)
+
+---
+
+## Context: What Is Already Built
+
+This is a subsequent milestone for an operational system. The four features in scope are incremental improvements to a working pipeline, not new capabilities. Understanding existing behavior is essential for correctly scoping each feature.
+
+**Existing pipeline (v1.1 operational):**
+- R-tree spatial index: 26,374 ASP vehicular segments + 62,455 BFS-propagated interior blocks
+- 4-level SODA API fallback: L1 exact match → L2 name variants → L3 broad + client-filter → L4 best-covering span via BFS graph distance
+- graph.json: 7.9 MB, covers ALL vehicular segments (not filtered to ASP-only), loaded as singleton at runtime by `StreetGraph.get()`
+- `soda_level` tracked in `SignRetrievalSuccess.soda_level` (1-4) and `ASPDebugResult.soda_level`, but NOT stored in `ASPParkingData` and NOT exposed in HA sensor attributes
+- Coverage: Manhattan 58.2%, Brooklyn 74.1%, Bronx 52.4%, Queens 36.8%
+- Coordinator calls 3-stage pipeline manually (not `resolve_asp()`) — tech debt, out of scope for this milestone
+
+---
 
 ## Feature Landscape
 
 ### Table Stakes (Users Expect These)
 
-Features the tool must have or it is useless as an ASP resolver. These are what every competitor (SpotAngels, Parkr, ASP NYC) provides in some form, and what the PROJECT.md core value requires.
+For this milestone, "table stakes" means the minimum required for v2.0 to be considered done. Each feature either closes a known gap or surfaces data the system already computes but doesn't expose.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| GPS-to-street-segment resolution | Core function -- must resolve lat/long to the correct block and side of street | HIGH | Requires WGS84-to-NY-State-Plane conversion via `pyproj`, then nearest-sign matching against NYC Open Data `sign_x_coord`/`sign_y_coord`. Hardest part is correctly identifying which side of the street the car is on. |
-| ASP sign data lookup | Must retrieve the actual ASP/broom sign rules for the resolved location | MEDIUM | Query SODA API dataset `nfid-uabd` filtering for `SANITATION BROOM SYMBOL` in `sign_description`. Returns day/time schedule text like `"TUESDAY FRIDAY 8:30AM-10AM"`. |
-| Sign description parsing | Must extract structured schedule (days, start time, end time) from free-text sign descriptions | MEDIUM | NYC sign text follows semi-consistent patterns but has variations. Need robust parser, not brittle regex. Sign legend shows formats like `"NO PARKING [DAYS] [TIME RANGE]"` with broom symbol. |
-| Next-move-time computation | The primary output: "You need to move your car by [datetime]" | MEDIUM | Given parsed schedule + current datetime, compute the next upcoming ASP window. Must handle week rollover, multiple cleaning days per week (e.g., Tue+Fri), and edge cases like "it's currently during an ASP window." |
-| Holiday suspension calendar | ASP is suspended 30+ days/year for holidays -- ignoring this means false alerts | LOW | NYC DOT publishes annual ICS and PDF calendars. The NYC 311 API (`api-portal.nyc.gov`) returns structured JSON with `"status": "IN EFFECT"` or suspended status. The `ha-nyc311` integration already solves this for HA. |
-| Weather/emergency suspension awareness | NYC suspends ASP for snow emergencies, sometimes announced late in the day | MEDIUM | No clean API. Sources: `@NYCASP` on X/Twitter (posts daily ~7AM), NYC 311 API status endpoint, Notify NYC alerts. Requires polling/cron since decisions are made as late as same-day. |
-| Local caching of sign data | ASP signs rarely change (~yearly). Hitting the API on every lookup is wasteful and fragile | LOW | Cache sign data per block segment. Weekly refresh is sufficient per PROJECT.md. SQLite or JSON file cache. SODA API has no rate limit with app token but network dependency is a reliability concern. |
+| Queens coverage >= 50% | v2.0 milestone target; currently 36.8% — largest gap by 13.2 points | HIGH | Root cause unknown; must diagnose before fixing. Likely missing normalization patterns for Queens street names in `normalize_to_soda()` or cross-street name format mismatches. Cannot skip diagnosis step. |
+| Manhattan coverage >= 60% | v2.0 milestone target; currently 58.2% — 1.8 points short | LOW-MEDIUM | Small gap likely explained by same normalization class of bug as Queens. Expect this closes as a side effect of Queens normalization audit. If not, may require targeted BFS tuning. |
+| `soda_level` in HA sensor attributes | Without this, users/developers cannot tell whether a result came from an exact match (Level 1) or a BFS fallback (Level 4); essential for trust and debugging | LOW | `soda_level` already flows through the library. The only missing links are: add `soda_level: int = 0` to `ASPParkingData`, populate it in `_async_resolve_pipeline()`, expose it in `extra_state_attributes` metadata group. |
+| graph.json <= 4 MB | v2.0 target; current 7.9 MB is loaded entirely into memory as a Python dict on first Level 4 call — oversized for HA startup on low-memory hardware | MEDIUM | BFS traversal correctness is the key constraint; the filter must retain ASP segments AND their immediate neighbors (see Anti-Features for why strict ASP-only is wrong). |
 
 ### Differentiators (Competitive Advantage)
 
-Features that no existing ASP tool provides in the Home Assistant context. These are what make GPS2ASP Resolver worth building rather than just using SpotAngels or Parkr.
+Features that go beyond baseline correctness and improve the user's ability to trust and debug the system.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Home Assistant native integration | No existing tool resolves GPS coordinates from a car tracker entity directly to ASP rules within HA. SpotAngels/Parkr are phone apps requiring manual interaction. This is fully automated. | HIGH | Must expose sensor entities (next move time, current ASP status, suspension status). The `ha-nyc311` integration handles suspension binary sensors but does NOT do GPS resolution or schedule lookup. This fills the gap. |
-| VW CarNet/WeConnect GPS auto-consumption | Automatically reads `device_tracker` entity attributes (`latitude`/`longitude`) from the VW CarNet HA integration. Zero user interaction required after parking. | LOW | Standard HA entity attribute reading. The VW integration (transitioning from `weconnect-python` to `CarConnectivity`) provides these attributes on the device tracker entity. |
-| Proactive push notification with move deadline | HA actionable notifications pushed to phone at configurable lead time (e.g., 1 hour before ASP window). Includes "Snooze" or "Dismiss" actions. | MEDIUM | Uses HA `notify.mobile_app_*` service. Actionable notifications supported on both iOS and Android companion apps. Far superior to manual app-checking. |
-| Automation-ready structured output | Returns machine-readable data (next move datetime, minutes until move, ASP active boolean, current side) that HA automations can consume for any downstream action. | LOW | Sensor entities with attributes. Enables things like: turn on a smart light red when move time is approaching, announce on smart speaker, etc. |
-| Combined suspension + schedule intelligence | Merges the holiday/weather suspension status (from 311 API or `ha-nyc311`) with the location-specific ASP schedule to give a single authoritative answer: "Do I need to move or not?" | MEDIUM | Existing tools show suspension status OR sign rules separately. This tool combines them: if ASP is suspended tomorrow, your "next move time" shifts to the next non-suspended window. This is the killer feature. |
-| Dual data source with fallback | Uses NYC Open Data (SODA) as primary with OpenCurb as validation/fallback for supported areas | LOW | OpenCurb only covers Midtown Manhattan (30th-59th St) per official docs despite user reports of Brooklyn working. Use as validation where available, not primary source. |
+| Structured Level 4 hit-rate logging | Enables data-driven decisions about where to improve normalization; without this, coverage improvements are guesswork | LOW | Add structured log lines at each level exit in `signs/__init__.py`: level number, on_street, outcome (matched/no-records/no-broom-signs). Borough could be passed through if available. |
+| Borough-specific normalization diagnosis report | Queens uses patterns that may be absent from the shared `_SUFFIX_EXPANSIONS` / `_DIRECTIONAL_EXPANSIONS` tables; a systematic audit converts guessing into evidence | MEDIUM | Requires sampling Queens SODA records and CSCL cross-street names for known failures, then comparing formats. Outputs concrete rule additions. |
+| BFS-correct graph compression (ASP + 1-hop neighbors) | Reduces cold-start time and memory footprint without breaking Level 4 correctness | MEDIUM | Compress at build time in `build_index.py`; zero runtime cost. Expected to reach 3-4 MB. |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
-Features to explicitly NOT build. These are out of scope per PROJECT.md and would add complexity without serving the core value.
-
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| Real-time parking availability / spot finding | "Tell me WHERE to park" is a natural extension | Completely different data problem. Requires crowd-sourced real-time data (like SNAG Parking) or sensor networks. NYC has no public API for spot availability. Would multiply project scope 10x. | Stick to "WHEN to move" -- this is the validated need. Spot-finding apps (SpotAngels, SNAG) already exist. |
-| Full parking regulation support (meters, no standing, hydrants) | "While you're at it, check all signs" | Parking regulation sign universe is enormous (~1M signs in NYC). ASP/broom signs have consistent patterns; other sign types are far more varied and complex to parse. Scope explosion. | ASP/broom signs only for v1. Other sign types could be a v2+ consideration if the ASP core proves valuable. |
-| Mobile app or web UI | "I want to check on my phone" | This is a backend HA service. Building a UI duplicates SpotAngels/Parkr. HA already has a dashboard and companion app for viewing sensor states. | Use HA dashboard cards and companion app push notifications. The HA ecosystem IS the UI. |
-| Multi-vehicle support | "I have two cars" | Adds state management complexity (which car is where, separate schedules). Single-car solves the immediate need. | Design data model to not preclude multi-car, but don't implement it. Single entity input, single schedule output. |
-| Parking guidance (where to move TO) | "Tell me the nearest legal spot" | Requires real-time spot availability data that doesn't exist. Would need to scan multiple block segments, check their schedules, and somehow know if spots are open. | Tell the user WHEN to move. Where is their problem -- they know their neighborhood. |
-| Historical ticket data / analytics | "Show me how many tickets I've avoided" | Nice vanity metric but zero practical value for the core use case. Adds database schema complexity for data that's hard to verify (did you actually avoid a ticket?). | If desired later, can be derived from notification history logs. Not worth building. |
-| AI/ML predictions for suspensions | Parkr claims "AI-driven suspension predictions" but evidence of actual AI capability is thin | Weather-based suspensions are announced officially. Predicting before the official announcement is unreliable and creates false confidence. A wrong "it'll be suspended" prediction means a ticket. | Poll official sources (@NYCASP, 311 API). Faster and more reliable than predictions. The announcement IS the data. |
+| Strict ASP-only graph.json (no neighbor expansion) | Maximizes file size reduction | Breaks Level 4 BFS correctness. `_bfs_min_hops()` traverses from block cross-street segments to span endpoint segments. If a non-ASP segment sits between two ASP segments on the same street, removing it disconnects the traversal path — `span_distance()` returns `float('inf')` for a valid span. | Include ASP segments + their immediate 1-hop adjacency neighbors. This is the minimal correct set. |
+| Real-time Level 4 counters (Prometheus-style) | Developer wants hit-rate metrics per borough | HA custom components have no native metrics endpoint; adding a metrics server creates deployment complexity and an HA certification blocker | Use structured log lines with consistent format that can be grepped or exported post-hoc; expose `soda_level` in HA sensor attributes for dashboard visibility |
+| Per-borough normalization tables | Separate `_SUFFIX_EXPANSIONS` dict per borough | Queens issues are almost certainly missing patterns in the shared table, not conflicts between boroughs; separate tables add maintenance burden | Audit shared table; add missing Queens patterns; confirm via coverage regression |
+| Dynamic graph re-compression at runtime | Reduce memory after load by dropping non-traversed keys | Python dict cannot be lazily compressed; any re-encoding adds CPU overhead at startup. The correct place to compress is build time. | Compress at build time in `build_index.py` |
+| Coordinator migration to `resolve_asp()` (COV-03) | Simplifies `soda_level` capture and removes manual 3-stage wiring | Correct but out of scope for this milestone; touching the coordinator risks behavioral regressions in HA integration code. `soda_level` can be captured without migrating the coordinator. | Defer to v2.x; add `soda_level` field to `ASPParkingData` directly |
+
+---
 
 ## Feature Dependencies
 
 ```
-[GPS-to-street resolution]
-    |--requires--> [Coordinate conversion (WGS84 to NY State Plane)]
-    |--requires--> [SODA API connectivity]
-    |--enables---> [ASP sign data lookup]
-                       |--requires--> [Sign description parsing]
-                                          |--enables---> [Next-move-time computation]
-                                                             |--requires--> [Holiday suspension calendar]
-                                                             |--requires--> [Weather suspension awareness]
-                                                             |--enables---> [Push notification]
-                                                             |--enables---> [Automation-ready output]
+[Queens normalization audit]
+    └──produces──> [New rules in normalize_to_soda()]
+                       └──requires rebuild──> [scripts/build_index.py rebuild]
+                                                  └──improves──> [Queens coverage >= 50%]
+                                                  └──likely fixes──> [Manhattan coverage >= 60%]
 
-[Local caching]
-    |--enhances--> [ASP sign data lookup] (reduces API calls, enables offline)
+[graph.json size reduction]
+    └──depends on──> [ASP segment set from segments.json]
+    └──independent of──> [Queens normalization audit]
+    (can be developed in parallel)
 
-[VW CarNet GPS auto-consumption]
-    |--provides input to--> [GPS-to-street resolution]
+[Level 4 observability: soda_level in HA sensor]
+    └──requires──> [soda_level field in ASPParkingData]
+                       └──requires──> [Populate from sign_result in _async_resolve_pipeline()]
+                                          └──enables──> [soda_level in extra_state_attributes]
 
-[ha-nyc311 integration]
-    |--can provide--> [Holiday suspension calendar]
-    |--can provide--> [Weather suspension awareness]
+[Structured Level 4 logging]
+    └──independent of all above (just adds log lines to signs/__init__.py)
 ```
 
 ### Dependency Notes
 
-- **GPS resolution requires coordinate conversion:** The NYC Open Data sign locations use NY State Plane (NAD83, feet). GPS from VW CarNet is WGS84. `pyproj` with `Transformer.from_crs(4326, 2263)` handles this (EPSG:2263 is NY Long Island zone covering all NYC).
-- **Next-move-time requires both schedule AND suspension data:** Without suspension awareness, the tool gives wrong answers on ~30+ days per year. This must be in v1.
-- **Push notifications enhance but don't block core value:** The sensor entity alone (showing next move time on HA dashboard) is useful even without push notifications. Notifications are a v1.x enhancement.
-- **ha-nyc311 is complementary, not competing:** It handles the "is ASP suspended today?" question via NYC 311 API. This project handles "what is the ASP schedule for my specific curb location?" They combine to answer "when do I actually need to move?"
+- **Queens normalization requires index rebuild:** `normalize_to_soda()` is called at build time inside `_build_intersection_index()` to construct the `(on_street, cross_street) -> set[pid]` lookup that drives BFS propagation. Any new rules only take effect after `scripts/build_index.py` is rerun. Runtime changes to `normalize_to_soda()` immediately affect SODA query construction (Levels 1-3), but `has_asp` flags in `segments.json` reflect the build-time state.
+
+- **graph.json reduction is independent:** The filter operates on `adjacency` dict construction (build_index.py lines 917-926). It does not touch normalization. These can ship in the same build-index rebuild invocation, or separately.
+
+- **soda_level in HA does not require coordinator migration:** `soda_level` is available on `sign_result` at line 311 of coordinator.py (`isinstance(sign_result, SignRetrievalSuccess)`). Adding `self.data.soda_level = sign_result.soda_level if isinstance(sign_result, SignRetrievalSuccess) else 0` requires no architectural change.
+
+- **Manhattan coverage likely closes via Queens normalization:** Manhattan 58.2% gap is 1.8 points. Given BFS propagation already near-doubled Manhattan coverage (from ~30% to 58%), the residual gap is almost certainly spans where `start_pids` or `end_pids` is empty in `_propagate_asp_to_interior_blocks()` (build_index.py line 565-566). This happens when `intersection_index.get((on_street, cross_street))` returns empty because a name variant is missing from the normalization table — the same class of failure as Queens.
+
+---
 
 ## MVP Definition
 
-### Launch With (v1)
+This is a subsequent milestone; "MVP" means minimum required to close v2.0.
 
-Minimum viable product -- what's needed to answer "when do I need to move my car?"
+### Launch With (v2.0)
 
-- [ ] **GPS-to-street-segment resolution** -- Core function, everything depends on this
-- [ ] **SODA API sign data lookup** -- Must retrieve ASP signs for resolved location
-- [ ] **Sign description parser** -- Must extract days and time windows from sign text
-- [ ] **Next-move-time computation** -- The primary output: next ASP window datetime
-- [ ] **Holiday suspension calendar** -- Hardcoded 2026 calendar or 311 API integration; without this, tool gives wrong answers on holidays
-- [ ] **Local sign data cache** -- SQLite or JSON; prevents API dependency on every lookup
-- [ ] **Basic HA sensor entity** -- Expose `sensor.asp_next_move_time` with datetime value and attributes (schedule details, suspension status)
+- [ ] **Queens normalization audit + rule additions** — diagnose format mismatches, add patterns to `normalize_to_soda()`, rebuild index, confirm coverage >= 50%
+- [ ] **Manhattan coverage >= 60%** — expected side effect of Queens fix; explicit target to verify after rebuild
+- [ ] **`soda_level` in HA sensor `extra_state_attributes`** — one field in `ASPParkingData` + one line in coordinator + one line in sensor
+- [ ] **graph.json <= 4 MB** — ASP + 1-hop neighbor filter in `build_index.py`, same rebuild as Queens fix
 
-### Add After Validation (v1.x)
+### Add After Validation (v2.x)
 
-Features to add once the core GPS-to-schedule pipeline is proven correct.
+- [ ] **Structured Level 4 logging** — low complexity enhancement; add during or after v2.0 coverage work
+- [ ] **COV-03: Coordinator to `resolve_asp()`** — tech debt; enables cleaner `soda_level` capture and simpler testing, but not a v2.0 blocker
+- [ ] **CACHE-01: SQLite sign data cache** — reduces SODA API calls; deferred, not needed for coverage goals
+- [ ] **HA diagnostics endpoint** — blocked on HA diagnostics API familiarity; defer
 
-- [ ] **Weather/emergency suspension polling** -- Cron job checking @NYCASP or 311 API for same-day suspensions. Add once core schedule logic is validated.
-- [ ] **Push notifications** -- HA actionable notifications with configurable lead time. Add once sensor entity is reliably producing correct data.
-- [ ] **ha-nyc311 integration bridge** -- Consume `ha-nyc311` binary sensors for suspension status instead of implementing our own 311 polling. Reduces code, leverages existing maintained integration.
-- [ ] **Dual data source validation** -- Cross-reference SODA results with OpenCurb where coverage overlaps (limited to Midtown Manhattan officially).
+### Future Consideration (v3+)
 
-### Future Consideration (v2+)
+- [ ] **SUSP-01/02/03: NYC holiday and weather suspension** — separate data source (311 API), separate milestone
+- [ ] **NOTIF-01/02: HA actionable notifications** — requires stable schedule data first
 
-Features to defer until the core product is battle-tested.
-
-- [ ] **Multi-vehicle support** -- Only if user need emerges. Design for it, don't build it.
-- [ ] **Other parking regulation types** -- Meters, no-standing zones. Massive scope increase.
-- [ ] **Smart notification timing** -- Factor in walking distance to car, typical move-time patterns.
-- [ ] **Block-segment visualization** -- HA map card showing the resolved block segment and sign locations.
+---
 
 ## Feature Prioritization Matrix
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| GPS-to-street resolution | HIGH | HIGH | P1 |
-| ASP sign data lookup (SODA) | HIGH | MEDIUM | P1 |
-| Sign description parsing | HIGH | MEDIUM | P1 |
-| Next-move-time computation | HIGH | MEDIUM | P1 |
-| Holiday suspension calendar | HIGH | LOW | P1 |
-| Local sign data cache | MEDIUM | LOW | P1 |
-| Basic HA sensor entity | HIGH | LOW | P1 |
-| Weather suspension polling | HIGH | MEDIUM | P2 |
-| Push notifications | HIGH | LOW | P2 |
-| ha-nyc311 bridge | MEDIUM | LOW | P2 |
-| OpenCurb fallback | LOW | LOW | P3 |
-| Multi-vehicle support | LOW | MEDIUM | P3 |
-| Other sign types | LOW | HIGH | P3 |
+| Queens normalization audit + fix | HIGH — 13.2-point coverage gap | MEDIUM — must sample data, identify patterns, add rules, rebuild index | P1 |
+| `soda_level` in HA sensor attributes | HIGH — transparency and debugging | LOW — one field, one coordinator line, one sensor line | P1 |
+| graph.json size reduction to <= 4 MB | MEDIUM — startup cost and memory | MEDIUM — correct ASP + neighbor filter; verify BFS correctness | P1 |
+| Manhattan coverage >= 60% | MEDIUM — 1.8-point gap | LOW if fixed by Queens normalization; MEDIUM if needs separate BFS investigation | P1 |
+| Structured Level 4 logging | MEDIUM — developer observability | LOW — add structured log lines in signs/__init__.py | P2 |
 
 **Priority key:**
-- P1: Must have for launch -- tool is broken without these
-- P2: Should have, add once P1 is validated and working
-- P3: Nice to have, future consideration
+- P1: Must have for v2.0
+- P2: Should have; add before v2.0 close
+- P3: Nice to have, future milestone
 
-## Competitor Feature Analysis
+---
 
-| Feature | SpotAngels | Parkr | ASP NYC | ha-nyc311 | GPS2ASP (Ours) |
-|---------|------------|-------|---------|-----------|----------------|
-| ASP schedule by location | Map tap to view | Map view | Status updates | No (suspension only) | GPS auto-resolve |
-| Holiday suspension calendar | Yes (in-app) | Yes (daily alerts) | Yes | Yes (binary sensors) | Yes (311 API or ha-nyc311) |
-| Weather suspension alerts | Yes | Yes (real-time) | Yes | Yes (binary sensors) | Yes (polling cron) |
-| Push notifications | Move reminders | Daily alerts | Status updates | HA notifications | HA actionable notifications |
-| GPS auto-detection | Bluetooth parking save | No | No | No | VW CarNet device tracker |
-| Side-of-street resolution | No (user taps map) | No | No | No | Yes (coordinate math) |
-| Home Assistant integration | No | No | No | Yes (suspension only) | Yes (full pipeline) |
-| Structured API output | No (app only) | No (app only) | No | Sensor entities | Sensor entities + attributes |
-| Automation capability | None | None | None | Binary sensor triggers | Full sensor + notification automation |
-| Offline capability | Cached map data | Unknown | No | Cached status | Cached sign data |
-| Coverage | All NYC + 200 cities | NYC + Jersey City | NYC | NYC | All NYC (SODA dataset) |
-| Cost | Free (ad-supported) | Free (no ads) | Free | Free (open source) | Free (open source) |
+## Implementation Notes by Feature
 
-### Key competitive insight
+### Feature 1: Queens Normalization Audit
 
-No existing tool combines GPS-based automatic location detection with ASP schedule lookup AND suspension awareness in a Home Assistant context. SpotAngels is closest in features but requires manual phone interaction. ha-nyc311 is closest in platform (HA) but only handles suspensions, not location-specific ASP schedules. GPS2ASP fills the exact gap between them.
+**What goes wrong today:** `retrieve_signs()` Levels 1-3 all fail for Queens blocks. This means either:
+(a) the SODA query uses the wrong on-street or cross-street name format, or
+(b) `normalize_to_soda()` produces a form that doesn't match what SODA stores.
+
+**How to diagnose:** Run `resolve_asp(lat, lon, debug=True)` on known Queens ASP locations (e.g., Jackson Heights, Flushing, Astoria). Inspect `sign_result` type — `NoMatchFound` confirms SODA had no records at all (query format wrong); `NoASPSigns` confirms SODA had records but no broom signs (location truly has no ASP). Sample actual SODA records for Queens streets via `build_on_street_query(on_street, side)` to compare what name forms SODA actually stores.
+
+**Likely Queens-specific patterns to audit:**
+- Numbered streets: CSCL stores "37 AVE", "74 ST" — `normalize_to_soda()` correctly expands these to "37 AVENUE", "74 STREET". If Queens is failing here, the issue may be in cross-street normalization at the intersection level, not on-street.
+- Named highways: "NORTHERN BOULEVARD", "QUEENS BOULEVARD", "WOODHAVEN BOULEVARD" — verify CSCL stores these in abbreviated form that triggers suffix expansion.
+- Direction-named streets: "N CONDUIT BLVD" → "NORTH CONDUIT BOULEVARD" — verify prefix expansion fires correctly. "NORTHERN BLVD" must NOT expand ("NORTHERN" starts with N but has no space after N, so the `startswith("N ")` guard correctly skips it).
+- Hyphenated cross-street references: Queens uses hyphenated addresses in street names (e.g., "67-11 METROPOLITAN AVENUE") in some data; verify this doesn't appear as a cross-street value in SODA.
+
+**What changes:** Add missing abbreviation mappings to `_SUFFIX_EXPANSIONS` or `_DIRECTIONAL_EXPANSIONS` in `src/gps2asp/signs/normalize.py`. Rebuild spatial index after to update `intersection_index` and `has_asp` flags.
+
+### Feature 2: graph.json Size Reduction
+
+**Current behavior (build_index.py lines 921-926):**
+```python
+for pid, neighbors in adjacency.items():
+    pid_str = str(pid)
+    graph_adjacency[pid_str] = sorted(neighbors)
+    graph_segment_streets[pid_str] = gdf_street_names.get(pid, "")
+    ...
+```
+This includes ALL segments with at least one adjacency neighbor — regardless of `has_asp`. This is intentional (per [Phase 11-01] decision), but the conservative choice now costs 7.9 MB.
+
+**Correct minimum filter:** Include a segment in graph.json if:
+1. It has `has_asp_left=True` OR `has_asp_right=True` (direct ASP segment), OR
+2. It is an immediate neighbor (1-hop) of any ASP segment.
+
+Condition 2 is required because `_bfs_min_hops()` in `graph.py` traverses from `block_cross_street_pids` to `span_endpoint_pids`. If the queried block is non-ASP but physically adjacent to an ASP segment, the BFS needs that non-ASP block in the graph to establish a 1-hop distance and correctly score the covering span.
+
+**Build-time change:**
+After computing the full `adjacency` and `asp_lookup`, derive the set of `asp_pids` (segments where `has_asp_left or has_asp_right`). Expand to include their 1-hop neighbors: `neighbor_pids = {n for pid in asp_pids for n in adjacency.get(pid, set())}`. The filtered set is `asp_pids | neighbor_pids`. Filter `graph_adjacency`, `graph_segment_streets`, and `graph_segment_cross_streets` to this set before writing.
+
+**Expected size impact:** ASP segments are ~26,374 of ~88,000 vehicular segments (~30%). 1-hop expansion adds at most one neighbor per endpoint, likely reaching 40-50% of the full graph — targeting 3-4 MB.
+
+### Feature 3: Level 4 Observability
+
+**What is missing today:**
+
+1. `ASPParkingData` (coordinator.py lines 67-99) has no `soda_level` field. The coordinator extracts `sign_count` from `sign_result` at line 311 but does not extract `soda_level`. The sensor cannot expose what it doesn't have.
+
+2. Log lines at each level exit are unstructured `logger.info()` calls without consistent machine-parseable format.
+
+**Minimum change for HA sensor:**
+- Add `soda_level: int = 0` to `ASPParkingData` dataclass
+- In `_async_resolve_pipeline()`, after the `isinstance(sign_result, SignRetrievalSuccess)` block at line 311, add: `self.data.soda_level = sign_result.soda_level if isinstance(sign_result, SignRetrievalSuccess) else 0`
+- In `ASPNextMoveTimeSensor.extra_state_attributes()`, add `"soda_level": data.soda_level` to the metadata group (alongside `confidence_score`, `sign_count`, `parse_failures`)
+
+**Structured logging enhancement (P2):**
+At each level success path in `signs/__init__.py`, emit a structured log line with consistent field order:
+```python
+logger.info("soda_resolve level=%d on_street=%r outcome=matched signs=%d", soda_level, on_street, len(signs))
+logger.info("soda_resolve level=%d on_street=%r outcome=no_records", soda_level, on_street)
+```
+This format is grep-friendly for post-hoc analysis of which streets are failing which levels.
+
+---
 
 ## Sources
 
-- [SpotAngels NYC ASP Map](https://www.spotangels.com/alternate-side-parking-nyc-map) -- Feature set analysis (MEDIUM confidence)
-- [Parkr on App Store](https://apps.apple.com/us/app/parkr-alternate-side-parking/id6503993830) -- Feature set analysis (MEDIUM confidence)
-- [Parkr on Google Play](https://play.google.com/store/apps/details?id=com.jcasp.app&hl=en_US) -- Feature set analysis (MEDIUM confidence)
-- [NYC DOT ASP Suspensions](https://www.nyc.gov/html/dot/html/motorist/alternate-side-parking.shtml) -- Official suspension info, ICS calendars (HIGH confidence)
-- [NYC Open Data Parking Signs](https://data.cityofnewyork.us/Transportation/Parking-Regulation-Locations-and-Signs/nfid-uabd) -- Primary data source (HIGH confidence)
-- [OpenCurb API Docs](https://www.opencurb.nyc/doc.html) -- API capabilities and coverage limitations (HIGH confidence)
-- [ha-nyc311 GitHub](https://github.com/elahd/ha-nyc311) -- HA integration for NYC 311 ASP status (HIGH confidence)
-- [The NYC ASP API](https://github.com/erickouassi/The-NYC-ASP-API) -- Community JSON API for ASP status (MEDIUM confidence)
-- [NYC DOT Data Feeds Issue #1](https://github.com/CityOfNewYork/DOT-Data-Feeds/issues/1) -- 311 API endpoint documentation (MEDIUM confidence)
-- [SODA API App Tokens](https://dev.socrata.com/docs/app-tokens.html) -- Rate limit and throttling docs (HIGH confidence)
-- [Twitter/X @NYCASP](https://twitter.com/NYCASP) -- Official daily ASP status source (HIGH confidence)
-- [X Developer Platform NYC Parking Tutorial](https://developer.x.com/en/docs/tutorials/nyc-parking) -- Twitter API for ASP monitoring (MEDIUM confidence)
-- [HA Actionable Notifications](https://companion.home-assistant.io/docs/notifications/actionable-notifications/) -- Push notification capabilities (HIGH confidence)
-- [HA RESTful Sensor](https://www.home-assistant.io/integrations/sensor.rest/) -- REST sensor patterns (HIGH confidence)
-- [VW CarNet HA Integration](https://github.com/robinostlund/homeassistant-volkswagencarnet) -- GPS source integration (MEDIUM confidence)
+- `/home/pascal/Vibe-Coding/VW-CarNet/GPS2ASP-Resolver/scripts/build_index.py` — BFS propagation, graph construction, filter logic (direct code analysis, HIGH confidence)
+- `/home/pascal/Vibe-Coding/VW-CarNet/GPS2ASP-Resolver/src/gps2asp/signs/__init__.py` — 4-level fallback, soda_level tracking at each return site (direct code analysis, HIGH confidence)
+- `/home/pascal/Vibe-Coding/VW-CarNet/GPS2ASP-Resolver/src/gps2asp/signs/graph.py` — StreetGraph, BFS hop scoring, `_find_best_covering_span` (direct code analysis, HIGH confidence)
+- `/home/pascal/Vibe-Coding/VW-CarNet/GPS2ASP-Resolver/src/gps2asp/signs/normalize.py` — `_SUFFIX_EXPANSIONS`, `_DIRECTIONAL_EXPANSIONS`, `normalize_to_soda()` (direct code analysis, HIGH confidence)
+- `/home/pascal/Vibe-Coding/VW-CarNet/GPS2ASP-Resolver/custom_components/asp_parking/coordinator.py` — `ASPParkingData` fields, `_async_resolve_pipeline()` execution (direct code analysis, HIGH confidence)
+- `/home/pascal/Vibe-Coding/VW-CarNet/GPS2ASP-Resolver/custom_components/asp_parking/sensor.py` — `extra_state_attributes`, diagnostic sensors (direct code analysis, HIGH confidence)
+- `/home/pascal/Vibe-Coding/VW-CarNet/GPS2ASP-Resolver/.planning/PROJECT.md` — milestone targets, coverage numbers, key decisions log (HIGH confidence)
+- `/home/pascal/Vibe-Coding/VW-CarNet/GPS2ASP-Resolver/.planning/STATE.md` — accumulated context, phase decisions, pending todos (HIGH confidence)
 
 ---
-*Feature research for: NYC ASP GPS Resolver for Home Assistant*
-*Researched: 2026-02-21*
+*Feature research for: GPS2ASP Resolver v2.0 — spatial coverage improvements and observability*
+*Researched: 2026-03-13*

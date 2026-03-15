@@ -1,8 +1,8 @@
 # Architecture Research
 
-**Domain:** GPS-to-ASP-regulation resolver for NYC alternate side parking
-**Researched:** 2026-02-21
-**Confidence:** HIGH
+**Domain:** GPS-to-ASP-regulation resolver — coverage improvements and observability for v2.0
+**Researched:** 2026-03-13
+**Confidence:** HIGH (all findings are based on direct code inspection of the live codebase)
 
 ## Standard Architecture
 
@@ -10,486 +10,393 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                     HOME ASSISTANT LAYER                                 │
+│                         OFFLINE BUILD (scripts/)                         │
 │                                                                          │
-│  ┌────────────────┐    ┌────────────────────┐    ┌───────────────────┐   │
-│  │  VW CarNet     │    │  GPS2ASP Resolver   │    │  HA Notifications │   │
-│  │  device_tracker│───>│  (custom component) │───>│  & Automations    │   │
-│  │  lat/lng       │    │                     │    │                   │   │
-│  └────────────────┘    └─────────┬───────────┘    └───────────────────┘   │
-│                                  │                                        │
-├──────────────────────────────────┼────────────────────────────────────────┤
-│                     RESOLVER CORE                                        │
-│                                  │                                        │
-│  ┌────────────────┐    ┌────────┴────────┐    ┌───────────────────────┐  │
-│  │  Coordinate    │    │  Sign Matcher   │    │  Schedule Computer    │  │
-│  │  Converter     │───>│  (street+side   │───>│  (parse sign text,    │  │
-│  │  WGS84→SP     │    │   resolution)   │    │   compute next move)  │  │
-│  └────────────────┘    └────────┬────────┘    └──────────┬────────────┘  │
-│                                 │                        │               │
-│                        ┌────────┴────────┐    ┌──────────┴────────────┐  │
-│                        │  Sign Cache     │    │  Suspension Service   │  │
-│                        │  (SQLite)       │    │  (holidays+weather)   │  │
-│                        └────────┬────────┘    └──────────┬────────────┘  │
-│                                 │                        │               │
-├─────────────────────────────────┼────────────────────────┼───────────────┤
-│                     EXTERNAL SERVICES                    │               │
-│                                 │                        │               │
-│  ┌──────────────────────────────┴────────────┐  ┌───────┴────────────┐  │
-│  │  NYC Open Data SODA API                    │  │  NYC 311 API       │  │
-│  │  dataset: nfid-uabd                        │  │  (nyc311calendar)  │  │
-│  │  Parking Regulation Locations and Signs     │  │  ASP suspensions   │  │
-│  └────────────────────────────────────────────┘  └────────────────────┘  │
+│  build_index.py                                                          │
+│  ┌─────────────┐  ┌───────────────────┐  ┌───────────────────────────┐  │
+│  │ CSCL SODA   │  │ ASP Signs SODA    │  │ Output files              │  │
+│  │ GeoJSON     │→ │ (broom filter)    │→ │ segments.idx + .dat       │  │
+│  │ ~122K segs  │  │ unique block-face │  │ segments.json             │  │
+│  └─────────────┘  └───────────────────┘  │ graph.json  (7.9 MB)     │  │
+│          │                │              │ build_info.json           │  │
+│          │  BFS propagate │              └──────────────────────────┘  │
+│          └────────────────┘                    ↓ shipped with package  │
+└──────────────────────────────────────────────────────────────────────────┘
+          ↓ (index files loaded lazily at runtime)
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    RUNTIME PIPELINE (src/gps2asp/)                       │
+│                                                                          │
+│  resolve_asp(lat, lon) ── pipeline.py                                    │
+│                                                                          │
+│  ┌──────────┐  ┌──────────────┐  ┌────────────────────────────────────┐ │
+│  │ Stage 1  │  │   Stage 2    │  │           Stage 3                  │ │
+│  │ GPS →    │→ │ Street →     │→ │  Signs → Schedule → ScheduleResult │ │
+│  │ Segment  │  │ SODA Signs   │  │                                    │ │
+│  └──────────┘  └──────────────┘  └────────────────────────────────────┘ │
+│  resolver/     signs/             schedule/                              │
+│  SpatialIndex  retrieve_signs()   compute_schedule()                     │
+│  (R-tree +     L1→L2→L3→L4       parse + merge + next_move             │
+│   segments.json fallback chain   StreetGraph (graph.json, lazy)         │
+│  singleton)    singleton)                                                │
+│                                                                          │
+│  Public API: ASPResult / ASPDebugResult (soda_level field exists here)  │
+└──────────────────────────────────────────────────────────────────────────┘
+          ↓ (called by HA coordinator)
+┌──────────────────────────────────────────────────────────────────────────┐
+│                  HOME ASSISTANT LAYER (custom_components/)               │
+│                                                                          │
+│  ASPParkingCoordinator (event-driven, not DataUpdateCoordinator)         │
+│  - Subscribes to device_tracker state changes                            │
+│  - 50m movement threshold + 5s debounce                                 │
+│  - Calls THREE-STAGE pipeline MANUALLY (tech debt: not resolve_asp())   │
+│  - ASPParkingData: schedule_result, sign_count, confidence_score, etc.  │
+│                                                                          │
+│  Sensors: ASPNextMoveTimeSensor + 6 diagnostic sensors                  │
+│  Attributes: confidence_score, sign_count, parse_failures, last_error   │
+│  MISSING: soda_level in HA sensor attributes (v2.0 target)              │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Component Responsibilities
 
-| Component | Responsibility | Typical Implementation |
-|-----------|----------------|------------------------|
-| **Coordinate Converter** | Transforms WGS84 lat/lng from GPS to NY State Plane (EPSG:2263, NAD83, feet) for matching against sign coordinates | `pyproj.Transformer.from_crs(4326, 2263, always_xy=True)` singleton |
-| **Sign Matcher** | Given converted coordinates, finds the correct street segment and side, then retrieves all ASP signs for that location | SODA API `$where` with bounding box on `sign_x_coord`/`sign_y_coord`, filtered by `side_of_street` |
-| **Schedule Computer** | Parses sign description text into structured schedule, computes next ASP window from current datetime | Regex parser for `"TUESDAY FRIDAY 8:30AM-10AM"` format, datetime arithmetic |
-| **Sign Cache** | Stores previously fetched sign data per street segment to avoid redundant API calls | SQLite database keyed by `(on_street, from_street, to_street, side_of_street)` |
-| **Suspension Service** | Tracks holiday calendar and weather-based ASP suspensions, adjusts "next move" computation | `nyc311calendar` package wrapping NYC 311 API + periodic polling |
-| **HA Integration Layer** | Exposes resolver as sensor entities within Home Assistant, handles polling and notifications | `DataUpdateCoordinator` pattern, sensor platform |
+| Component | File | Responsibility |
+|-----------|------|----------------|
+| `SpatialIndex` | `resolver/spatial_index.py` | Lazy-loaded singleton; R-tree nearest-neighbor for GPS→segment; loads segments.json |
+| `StreetGraph` | `signs/graph.py` | Lazy-loaded singleton; graph.json BFS for Level 4 span scoring; loaded at first Level 4 call |
+| `retrieve_signs()` | `signs/__init__.py` | Four-level fallback chain: L1 exact → L2 variants → L3 broad+filter → L4 BFS span |
+| `normalize_to_soda()` | `signs/normalize.py` | CSCL abbreviation → SODA full-word; used at build time AND runtime |
+| `build_index.py` | `scripts/` | Offline: downloads CSCL + ASP signs, BFS-propagates has_asp flags, writes index files |
+| `ASPParkingCoordinator` | `custom_components/asp_parking/coordinator.py` | HA event-driven orchestrator; currently calls 3-stage pipeline manually (not `resolve_asp()`) |
+| `ASPNextMoveTimeSensor` | `custom_components/asp_parking/sensor.py` | Primary sensor; exposes attributes but lacks `soda_level` |
 
 ## Recommended Project Structure
 
+No structural changes needed for v2.0. All work is modifications to existing files.
+
 ```
-gps2asp_resolver/
-├── custom_components/
-│   └── gps2asp/
-│       ├── __init__.py            # Integration setup, config entry
-│       ├── manifest.json          # HA integration manifest
-│       ├── config_flow.py         # Configuration UI flow
-│       ├── const.py               # Constants (EPSG codes, API URLs, etc.)
-│       ├── coordinator.py         # DataUpdateCoordinator subclass
-│       ├── sensor.py              # Sensor entity definitions
-│       ├── strings.json           # Localization strings
-│       └── translations/
-│           └── en.json
-├── gps2asp/                       # Core library (HA-independent)
-│   ├── __init__.py
-│   ├── converter.py               # WGS84 <-> NY State Plane conversion
-│   ├── matcher.py                 # Street segment + side-of-street matching
-│   ├── parser.py                  # Sign description text parser
-│   ├── scheduler.py               # Next-move datetime computation
-│   ├── cache.py                   # SQLite sign data cache
-│   ├── soda_client.py             # NYC Open Data SODA API client
-│   ├── suspension.py              # ASP suspension service
-│   └── models.py                  # Data classes (Sign, Schedule, ASPWindow)
-├── tests/
-│   ├── test_converter.py
-│   ├── test_matcher.py
-│   ├── test_parser.py
-│   ├── test_scheduler.py
-│   ├── test_suspension.py
-│   └── fixtures/                  # Sample API responses, sign descriptions
-│       ├── sample_signs.json
-│       └── sample_suspensions.json
-├── pyproject.toml
-└── README.md
+src/gps2asp/
+├── pipeline.py              [MODIFY] soda_level in ASPResult (not just ASPDebugResult)
+├── api_models.py            [MODIFY] add soda_level field to ASPResult
+├── signs/
+│   ├── __init__.py          [MODIFY] structured logging at L4 entry/exit
+│   └── graph.py             [READ-ONLY for v2.0 observability]
+├── resolver/
+│   └── spatial_index.py     [READ-ONLY for v2.0]
+scripts/
+└── build_index.py           [MODIFY] graph.json filter to ASP-reachable segments only
+custom_components/asp_parking/
+├── coordinator.py           [MODIFY] migrate to resolve_asp(); store soda_level
+└── sensor.py                [MODIFY] expose soda_level in extra_state_attributes
 ```
 
 ### Structure Rationale
 
-- **`gps2asp/` (core library):** Deliberately separated from `custom_components/` so the resolver logic can be tested, developed, and run independently of Home Assistant. This is the standard HA integration pattern -- keep business logic in a standalone library, keep HA wiring in the integration folder. The core library has zero HA dependencies.
-- **`custom_components/gps2asp/`:** Thin HA integration wrapper that uses `DataUpdateCoordinator` to poll the resolver on a schedule and expose results as sensor entities. This is the part that registers with Home Assistant.
-- **`tests/fixtures/`:** Critical for this project because sign description parsing is the riskiest component. Real API response samples enable regression testing without network calls.
+- **No new files needed for observability:** All three observability goals (Level 4 hit rate, soda_level in HA, Queens diagnosis) are modifications to existing components along the existing data flow.
+- **graph.json reduction is a build-time change only:** The runtime `StreetGraph.load()` just reads whatever is in graph.json — no runtime code changes needed to benefit from a smaller file.
+- **Queens normalization diagnostic is a logging addition, not a new module:** The failure point lives in existing code paths and needs structured log output to locate it.
 
 ## Architectural Patterns
 
-### Pattern 1: Pipeline Architecture (Core Data Flow)
+### Pattern 1: Two-Singleton Lazy Load
 
-**What:** The resolver is a linear pipeline where each stage transforms data for the next. GPS coordinates enter, "next move time" exits. Each stage has a single clear responsibility.
+Both `SpatialIndex` and `StreetGraph` use the same pattern: class-level `_instance`, `get()` classmethod that loads on first call, `reset()` for tests.
 
-**When to use:** Always -- this is the fundamental processing model.
+**Integration point for observability:** The StreetGraph singleton is already loaded at first Level 4 call. No changes needed to its load path to instrument hit rate — the instrumentation belongs in `retrieve_signs()` where Level 4 is invoked, not in `StreetGraph` itself.
 
-**Trade-offs:** Simple to reason about and test. Each stage is independently testable. The linear flow means a failure at any stage halts the pipeline, but that is the correct behavior (you cannot compute move time without signs).
-
-**Data flow:**
-
-```
-GPS (lat, lng)                     # Input from VW CarNet device_tracker
-    │
-    ▼
-Coordinate Converter               # pyproj: WGS84 (EPSG:4326) → NY State Plane (EPSG:2263)
-    │
-    ├── (x_feet, y_feet)           # Coordinates now in same system as sign data
-    │
-    ▼
-Sign Matcher                       # Find ASP signs for this location
-    │
-    ├── Cache HIT? ──────────────> Return cached signs
-    │       │
-    │       NO
-    │       │
-    │       ▼
-    │   SODA API Query             # $where=sign_x_coord BETWEEN x-R AND x+R
-    │       │                      #    AND sign_y_coord BETWEEN y-R AND y+R
-    │       │                      #    AND sign_description LIKE '%BROOM%'
-    │       ▼
-    │   Street Segment Resolver    # Group by (on_street, from_street, to_street)
-    │       │                      # Filter to side_of_street matching car position
-    │       ▼
-    │   Cache STORE                # SQLite: key=(segment+side), value=signs, ttl=7d
-    │
-    ├── [Sign, Sign, ...]          # Array of ASP signs for this curb segment
-    │
-    ▼
-Schedule Parser                    # Regex extraction from sign_description
-    │
-    ├── ASPSchedule[]              # Structured: [{day: TUE, start: 08:30, end: 10:00}, ...]
-    │
-    ▼
-Suspension Checker                 # Is ASP suspended today or next scheduled day?
-    │
-    ├── Holiday calendar           # NYC 311 API via nyc311calendar
-    ├── Weather suspension          # Periodic polling for emergency suspensions
-    │
-    ▼
-Next Move Computer                 # Given schedule + suspensions + current datetime
-    │
-    ├── next_move_at: datetime     # "2026-02-24T08:30:00-05:00"
-    ├── next_window: str           # "Tuesday 8:30 AM - 10:00 AM"
-    ├── is_suspended: bool         # Whether next window is currently suspended
-    │
-    ▼
-Home Assistant Sensors             # Exposed to HA automations and notifications
-```
-
-### Pattern 2: Cache-Through with Street Segment Key
-
-**What:** Sign data is cached in SQLite keyed by the street segment tuple `(on_street, from_street, to_street, side_of_street)`. On cache miss, the SODA API is queried and results stored. Cache has a 7-day TTL (ASP signs change rarely, perhaps yearly).
-
-**When to use:** Every sign lookup. The cache is not optional -- it is the primary data store after first fetch.
-
-**Trade-offs:** Eliminates repeated SODA API calls for the same parking spot (common when car parks on the same block regularly). SQLite is zero-dependency on Python 3.x. Downside: first lookup for a new location requires a network call that may take 1-3 seconds.
-
-**Example:**
-
+**Current Level 4 logging (in `signs/__init__.py`):**
 ```python
-import sqlite3
-from datetime import datetime, timedelta
+logger.info("Level 4 matched: on_street=%r (best-covering span, %d unique signs)", ...)
+```
+This is INFO-level but not structured. It does not log the miss case (when Level 4 is entered but returns `NoMatchFound`).
 
-CACHE_TTL_DAYS = 7
+### Pattern 2: soda_level Field Already Exists in ASPDebugResult
 
-class SignCache:
-    def __init__(self, db_path: str = "sign_cache.db"):
-        self.conn = sqlite3.connect(db_path)
-        self._ensure_table()
+`ASPDebugResult` (debug=True path) already carries `soda_level: int`. `ASPResult` (debug=False path) does not. The HA coordinator calls the 3-stage pipeline manually (not `resolve_asp()`), so it never produces either result type — it gets `sign_result` directly as a `SignRetrievalResult`.
 
-    def _ensure_table(self):
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS signs (
-                segment_key TEXT PRIMARY KEY,
-                signs_json TEXT NOT NULL,
-                fetched_at TEXT NOT NULL
-            )
-        """)
+**What is needed:**
+1. Add `soda_level: int` to `ASPResult` (non-debug path) so non-debug callers can see it.
+2. Migrate HA coordinator to use `resolve_asp(debug=False)` so it receives `ASPResult`.
+3. Store `soda_level` in `ASPParkingData` and surface it in `extra_state_attributes`.
 
-    def get(self, on_street: str, from_street: str,
-            to_street: str, side: str) -> list | None:
-        key = f"{on_street}|{from_street}|{to_street}|{side}"
-        row = self.conn.execute(
-            "SELECT signs_json, fetched_at FROM signs WHERE segment_key = ?",
-            (key,)
-        ).fetchone()
-        if row is None:
-            return None
-        fetched = datetime.fromisoformat(row[1])
-        if datetime.now() - fetched > timedelta(days=CACHE_TTL_DAYS):
-            return None  # Expired
-        return json.loads(row[0])
-
-    def put(self, on_street, from_street, to_street, side, signs):
-        key = f"{on_street}|{from_street}|{to_street}|{side}"
-        self.conn.execute(
-            "INSERT OR REPLACE INTO signs VALUES (?, ?, ?)",
-            (key, json.dumps(signs), datetime.now().isoformat())
-        )
-        self.conn.commit()
+**Data flow for soda_level (after migration):**
+```
+retrieve_signs() returns SignRetrievalSuccess(soda_level=4)
+    │
+    ▼ pipeline.py
+resolve_asp() extracts soda_level, puts in ASPResult
+    │
+    ▼ coordinator.py
+ASPParkingData.soda_level = result.soda_level
+    │
+    ▼ sensor.py
+extra_state_attributes["soda_level"] = data.soda_level
 ```
 
-### Pattern 3: DataUpdateCoordinator for HA Polling
+### Pattern 3: graph.json Covers ALL Adjacency Segments (Current Design)
 
-**What:** Home Assistant's `DataUpdateCoordinator` handles periodic polling of the resolver. It ensures a single coordinated update across all entities (next-move sensor, suspension sensor, etc.) rather than each entity polling independently.
-
-**When to use:** For the HA integration layer. The coordinator calls the core resolver pipeline on a configurable interval (e.g., every 30 minutes, or on GPS position change).
-
-**Trade-offs:** Standard HA pattern, well-documented, handles error retry and throttling. The resolver itself is stateless -- the coordinator manages the polling lifecycle.
-
-**Example:**
-
+The current build writes graph.json with ALL segments that have adjacency entries — this is ~all vehicular segments. The comment in `build_index.py` (line 917) says:
 ```python
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from datetime import timedelta
-
-class GPS2ASPCoordinator(DataUpdateCoordinator):
-    """Coordinator to poll the GPS2ASP resolver."""
-
-    def __init__(self, hass, resolver, device_tracker_entity):
-        super().__init__(
-            hass,
-            logger,
-            name="GPS2ASP",
-            update_interval=timedelta(minutes=30),
-        )
-        self.resolver = resolver
-        self.device_tracker = device_tracker_entity
-
-    async def _async_update_data(self):
-        state = self.hass.states.get(self.device_tracker)
-        lat = state.attributes.get("latitude")
-        lng = state.attributes.get("longitude")
-
-        # Run blocking resolver in executor (pyproj, sqlite are sync)
-        return await self.hass.async_add_executor_job(
-            self.resolver.resolve, lat, lng
-        )
+for pid, neighbors in adjacency.items():   # ALL adjacency entries
+    pid_str = str(pid)
+    graph_adjacency[pid_str] = sorted(neighbors)
 ```
 
-### Pattern 4: Side-of-Street Resolution via Dataset Fields
+**Why the graph covers all segments:** Level 4 BFS must traverse intermediate (non-ASP) segments to get from one ASP span endpoint to another. The BFS scores spans by graph distance; interior blocks along the route are non-ASP segments.
 
-**What:** The parking signs dataset already includes `side_of_street` (N/S/E/W) and block segment (`on_street`, `from_street`, `to_street`). Rather than implementing geometric side-of-street detection from GPS, use the dataset's own street/side grouping. Query a bounding box around the GPS point, group results by segment, pick the nearest segment, then filter to the side whose sign coordinates are closest to the car's converted coordinates.
+**The reduction opportunity:** The graph does not need entries for segments that could never be part of a Level 4 query. A segment is relevant to Level 4 if:
+- It is adjacent to at least one ASP segment (can be traversed to reach one), OR
+- It is an ASP segment itself (is a potential query target or span endpoint)
 
-**When to use:** Always. This avoids the need for a separate street centerline dataset or complex map-matching algorithms.
+**Concrete approach:**
+1. After building adjacency, compute `asp_pid_set` = all PIDs where `has_asp_left or has_asp_right` in segments metadata.
+2. Expand with 1-hop neighbors: `relevant_pids = asp_pid_set | {n for pid in asp_pid_set for n in adjacency[pid]}`.
+3. Filter graph.json to only `relevant_pids`.
 
-**Trade-offs:** Leverages the structure already in the data (each sign knows its street, cross streets, and side). The 3-5m GPS accuracy confirmed by the user is sufficient to distinguish which cluster of signs (left side vs right side) the car is closest to. No need for the LION dataset or geometric perpendicular-to-centerline calculations.
+This preserves full BFS capability for blocks adjacent to ASP streets while dropping purely non-ASP interior areas (parking lots, dead-end industrial segments, etc.).
 
-**Algorithm:**
+**Expected size reduction:** From 7.9 MB toward ≤4 MB target. The exact reduction depends on what fraction of all segments are within 1 hop of an ASP segment. In dense NYC, this will be high in Manhattan/Brooklyn but there are large non-ASP areas (parks, airports, industrial zones) that can be pruned.
 
+### Pattern 4: Queens Normalization — Three Candidate Failure Points
+
+Queens street names have unique characteristics: numbered streets with borough-specific formatting (`"73 AVENUE"` vs `"73RD AVENUE"`), hyphenated addresses (`"147-23 STREET"`), and named streets that do not follow CSCL abbreviation conventions.
+
+**Candidate failure point A: build_index.py `_normalize_street_name()`**
+
+In `_compute_cross_streets()`, the cross street found by `_find_cross_street()` is the raw `full_street_name` from CSCL, which is stored directly into `cross_streets[pid]`. That raw name is later passed to `_check_has_asp()` which calls `_normalize_street_name()`. The `normalize_to_soda()` function handles standard abbreviations but has no Queens-specific ordinal handling (e.g., `"73 AVE"` → `"73 AVENUE"` works, but `"73 RD AVE"` → `"73 RD AVENUE"` not `"73RD AVENUE"`).
+
+If SODA stores Queens cross streets as `"73 ROAD AVENUE"` or with ordinal suffixes, the lookup fails at build time → segment gets `has_asp=False` → Level 4 is never invoked at runtime.
+
+**Candidate failure point B: runtime `retrieve_signs()` name_variants expansion**
+
+`name_variants()` generates at most 2 variants (SODA format + original CSCL). For Queens streets with ordinal conventions (`"QUEENS BLVD"` vs `"QUEENS BOULEVARD"`) this may be insufficient. If SODA stores the name under a third variant not generated by `name_variants()`, Levels 1-3 all miss.
+
+**Candidate failure point C: Level 4 BFS span_distance() cross-street PID lookup**
+
+In `StreetGraph.span_distance()`, it calls `_pids_with_cross_street(block_from)` which scans `segment_cross_streets` for the normalized name. If graph.json was built with CSCL format names and runtime queries use SODA format names (or vice versa), the PID sets come back empty and all BFS distances are `float('inf')`.
+
+The `StreetGraph.load()` normalizes names via `normalize_to_soda()` at load time — but if the names in graph.json are already in raw CSCL format and `normalize_to_soda()` doesn't fully handle Queens ordinals, the normalized forms still won't match SODA query terms.
+
+**Diagnostic approach:** Add structured logging at each candidate point for borocode=4 segments:
+```python
+if seg_data.get("borocode") == "4":
+    logger.debug("Queens L1 attempt: on=%r from=%r to=%r", ...)
 ```
-1. Convert GPS to State Plane (x_car, y_car)
-2. Query SODA: signs within ~150ft radius bounding box, BROOM signs only
-3. Group returned signs by (on_street, from_street, to_street, side_of_street)
-4. For each group, compute centroid of sign coordinates
-5. Pick group whose centroid is nearest to (x_car, y_car)
-6. That group's signs are the ASP regulations for this parking spot
-```
-
-This works because:
-- Signs on opposite sides of a street are typically 30-60 feet apart (street width)
-- GPS accuracy of 3-5m (~10-16 feet) is well within the margin needed
-- The bounding box query returns signs from adjacent segments too, but grouping + nearest-centroid filters to the correct one
+This is a targeted log-and-compare, not a code change.
 
 ## Data Flow
 
-### Primary Resolution Flow
+### Request Flow (Current — post v1.1)
 
 ```
-[VW CarNet device_tracker]
+GPS coordinates (lat, lon)
     │
-    │  GPS update (lat, lng) from HA state
+    ▼ pipeline.py: resolve_asp()
+Stage 1: convert(lat, lon) → (x, y) State Plane
     │
-    ▼
-[DataUpdateCoordinator]
+    ▼ resolver/__init__.py: resolve_segment()
+SpatialIndex.get() [lazy singleton]
+    │   R-tree nearest(x, y, n=5, max=164ft) → [SegmentCandidate, ...]
+    │   Side-of-street via perpendicular projection
     │
-    │  Triggers resolve() on interval or GPS change
+    ▼ pipeline.py
+Stage 2: retrieve_signs(on_street, from_street, to_street, side)
     │
-    ▼
-[Coordinate Converter]
+    ├── Level 1: exact SODA query (L1 soda_level=1)
+    ├── Level 2: abbreviation variant combinations (soda_level=2)
+    ├── Level 3: broad on_street+side, client-side cross-street filter (soda_level=3)
+    └── Level 4: [only if Levels 1-3 return ZERO records]
+                 StreetGraph.get() [lazy singleton, loads graph.json]
+                 broad on_street+side query
+                 _find_best_covering_span() via BFS span_distance()
+                 soda_level=4
     │
-    │  pyproj Transformer (singleton, created once)
-    │  Input:  (40.6782, -73.9442)  WGS84
-    │  Output: (993412, 187523)     NY State Plane feet
+    ▼ pipeline.py
+Stage 3: compute_schedule(sign_result) → ScheduleResult
     │
-    ▼
-[Sign Matcher]
-    │
-    ├── Check SQLite cache for known segment
-    │   Key: nearest (on_street, from_street, to_street, side)
-    │
-    ├── Cache MISS → SODA API call:
-    │   GET data.cityofnewyork.us/resource/nfid-uabd.json
-    │     ?$where=sign_x_coord BETWEEN 993262 AND 993562
-    │       AND sign_y_coord BETWEEN 187373 AND 187673
-    │       AND sign_description LIKE '%BROOM%'
-    │     &$limit=50
-    │
-    ├── Group by segment tuple, pick nearest to car
-    │   Store in cache with 7-day TTL
-    │
-    ▼
-[Schedule Parser]
-    │
-    │  Input:  "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY 8:30AM-10AM"
-    │  Output: [Schedule(days=[TUE, FRI], start=08:30, end=10:00)]
-    │
-    │  Handles variations:
-    │  - "MON THURS 8AM-9:30AM"
-    │  - "TUESDAY & FRIDAY 11:30AM-1PM"
-    │  - "EXCEPT SUNDAY"
-    │  - Arrow directions (→ ← ↔)
-    │
-    ▼
-[Suspension Service]
-    │
-    │  NYC 311 API via nyc311calendar:
-    │  - Holiday suspensions (known calendar, ~34 days/year)
-    │  - Weather/emergency suspensions (polled periodically)
-    │
-    │  Merges suspension data with schedule:
-    │  If next ASP window is suspended → skip to following window
-    │
-    ▼
-[Next Move Computer]
-    │
-    │  Given: current datetime, ASP schedule, active suspensions
-    │  Produces:
-    │    next_move_at:   2026-02-25T08:30:00-05:00
-    │    window_desc:    "Tuesday 8:30 AM - 10:00 AM"
-    │    hours_until:    36.5
-    │    is_suspended:   false
-    │    suspension_reason: null
-    │
-    ▼
-[HA Sensor Entities]
-    │
-    ├── sensor.asp_next_move         # "2026-02-25 08:30 AM"
-    ├── sensor.asp_hours_until_move  # 36.5
-    ├── sensor.asp_schedule          # "Tue & Fri 8:30-10:00 AM"
-    ├── binary_sensor.asp_suspended  # off
-    └── sensor.asp_suspension_reason # ""
+    ▼ pipeline.py
+ASPResult(schedule, resolution_failed, resolution_error)
+   soda_level: NOT in ASPResult today (only in ASPDebugResult)
 ```
 
-### Suspension Polling Flow
+### Level 4 Observability Gap (Current State)
 
 ```
-[Cron / HA time trigger]
+retrieve_signs() enters Level 4
     │
-    │  Every 2 hours (or on-demand)
+    ├── CASE A: Level 4 matches → logger.info("Level 4 matched...")
+    │                              soda_level=4 on SignRetrievalSuccess
     │
-    ▼
-[Suspension Service]
+    ├── CASE B: Level 4 entered, broad query returns records,
+    │           _find_best_covering_span() returns None →
+    │           falls through to NoMatchFound()
+    │           NO STRUCTURED LOG emitted for this miss
     │
-    ├── nyc311calendar.NYC311API.get_calendar(CalendarType.WEEK_AHEAD)
-    │   Returns: {date: CalendarDayEntry(status, description)}
-    │
-    ├── Check for weather-based suspensions
-    │   (311 API returns these as same-day entries)
-    │
-    ├── Store suspension state in memory
-    │   (No persistence needed -- 311 API is the source of truth)
-    │
-    ▼
-[DataUpdateCoordinator]
-    │
-    │  Triggers re-computation of next_move_at
-    │  if suspension state changed
+    └── CASE C: Level 4 entered, broad query returns zero records →
+                falls through to NoMatchFound()
+                NO STRUCTURED LOG emitted for this miss
 ```
+
+Cases B and C are the gaps. Hit rate requires counting Case A vs (B + C). Currently only Case A is logged at INFO level. Cases B and C produce a generic `logger.info("No match found...")` that doesn't distinguish "Level 4 was attempted" from "Levels 1-3 failed before Level 4".
+
+### Proposed Observability Data Flow (After v2.0)
+
+```
+retrieve_signs() enters Level 4
+    │
+    ├── NEW: logger.info("Level 4: entered for on_street=%r side=%r", ...)
+    │                                    [structured: l4_entered=True]
+    │
+    ├── CASE A: match → logger.info("Level 4: matched, span_distance=%d", ...)
+    │                   [structured: l4_result="match"]
+    │
+    ├── CASE B: no covering span → NEW logger.info("Level 4: no covering span found")
+    │                              [structured: l4_result="no_span"]
+    │
+    └── CASE C: no SODA records → NEW logger.info("Level 4: no SODA records")
+                                  [structured: l4_result="no_records"]
+```
+
+These three structured log entries are sufficient to compute hit rate from HA logs without changing the pipeline contract (`SignRetrievalResult` return type unchanged).
 
 ## Scaling Considerations
 
-| Scale | Architecture Adjustments |
-|-------|--------------------------|
-| Single car, single location (target) | Exactly as designed. SQLite cache, 30-min polling, one street segment in cache. No optimization needed. |
-| Multiple cars / locations | Add per-vehicle config entries. Cache naturally handles multiple segments. Coordinator per vehicle. Still SQLite. |
-| Neighborhood-wide pre-cache | Bulk-fetch all BROOM signs for a borough via SODA API (paginated), populate SQLite at install time. Eliminates cold-start latency. |
-
-### Scaling Priorities
-
-1. **First bottleneck (not expected):** SODA API rate limits. The free tier has generous limits and this system makes at most a few calls per day. If needed, bulk-fetch and cache the entire borough.
-2. **Second bottleneck (not expected):** Sign description parsing for unusual formats. The regex parser should handle 95%+ of cases, with a fallback logging mechanism for unparseable signs.
+| Concern | Current | After v2.0 |
+|---------|---------|------------|
+| graph.json startup | 7.9 MB, loaded lazily on first L4 call | ≤4 MB target with ASP-reachable filter |
+| Level 4 BFS correctness | Unchanged (full graph ensures no missing paths) | Preserved (1-hop neighbor expansion keeps all traversal paths) |
+| Queens coverage | 36.8% (below 50% target) | Diagnostic logging reveals which failure point; fix applied after diagnosis |
+| HA coordinator pipeline | Manual 3-stage call (tech debt) | Migrated to resolve_asp() — single call, cleaner error surface |
 
 ## Anti-Patterns
 
-### Anti-Pattern 1: Geometric Side-of-Street Detection
+### Anti-Pattern 1: Filtering graph.json to ASP-Only Segments
 
-**What people do:** Import LION street centerline data, compute perpendicular distance from GPS point to road segment, determine side based on bearing vector.
+**What it means:** Keeping only segments where `has_asp=True` in graph.json.
 
-**Why it's wrong:** Massive over-engineering for this problem. The parking signs dataset already contains `side_of_street` per sign. GPS accuracy (3-5m) is sufficient to cluster signs by proximity. Adding LION data means another dataset to manage, another coordinate system to handle, and a complex geometric algorithm that adds little accuracy.
+**Why it is wrong:** BFS traversal needs intermediate non-ASP segments as bridges. A block between two ASP spans may not be an ASP segment itself. Removing it breaks BFS connectivity and Level 4 returns `float('inf')` for spans that are actually reachable.
 
-**Do this instead:** Group signs by `(on_street, from_street, to_street, side_of_street)`, compute centroid per group, pick nearest group to car position. The data tells you the side -- let it.
+**Do this instead:** Keep ASP segments PLUS their 1-hop neighbors in graph.json. The 1-hop filter preserves all traversal paths while removing segments that are more than 1 hop from any ASP street (parks, airports, industrial dead-ends).
 
-### Anti-Pattern 2: Using OpenCurb as Primary Data Source
+### Anti-Pattern 2: Instrumenting Level 4 Inside StreetGraph
 
-**What people do:** Use the OpenCurb API because it accepts GPS coordinates directly and returns curb regulations.
+**What people do:** Add hit-rate counters to `StreetGraph.span_distance()` or `_find_best_covering_span()`.
 
-**Why it's wrong:** OpenCurb returns regulation summaries (allowed/prohibited for a time window) but not the raw sign schedule text needed to compute "next time to move." It also officially covers only Manhattan (works in Brooklyn anecdotally but is unreliable). You would need to reverse-engineer the regulation output back into a schedule, which is fragile.
+**Why it is wrong:** StreetGraph is a pure graph utility — it has no knowledge of whether it is being called from Level 4, from a test, or from a future caller. Mixing observability state into the graph breaks the separation between data structure and calling context.
 
-**Do this instead:** Use NYC Open Data SODA API as primary source. The `sign_description` field contains the parseable schedule. OpenCurb can serve as an optional validation/sanity-check layer, not a primary source.
+**Do this instead:** All Level 4 observability lives in `retrieve_signs()` (signs/__init__.py), where the Level 4 block is explicitly demarcated with `# Level 4` comments. The entry, match, and miss cases are all visible there.
 
-### Anti-Pattern 3: Polling the Resolver Too Frequently
+### Anti-Pattern 3: Adding soda_level as an Exception or Side Channel
 
-**What people do:** Set polling interval to every minute to catch GPS changes immediately.
+**What people do:** Raise a custom exception carrying soda_level when Level 4 matches, or use a module-level counter.
 
-**Why it's wrong:** The car does not move while parked. ASP schedules do not change intraday. Suspension status changes at most once per morning. Frequent polling wastes resources and hammers the 311 API for no benefit.
+**Why it is wrong:** The pipeline contract is `retrieve_signs()` → `SignRetrievalResult`. `SignRetrievalSuccess` already has `soda_level: int` — it is populated correctly for Levels 1-4. The problem is that `ASPResult` (the public pipeline output) doesn't carry it through to callers. The correct fix is to propagate the existing `soda_level` field through `pipeline.py` into `ASPResult`.
 
-**Do this instead:** Poll every 30 minutes. Additionally, trigger an immediate re-resolve when the device_tracker entity's GPS coordinates change by more than 50 meters (indicating the car has actually moved). Use HA state change listener with a distance threshold.
+**Do this instead:** `pipeline.py` already extracts `soda_level` for the `ASPDebugResult` path (line 89: `soda_level = sign_result.soda_level if isinstance(sign_result, SignRetrievalSuccess) else 0`). Add `soda_level: int` to `ASPResult` and replicate that extraction for the non-debug path.
 
-### Anti-Pattern 4: Parsing Sign Text with LLM/NLP
+### Anti-Pattern 4: Queens-Specific Special Cases in normalize_to_soda()
 
-**What people do:** Use an LLM or NLP library to "understand" the sign description text.
+**What people do:** Add Queens ordinal handling (`"73 AVE"` → `"73RD AVENUE"`) directly into `normalize_to_soda()`.
 
-**Why it's wrong:** The sign descriptions follow a highly regular format from NYC DOT's database. There are a limited number of patterns. A well-crafted regex handles this deterministically, without network calls, latency, cost, or hallucination risk.
+**Why it is wrong:** `normalize_to_soda()` is shared between build time and runtime. Queens ordinals in SODA are not consistent — SODA stores these as `"73 AVENUE"` (matching what normalize_to_soda already produces), not as `"73RD AVENUE"`. Adding ordinal logic would introduce wrong transformations. The Queens coverage problem is not in the normalization function — it is most likely in the cross-street computation at build time or in missing name variants.
 
-**Do this instead:** Build a regex-based parser with exhaustive test fixtures covering known sign description patterns. Log any unparseable descriptions for manual review and pattern expansion.
+**Do this instead:** Diagnose first via structured logging before changing normalization. The fix may be a new variant in `name_variants()` or a build-time cross-street computation fix, not a change to the core normalizer.
 
 ## Integration Points
+
+### New vs Modified Components
+
+| Component | Change Type | What Changes |
+|-----------|-------------|--------------|
+| `src/gps2asp/api_models.py` | **Modify** | Add `soda_level: int = 0` field to `ASPResult` dataclass |
+| `src/gps2asp/pipeline.py` | **Modify** | Populate `soda_level` in `ASPResult` (same extraction already done for `ASPDebugResult`) |
+| `src/gps2asp/signs/__init__.py` | **Modify** | Add structured INFO logs at Level 4 entry + miss cases (Cases B and C above) |
+| `scripts/build_index.py` | **Modify** | Filter graph.json to ASP-reachable segments (ASP PIDs + 1-hop neighbors) |
+| `custom_components/asp_parking/coordinator.py` | **Modify** | Migrate `_async_resolve_pipeline()` from 3-stage manual call to `resolve_asp()`; add `soda_level` to `ASPParkingData` |
+| `custom_components/asp_parking/sensor.py` | **Modify** | Add `soda_level` to `extra_state_attributes` in `ASPNextMoveTimeSensor` |
+
+No new files are needed. All changes are surgical modifications to existing components.
+
+### Dependency Graph for Changes
+
+```
+api_models.py (add soda_level to ASPResult)
+    │
+    ▼ must happen first
+pipeline.py (populate soda_level in non-debug path)
+    │
+    ▼ must happen after pipeline.py
+coordinator.py (use resolve_asp(), read result.soda_level)
+    │
+    ▼ must happen after coordinator.py
+sensor.py (read data.soda_level from coordinator)
+```
+
+```
+signs/__init__.py (structured Level 4 logging)
+    │ independent of the soda_level propagation chain above
+    │ can be built in parallel
+    ▼
+(observability in HA logs)
+```
+
+```
+build_index.py (graph.json filter)
+    │ purely offline, no runtime code changes
+    │ can be built in parallel with all runtime changes
+    ▼
+(re-run build_index.py, new graph.json deployed)
+```
 
 ### External Services
 
 | Service | Integration Pattern | Notes |
 |---------|---------------------|-------|
-| **NYC Open Data SODA API** | REST GET with SoQL `$where` clause, JSON response. No auth required (app token optional for higher rate limits). | Endpoint: `data.cityofnewyork.us/resource/nfid-uabd.json`. No spatial queries on numeric coords -- use `BETWEEN` for bounding box. Rate limit: 1000 req/hour without token, higher with token. |
-| **NYC 311 API** | Via `nyc311calendar` Python package. Requires free API key from `api-portal.nyc.gov`. | Returns structured suspension data. Package handles response normalization. Key supports both primary and secondary credentials. |
-| **VW CarNet / WeConnect** | Via existing HA `device_tracker` entity. Read `latitude`/`longitude` from state attributes. | No direct integration needed -- just read HA entity state. GPS updates when HA polls the VW API. |
-| **OpenCurb API (optional)** | REST GET to `opencurb.nyc/search.php` with GPS coords. No auth. | Validation/fallback only. Returns GeoJSON but not parseable schedules. Officially Manhattan only. |
+| NYC Open Data SODA (`nfid-uabd`) | REST GET + SoQL `$where`, paginated JSON | No changes for v2.0; existing client handles L4 broad query |
+| NYC Open Data SODA (`inkn-q76z`) | REST GeoJSON + pagination (build time only) | No changes; build_index.py downloads unchanged |
 
 ### Internal Boundaries
 
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| HA Integration <-> Core Library | Direct Python function call (`resolver.resolve(lat, lng)`) | Core library is a plain Python package with no HA imports. HA wrapper calls it via `async_add_executor_job` since pyproj and sqlite3 are synchronous. |
-| Core Library <-> SODA API | HTTP GET via `requests` or `aiohttp` | Simple REST calls. Core library owns the client. Responses are JSON arrays of sign dicts. |
-| Core Library <-> SQLite Cache | `sqlite3` stdlib module | Cache is internal to the core library. No external database server. File stored alongside HA config or in a configurable path. |
-| Suspension Service <-> 311 API | Via `nyc311calendar` async client | The suspension service wraps `nyc311calendar` and exposes a simple `is_suspended(date)` interface to the scheduler. |
-| Coordinator <-> Sensor Entities | HA `CoordinatorEntity` base class | Sensors read from `coordinator.data` dict. Coordinator handles all update scheduling. Sensors are thin read-only views. |
+| Boundary | Communication | v2.0 Change |
+|----------|---------------|-------------|
+| `pipeline.py` → `ASPResult` | Frozen dataclass construction | Add `soda_level` field; zero-cost, backward-compat if callers use keyword args |
+| `coordinator.py` → `pipeline.py` | `await resolve_asp(lat, lon)` | Coordinator currently bypasses `resolve_asp()` entirely; migration aligns HA with library public API |
+| `coordinator.py` → `sensor.py` | `coordinator.data` (ASPParkingData dataclass) | Add `soda_level: int = 0` to `ASPParkingData`; sensor reads new field |
+| `retrieve_signs()` → `StreetGraph` | `StreetGraph.get()` singleton call | No change; observability lives in `retrieve_signs()`, not in `StreetGraph` |
 
-## Build Order (Dependency Chain)
+## Suggested Build Order
 
-The components have clear dependencies that dictate implementation order:
+Build order is driven by the dependency chain above. Three workstreams are independent and can be sequenced or run in parallel:
 
-```
-Phase 1: Foundation (no external dependencies between these)
-├── Coordinate Converter (pyproj, standalone)
-├── SODA API Client (requests, standalone)
-├── Sign Description Parser (regex, standalone)
-└── Data Models (dataclasses, standalone)
+**Workstream 1 — soda_level propagation (4 steps, strict order):**
+1. `api_models.py`: Add `soda_level: int = 0` to `ASPResult`
+2. `pipeline.py`: Populate `soda_level` in `ASPResult` construction (copy the existing `ASPDebugResult` extraction logic)
+3. `coordinator.py`: Migrate to `resolve_asp()`, add `soda_level` to `ASPParkingData`, update data extraction
+4. `sensor.py`: Add `soda_level` to `extra_state_attributes`
 
-Phase 2: Integration (depends on Phase 1)
-├── Sign Matcher (uses: Converter + SODA Client + Models)
-├── SQLite Cache (uses: Models)
-└── Suspension Service (uses: nyc311calendar)
+**Workstream 2 — Level 4 structured logging (1 step, independent):**
+5. `signs/__init__.py`: Add INFO log at Level 4 entry; add INFO logs for miss Cases B and C
 
-Phase 3: Orchestration (depends on Phase 2)
-└── Resolver Pipeline (uses: Matcher + Cache + Parser + Suspension)
+**Workstream 3 — graph.json size reduction (1 step, offline only):**
+6. `build_index.py`: Add `relevant_pids` filter before writing graph.json; rebuild index; verify BFS correctness via tests
 
-Phase 4: HA Integration (depends on Phase 3)
-├── DataUpdateCoordinator (uses: Resolver Pipeline)
-├── Sensor Entities (uses: Coordinator)
-└── Config Flow (HA setup UI)
-```
+**Queens diagnosis (after Workstream 1 + 2 complete):**
+7. Enable DEBUG logging for borocode=4 segments in a test resolve; compare logged CSCL cross-street names against SODA stored names; identify which candidate failure point (A, B, or C) is responsible; apply targeted fix
 
-**Key insight:** Phase 1 components are all independently testable with no cross-dependencies. This means they can be built and validated in parallel. Phase 2 composes them. Phase 3 orchestrates the full pipeline. Phase 4 wraps it for Home Assistant.
+**Why this order:** Steps 1-4 unblock the HA sensor improvement and close the coordinator tech debt. Step 5 adds the observability needed to measure Level 4 hit rate in production. Step 6 is offline and has no runtime risk. Queens diagnosis must follow Steps 5 because the structured logs are what make the failure point identifiable.
 
 ## Sources
 
-- [NYC Open Data - Parking Regulation Locations and Signs](https://data.cityofnewyork.us/Transportation/Parking-Regulation-Locations-and-Signs/nfid-uabd) -- PRIMARY data source, verified via live API query
-- [EPSG:2263 - NAD83 / New York Long Island (ftUS)](https://epsg.io/2263) -- Coordinate system for NYC sign data
-- [pyproj Getting Started](https://pyproj4.github.io/pyproj/stable/examples.html) -- Transformer.from_crs() usage and best practices
-- [Socrata within_circle() docs](https://dev.socrata.com/docs/functions/within_circle.html) -- Confirmed NOT usable for numeric coord columns
-- [Socrata BETWEEN function](https://dev.socrata.com/docs/functions/between.html) -- Correct approach for bounding box on numeric columns
-- [OpenCurb API Documentation](https://www.opencurb.nyc/doc.html) -- API structure, response format, Manhattan-only limitation
-- [ha-nyc311 GitHub](https://github.com/elahd/ha-nyc311) -- Reference HA integration for NYC 311 suspension data
-- [nyc311calendar on PyPI](https://pypi.org/project/nyc311calendar/) -- Python package for ASP suspension data
-- [HA Developer Docs - Fetching Data](https://developers.home-assistant.io/docs/integration_fetching_data/) -- DataUpdateCoordinator pattern
-- [HA Developer Docs - Integration Architecture](https://developers.home-assistant.io/docs/architecture_components/) -- Component/platform structure
-- [NYC LION Street Centerline](https://www.nyc.gov/content/planning/pages/resources/datasets/lion) -- Evaluated and rejected for side-of-street (anti-pattern)
-- [NYC DOT ASP Suspension Calendar](https://www.nyc.gov/html/dot/html/motorist/alternate-side-parking.shtml) -- Official suspension information
+All findings are based on direct code inspection (confidence: HIGH):
+- `src/gps2asp/pipeline.py` — soda_level extraction exists for debug path, absent from ASPResult
+- `src/gps2asp/api_models.py` — ASPResult vs ASPDebugResult field comparison
+- `src/gps2asp/signs/__init__.py` — Level 4 block, Cases A/B/C logging gap identified
+- `src/gps2asp/signs/graph.py` — StreetGraph singleton, BFS logic, span_distance()
+- `src/gps2asp/signs/normalize.py` — normalize_to_soda() suffix table, Queens ordinal gap
+- `src/gps2asp/resolver/spatial_index.py` — SpatialIndex singleton pattern
+- `custom_components/asp_parking/coordinator.py` — manual 3-stage call confirmed (lines 289-296)
+- `custom_components/asp_parking/sensor.py` — extra_state_attributes missing soda_level confirmed
+- `scripts/build_index.py` — graph.json write loop (lines 921-926), all-adjacency issue confirmed
 
 ---
-*Architecture research for: GPS2ASP Resolver -- NYC Alternate Side Parking*
-*Researched: 2026-02-21*
+*Architecture research for: GPS2ASP v2.0 — coverage improvements and observability*
+*Researched: 2026-03-13*

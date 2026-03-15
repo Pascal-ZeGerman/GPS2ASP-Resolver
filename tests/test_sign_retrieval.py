@@ -10,6 +10,7 @@ All tests are async (pytest-asyncio with asyncio_mode = auto).
 from __future__ import annotations
 
 import json
+import logging
 import socket
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -650,3 +651,268 @@ async def test_level_4_returns_no_match_when_best_span_is_none() -> None:
     # best span is None (all distances inf) -> no Level 4 result
     # SODA had results (any_soda_results=True) -> NoASPSigns
     assert isinstance(result, (NoASPSigns, NoMatchFound))
+
+
+# ── Structured Level 4 logging (l4_event) ───────────────────────────
+
+
+async def test_l4_entry_logged_once_before_loop() -> None:
+    """l4_event=l4_entry is emitted exactly once, before the on_variants loop.
+
+    A single retrieve_signs() call that reaches Level 4 should produce
+    exactly one l4_entry record, and it must appear before any l4_no_span
+    or l4_no_records records.
+    """
+    graph = _make_graph()
+    broad_records = [dict(_BROOM_SIGN_RECORD)]
+
+    mock_client = MagicMock()
+    mock_client.build_block_query.return_value = "mock_block_query"
+    mock_client.build_on_street_query.return_value = "mock_broad_query"
+    mock_client.fetch_signs = AsyncMock(side_effect=[
+        [],            # Level 1 block query
+        [],            # Level 3 broad query
+        broad_records, # Level 4 broad query
+    ])
+
+    log_handler = _CapturingHandler()
+    signs_logger = logging.getLogger("gps2asp.signs")
+    signs_logger.addHandler(log_handler)
+    original_level = signs_logger.level
+    signs_logger.setLevel(logging.INFO)
+    try:
+        with (
+            patch("gps2asp.signs.SODAClient", return_value=mock_client),
+            patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+        ):
+            await retrieve_signs(
+                on_street="BROADWAY",
+                from_street="72 STREET",
+                to_street="73 STREET",
+                side_of_street="N",
+            )
+    finally:
+        signs_logger.removeHandler(log_handler)
+        signs_logger.setLevel(original_level)
+
+    entry_records = [r for r in log_handler.records if "l4_event=l4_entry" in r.getMessage()]
+    assert len(entry_records) == 1, (
+        f"Expected exactly 1 l4_event=l4_entry record, got {len(entry_records)}: "
+        f"{[r.getMessage() for r in log_handler.records]}"
+    )
+
+
+async def test_l4_match_log_includes_span_fields() -> None:
+    """When Level 4 finds a covering span, the l4_match log contains span_from, span_to, and signs."""
+    graph = _make_graph()
+    broad_records = [dict(_BROOM_SIGN_RECORD)]
+
+    mock_client = MagicMock()
+    mock_client.build_block_query.return_value = "mock_block_query"
+    mock_client.build_on_street_query.return_value = "mock_broad_query"
+    mock_client.fetch_signs = AsyncMock(side_effect=[
+        [],
+        [],
+        broad_records,
+    ])
+
+    log_handler = _CapturingHandler()
+    signs_logger = logging.getLogger("gps2asp.signs")
+    signs_logger.addHandler(log_handler)
+    original_level = signs_logger.level
+    signs_logger.setLevel(logging.INFO)
+    try:
+        with (
+            patch("gps2asp.signs.SODAClient", return_value=mock_client),
+            patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+        ):
+            await retrieve_signs(
+                on_street="BROADWAY",
+                from_street="72 STREET",
+                to_street="73 STREET",
+                side_of_street="N",
+            )
+    finally:
+        signs_logger.removeHandler(log_handler)
+        signs_logger.setLevel(original_level)
+
+    match_records = [r for r in log_handler.records if "l4_event=l4_match" in r.getMessage()]
+    assert len(match_records) == 1, (
+        f"Expected 1 l4_event=l4_match record, got {len(match_records)}: "
+        f"{[r.getMessage() for r in log_handler.records]}"
+    )
+    msg = match_records[0].getMessage()
+    assert "span_from=" in msg, f"Missing span_from= in: {msg}"
+    assert "span_to=" in msg, f"Missing span_to= in: {msg}"
+    assert "signs=" in msg, f"Missing signs= in: {msg}"
+
+
+async def test_l4_no_span_log_includes_span_candidates() -> None:
+    """When broad query returns records but no reachable span, l4_no_span is logged with span_candidates."""
+    graph = _make_graph()
+    # Use records from a disconnected sub-graph so _find_best_covering_span returns None
+    unreachable_records = [
+        {
+            "from_street": "ALPHA STREET",
+            "to_street": "BETA STREET",
+            "sign_description": "SANITATION BROOM UP",
+            "side_of_street": "N",
+        }
+    ]
+
+    mock_client = MagicMock()
+    mock_client.build_block_query.return_value = "mock_block_query"
+    mock_client.build_on_street_query.return_value = "mock_broad_query"
+    mock_client.fetch_signs = AsyncMock(side_effect=[
+        [],
+        [],
+        unreachable_records,
+    ])
+
+    log_handler = _CapturingHandler()
+    signs_logger = logging.getLogger("gps2asp.signs")
+    signs_logger.addHandler(log_handler)
+    original_level = signs_logger.level
+    signs_logger.setLevel(logging.INFO)
+    try:
+        with (
+            patch("gps2asp.signs.SODAClient", return_value=mock_client),
+            patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+        ):
+            await retrieve_signs(
+                on_street="BROADWAY",
+                from_street="72 STREET",
+                to_street="73 STREET",
+                side_of_street="N",
+            )
+    finally:
+        signs_logger.removeHandler(log_handler)
+        signs_logger.setLevel(original_level)
+
+    no_span_records = [r for r in log_handler.records if "l4_event=l4_no_span" in r.getMessage()]
+    assert len(no_span_records) >= 1, (
+        f"Expected l4_event=l4_no_span record, got none: "
+        f"{[r.getMessage() for r in log_handler.records]}"
+    )
+    msg = no_span_records[0].getMessage()
+    assert "span_candidates=" in msg, f"Missing span_candidates= in: {msg}"
+
+
+async def test_l4_no_records_logged_when_broad_query_empty() -> None:
+    """When Level 4 broad query returns zero records, l4_no_records is logged (no span_candidates)."""
+    graph = _make_graph()
+
+    mock_client = MagicMock()
+    mock_client.build_block_query.return_value = "mock_block_query"
+    mock_client.build_on_street_query.return_value = "mock_broad_query"
+    mock_client.fetch_signs = AsyncMock(side_effect=[
+        [],  # Level 1 block query
+        [],  # Level 3 broad query
+        [],  # Level 4 broad query — empty
+    ])
+
+    log_handler = _CapturingHandler()
+    signs_logger = logging.getLogger("gps2asp.signs")
+    signs_logger.addHandler(log_handler)
+    original_level = signs_logger.level
+    signs_logger.setLevel(logging.INFO)
+    try:
+        with (
+            patch("gps2asp.signs.SODAClient", return_value=mock_client),
+            patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+        ):
+            await retrieve_signs(
+                on_street="BROADWAY",
+                from_street="72 STREET",
+                to_street="73 STREET",
+                side_of_street="N",
+            )
+    finally:
+        signs_logger.removeHandler(log_handler)
+        signs_logger.setLevel(original_level)
+
+    no_rec_records = [r for r in log_handler.records if "l4_event=l4_no_records" in r.getMessage()]
+    assert len(no_rec_records) >= 1, (
+        f"Expected l4_event=l4_no_records record, got none: "
+        f"{[r.getMessage() for r in log_handler.records]}"
+    )
+    msg = no_rec_records[0].getMessage()
+    assert "span_candidates=" not in msg, f"l4_no_records should NOT contain span_candidates=: {msg}"
+
+
+async def test_all_l4_events_share_common_prefix() -> None:
+    """All four l4_event variants are accessible via a single 'l4_event=' grep.
+
+    This test drives all four code paths and confirms the common prefix makes
+    them all greppable together in HA logs.
+    """
+    graph = _make_graph()
+    broad_records = [dict(_BROOM_SIGN_RECORD)]
+    unreachable_records = [
+        {"from_street": "ALPHA STREET", "to_street": "BETA STREET",
+         "sign_description": "SANITATION BROOM UP", "side_of_street": "N"}
+    ]
+
+    log_handler = _CapturingHandler()
+    signs_logger = logging.getLogger("gps2asp.signs")
+    signs_logger.addHandler(log_handler)
+    original_level = signs_logger.level
+    signs_logger.setLevel(logging.INFO)
+    try:
+        # Path 1: l4_entry + l4_match (broad query has reachable records)
+        mock_client = MagicMock()
+        mock_client.build_block_query.return_value = "mock_block_query"
+        mock_client.build_on_street_query.return_value = "mock_broad_query"
+        mock_client.fetch_signs = AsyncMock(side_effect=[[], [], broad_records])
+        with (
+            patch("gps2asp.signs.SODAClient", return_value=mock_client),
+            patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+        ):
+            await retrieve_signs("BROADWAY", "72 STREET", "73 STREET", "N")
+
+        # Path 2: l4_entry + l4_no_span (broad query has unreachable records)
+        mock_client2 = MagicMock()
+        mock_client2.build_block_query.return_value = "mock_block_query"
+        mock_client2.build_on_street_query.return_value = "mock_broad_query"
+        mock_client2.fetch_signs = AsyncMock(side_effect=[[], [], unreachable_records])
+        with (
+            patch("gps2asp.signs.SODAClient", return_value=mock_client2),
+            patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+        ):
+            await retrieve_signs("BROADWAY", "72 STREET", "73 STREET", "N")
+
+        # Path 3: l4_entry + l4_no_records (broad query returns empty)
+        mock_client3 = MagicMock()
+        mock_client3.build_block_query.return_value = "mock_block_query"
+        mock_client3.build_on_street_query.return_value = "mock_broad_query"
+        mock_client3.fetch_signs = AsyncMock(side_effect=[[], [], []])
+        with (
+            patch("gps2asp.signs.SODAClient", return_value=mock_client3),
+            patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+        ):
+            await retrieve_signs("BROADWAY", "72 STREET", "73 STREET", "N")
+    finally:
+        signs_logger.removeHandler(log_handler)
+        signs_logger.setLevel(original_level)
+
+    all_msgs = [r.getMessage() for r in log_handler.records]
+    l4_event_msgs = [m for m in all_msgs if "l4_event=" in m]
+
+    # Must find all four variants
+    variants = {"l4_entry", "l4_match", "l4_no_span", "l4_no_records"}
+    found_variants = {v for v in variants if any(f"l4_event={v}" in m for m in l4_event_msgs)}
+    assert found_variants == variants, (
+        f"Missing l4_event variants: {variants - found_variants}. "
+        f"Found messages: {l4_event_msgs}"
+    )
+
+
+class _CapturingHandler(logging.Handler):
+    """Simple in-memory log handler for test assertions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
