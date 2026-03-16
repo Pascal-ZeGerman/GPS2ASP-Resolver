@@ -342,13 +342,7 @@ class TestASPResultSodaLevel:
 
     async def test_asp_result_soda_level_zero_on_no_match(self) -> None:
         """Non-debug resolve_asp with NoMatchFound -> ASPResult.soda_level == 0."""
-        no_match = NoMatchFound(
-            status="no_match",
-            on_street="PROSPECT PL",
-            from_street="VANDERBILT AVE",
-            to_street="CARLTON AVE",
-            side_of_street="N",
-        )
+        no_match = NoMatchFound(status="no_match")
         schedule = _make_schedule_found()
         resolution = _make_resolution_result()
 

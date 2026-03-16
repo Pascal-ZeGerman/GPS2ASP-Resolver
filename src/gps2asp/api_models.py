@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from gps2asp.resolver.models import ResolutionResult
-from gps2asp.schedule.models import ScheduleResult
-from gps2asp.signs.models import SignRetrievalResult
+from .resolver.models import ResolutionResult
+from .schedule.models import ScheduleResult
+from .signs.models import SignRetrievalResult
 
 
 @dataclass(frozen=True)
@@ -32,11 +32,15 @@ class ASPResult:
             a unique street segment.
         resolution_error: Human-readable error message string when
             resolution_failed is True; None on success.
+        soda_level: Which SODA fallback level resolved the parking data (1–4).
+            Set to 0 when no SODA query was reached (resolution failed) or
+            when sign retrieval returned no match.
     """
 
     schedule: ScheduleResult | None
     resolution_failed: bool
     resolution_error: str | None
+    soda_level: int = 0  # 0 = no SODA match; 1–4 = which fallback level matched
 
 
 @dataclass(frozen=True)

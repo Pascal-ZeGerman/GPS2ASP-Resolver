@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from typing import Literal, overload
 
-from gps2asp.api_models import ASPDebugResult, ASPResult
-from gps2asp.resolver import convert, resolve_segment
-from gps2asp.resolver.exceptions import AmbiguousResolutionError
-from gps2asp.schedule import compute_schedule
-from gps2asp.signs import retrieve_signs
-from gps2asp.signs.models import SignRetrievalSuccess
+from .api_models import ASPDebugResult, ASPResult
+from .resolver import convert, resolve_segment
+from .resolver.exceptions import AmbiguousResolutionError
+from .schedule import compute_schedule
+from .signs import retrieve_signs
+from .signs.models import SignRetrievalSuccess
 
 
 @overload
@@ -100,4 +100,5 @@ async def resolve_asp(
         schedule=schedule,
         resolution_failed=False,
         resolution_error=None,
+        soda_level=sign_result.soda_level if isinstance(sign_result, SignRetrievalSuccess) else 0,
     )

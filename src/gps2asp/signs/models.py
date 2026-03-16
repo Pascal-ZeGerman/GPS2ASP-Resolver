@@ -31,7 +31,7 @@ class SignRetrievalSuccess:
         from_street: Cross street at one end in CSCL format.
         to_street: Cross street at the other end in CSCL format.
         side_of_street: Compass direction side - N, S, E, or W.
-        soda_level: Which fallback level matched (1, 2, or 3). Defaults to 1
+        soda_level: Which fallback level matched (1, 2, 3, or 4). Defaults to 1
             for any site that does not explicitly specify a level.
     """
 
@@ -41,7 +41,7 @@ class SignRetrievalSuccess:
     from_street: str
     to_street: str
     side_of_street: str
-    soda_level: int = 1  # 1, 2, or 3 — which fallback level matched
+    soda_level: int = 1  # 1, 2, 3, or 4 — which fallback level matched
 
 
 @dataclass(frozen=True)
