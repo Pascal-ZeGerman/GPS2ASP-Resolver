@@ -14,9 +14,26 @@ from __future__ import annotations
 import math
 import re
 import pytest
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
+
+NYC_TZ = ZoneInfo("America/New_York")
+UTC_TZ = timezone.utc
+
+
+def _format_move_time(dt: datetime) -> str:
+    """Mirror of ASPNextMoveTimeSensor._format_move_time() for test helpers.
+
+    Uses stdlib only (no dt_util) so tests run without Home Assistant.
+    """
+    local_dt = dt.astimezone(NYC_TZ)
+    seconds_until = (dt - datetime.now(tz=UTC_TZ)).total_seconds()
+    time_str = local_dt.strftime("%-I:%M %p")
+    if seconds_until < 12 * 3600:
+        return f"\u26a0 Today {time_str}"
+    day_str = local_dt.strftime("%a")
+    return f"{day_str} {time_str}"
 
 from gps2asp.schedule.models import (
     ASPActiveNow,
@@ -74,9 +91,9 @@ def sensor_native_value(data: ASPParkingData) -> str | None:
     if isinstance(schedule, ScheduleFound):
         if schedule.next_window is None:
             return None  # find_next_window returned None (no windows in schedule)
-        return schedule.next_window.start_datetime.isoformat()
+        return _format_move_time(schedule.next_window.start_datetime)
     if isinstance(schedule, ASPActiveNow):
-        return schedule.active_window.end_datetime.isoformat()
+        return _format_move_time(schedule.active_window.end_datetime)
     if isinstance(schedule, NoASPSchedule):
         return "No restrictions"
     if isinstance(schedule, NoMatchSchedule):
@@ -125,6 +142,16 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
                 attrs["time_window_end"] = first_window.end_time.strftime("%H:%M")
 
         attrs["schedule_summary"] = schedule.summary
+
+        # Urgency attribute — only when a concrete move datetime exists
+        _move_dt: datetime | None = None
+        if isinstance(schedule, ScheduleFound) and schedule.next_window is not None:
+            _move_dt = schedule.next_window.start_datetime
+        elif isinstance(schedule, ASPActiveNow):
+            _move_dt = schedule.active_window.end_datetime
+        if _move_dt is not None:
+            seconds_until = (_move_dt - datetime.now(tz=UTC_TZ)).total_seconds()
+            attrs["urgency"] = "high" if seconds_until < 12 * 3600 else "normal"
 
         attrs["street_name"] = schedule.on_street
         attrs["cross_streets"] = f"{schedule.from_street} to {schedule.to_street}"
@@ -181,8 +208,6 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
 # ---------------------------------------------------------------------------
 # Test fixtures
 # ---------------------------------------------------------------------------
-
-NYC_TZ = ZoneInfo("America/New_York")
 
 
 def _make_cleaning_window(
@@ -264,22 +289,31 @@ class TestSensorStateMapping:
     """Test ASPNextMoveTimeSensor native_value for all ScheduleResult variants."""
 
     def test_sensor_state_schedule_found(self) -> None:
-        """ScheduleFound -> ISO datetime of next window start."""
+        """ScheduleFound -> human-friendly move time (not ISO string)."""
         window = _make_cleaning_window()
         result = _make_schedule_found(window)
         data = ASPParkingData(schedule_result=result)
 
         state = sensor_native_value(data)
-        assert state == window.start_datetime.isoformat()
+        assert state is not None
+        # native_value should be human-friendly (not raw ISO)
+        assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
+            f"ISO string leaked into native_value: {state!r}"
+        )
+        assert state == _format_move_time(window.start_datetime)
 
     def test_sensor_state_asp_active_now(self) -> None:
-        """ASPActiveNow -> ISO datetime of active window end."""
+        """ASPActiveNow -> human-friendly end time (not ISO string)."""
         window = _make_cleaning_window()
         result = _make_asp_active_now(window)
         data = ASPParkingData(schedule_result=result)
 
         state = sensor_native_value(data)
-        assert state == window.end_datetime.isoformat()
+        assert state is not None
+        assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
+            f"ISO string leaked into native_value: {state!r}"
+        )
+        assert state == _format_move_time(window.end_datetime)
 
     def test_sensor_state_no_asp(self) -> None:
         """NoASPSchedule -> 'No restrictions'."""
@@ -579,22 +613,6 @@ _NORMAL_FORMAT_RE = re.compile(
 _URGENT_FORMAT_RE = re.compile(r"^\u26a0 Today \d{1,2}:\d{2} (AM|PM)$")
 
 
-def _format_move_time_test(dt: datetime) -> str:
-    """Reference implementation of _format_move_time() for test assertions.
-
-    This mirrors the logic that sensor.py should implement, giving tests a
-    stable reference that does NOT depend on dt_util.
-    """
-    # Convert to NYC local time for display
-    local_dt = dt.astimezone(ZoneInfo("America/New_York"))
-    seconds_until = (dt - datetime.now(tz=ZoneInfo("UTC"))).total_seconds()
-    time_str = local_dt.strftime("%-I:%M %p")  # e.g. "8:00 AM"
-    if seconds_until < 12 * 3600:
-        return f"\u26a0 Today {time_str}"
-    day_str = local_dt.strftime("%a")  # "Mon", "Tue", etc.
-    return f"{day_str} {time_str}"
-
-
 @pytest.mark.ha_integration
 class TestHumanFriendlyNativeValue:
     """Test that native_value returns human-friendly strings, not ISO."""
@@ -618,8 +636,8 @@ class TestHumanFriendlyNativeValue:
         assert _NORMAL_FORMAT_RE.match(state), (
             f"Expected normal format like 'Mon 8:00 AM', got: {state!r}"
         )
-        # Must NOT be an ISO string
-        assert "T" not in state or state.startswith("\u26a0"), (
+        # Must NOT be an ISO string (ISO format: YYYY-MM-DDTHH:MM...)
+        assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
             f"ISO string leaked into native_value: {state!r}"
         )
 
