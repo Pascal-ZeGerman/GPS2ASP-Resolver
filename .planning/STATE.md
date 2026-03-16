@@ -4,7 +4,7 @@ milestone: v2.0
 milestone_name: Full Borough Coverage
 status: planning
 stopped_at: Completed 12-01-PLAN.md
-last_updated: "2026-03-15T13:04:38.008Z"
+last_updated: "2026-03-15T13:12:29.941Z"
 last_activity: 2026-03-13 — v2.0 roadmap created (4 phases, 5 requirements)
 progress:
   total_phases: 4
@@ -154,6 +154,9 @@ Progress: [__________] 0% (0/? plans complete)
 - [Phase 12-01]: l4_match replaces old unstructured 'Level 4 matched' log — no duplicate logs
 - [Phase 12-01]: l4_no_records omits span_candidates to distinguish empty-SODA case (C) from unreachable-span case (B)
 - [Phase 12-01]: Tests use _CapturingHandler (custom logging.Handler) instead of caplog fixture for async test compatibility
+- [Quick-260316-cvs]: _format_move_time() uses %-I:%M %p strftime (no-leading-zero 12h, Linux) with 12h urgency threshold
+- [Quick-260316-cvs]: ISO datetime attributes (next_window_start/end) deliberately unchanged — raw ISO retained for programmatic/automation use
+- [Quick-260316-cvs]: urgency key absent when next_window is None — avoids misleading urgency with no concrete move datetime
 
 ### Roadmap Evolution
 
@@ -174,6 +177,7 @@ Progress: [__________] 0% (0/? plans complete)
 | 2 | Lower confidence threshold default from 0.60 to 0.33 for testing | 2026-02-28 | 8d655c0 | [2-lower-confidence-threshold-default-to-0-](./quick/2-lower-confidence-threshold-default-to-0-/) |
 | 3 | Fix five code review issues: CLAUDE.md stale, missing future-import, wrong comments, dead fields | 2026-03-01 | 77f3ba4 | [3-fix-5-code-review-issues-claude-md-stale](./quick/3-fix-5-code-review-issues-claude-md-stale/) |
 | 4 | Fix named directional normalization: expand W BROADWAY/CENTRAL PARK W, collapse whitespace, rebuild index | 2026-03-01 | 094a9f5 | [4-fix-named-directional-normalization-in-n](./quick/4-fix-named-directional-normalization-in-n/) |
+| 260316-cvs | Format datetime string in HA sensor: human-friendly native_value + urgency attribute | 2026-03-16 | 88f580d | [260316-cvs-format-datetime-string-in-ha-sensor-for-](./quick/260316-cvs-format-datetime-string-in-ha-sensor-for-/) |
 
 ### Blockers/Concerns
 
@@ -182,6 +186,6 @@ Progress: [__________] 0% (0/? plans complete)
 
 ## Session Continuity
 
-Last session: 2026-03-15T13:04:38.001Z
-Stopped at: Completed 12-01-PLAN.md
+Last session: 2026-03-16T13:46:00.000Z
+Stopped at: Completed quick task 260316-cvs
 Resume file: None
