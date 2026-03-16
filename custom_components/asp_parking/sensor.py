@@ -248,6 +248,7 @@ class ASPNextMoveTimeSensor(SensorEntity):
         attrs["confidence_score"] = data.confidence_score
         attrs["sign_count"] = data.sign_count
         attrs["parse_failures"] = data.parse_failures
+        attrs["soda_level"] = data.soda_level
 
         # --- Error group (only when error exists) ---
         if data.last_error is not None:

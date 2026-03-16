@@ -31,20 +31,20 @@ from homeassistant.helpers.location import has_location
 from homeassistant.util import dt as dt_util
 from homeassistant.util import location as location_util
 
-from gps2asp.resolver import resolve
-from gps2asp.resolver.exceptions import (
+from .gps2asp.resolver import resolve
+from .gps2asp.resolver.exceptions import (
     AmbiguousResolutionError,
     NoSegmentFoundError,
     OutsideNYCError,
 )
-from gps2asp.schedule import compute_schedule
-from gps2asp.schedule.models import (
+from .gps2asp.schedule import compute_schedule
+from .gps2asp.schedule.models import (
     AllUnparseable,
     ScheduleFound,
     ScheduleResult,
 )
-from gps2asp.signs import retrieve_signs
-from gps2asp.signs.models import SignRetrievalSuccess
+from .gps2asp.signs import retrieve_signs
+from .gps2asp.signs.models import SignRetrievalSuccess
 
 from .const import (
     CONF_DEVICE_TRACKER,
@@ -84,6 +84,7 @@ class ASPParkingData:
         confidence_score: Confidence score from resolver.
         sign_count: Number of signs retrieved from SODA.
         parse_failures: Count of unparseable signs.
+        soda_level: Which SODA fallback level matched (1–4); 0 if not resolved.
     """
 
     schedule_result: ScheduleResult | None = None
@@ -97,6 +98,7 @@ class ASPParkingData:
     confidence_score: float | None = None
     sign_count: int = 0
     parse_failures: int = 0
+    soda_level: int = 0  # which SODA fallback level matched (1–4); 0 if not resolved
 
 
 class ASPParkingCoordinator:
@@ -313,6 +315,12 @@ class ASPParkingCoordinator:
             else:
                 self.data.sign_count = 0
 
+            # Extract SODA fallback level from Phase 2 result
+            if isinstance(sign_result, SignRetrievalSuccess):
+                self.data.soda_level = sign_result.soda_level
+            else:
+                self.data.soda_level = 0
+
             # Extract parse failure count from Phase 3 result
             if isinstance(schedule, (ScheduleFound, AllUnparseable)):
                 self.data.parse_failures = len(schedule.parse_failures)
@@ -336,6 +344,7 @@ class ASPParkingCoordinator:
             self.data.special_state = "outside_coverage"
             self.data.last_lat = lat
             self.data.last_lon = lon
+            self.data.soda_level = 0  # reset: GPS outside coverage
             # Retain last schedule_result per user decision
             logger.info("GPS outside NYC coverage area (%.4f, %.4f)", lat, lon)
 
@@ -344,6 +353,7 @@ class ASPParkingCoordinator:
             self.data.special_state = "no_street_match"
             self.data.last_lat = lat
             self.data.last_lon = lon
+            self.data.soda_level = 0  # reset: no street match
             # Retain last schedule_result per user decision
             logger.info("No street match at (%.4f, %.4f): %s", lat, lon, err)
 
