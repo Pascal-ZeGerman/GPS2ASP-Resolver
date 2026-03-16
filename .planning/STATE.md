@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Full Borough Coverage
-status: planning
-stopped_at: Phase 13 context gathered
-last_updated: "2026-03-16T19:18:02.616Z"
-last_activity: 2026-03-13 — v2.0 roadmap created (4 phases, 5 requirements)
+status: executing
+stopped_at: Completed 13-02-PLAN.md (soda_level propagation to HA sensor)
+last_updated: "2026-03-16T19:59:04.220Z"
+last_activity: 2026-03-16 — Phase 13 Plan 01 TDD Wave 0 complete (test scaffold for soda_level)
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 0
+  completed_phases: 2
+  total_plans: 3
+  completed_plans: 3
+  percent: 50
 ---
 
 # Project State
@@ -26,19 +26,19 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 ## Current Position
 
 Milestone: v2.0 Full Borough Coverage
-Phase: 13-soda-level-propagation-to-ha-sensor (Plan 1 of 2 complete)
-Plan: 01 complete, 02 next
-Status: Executing Phase 13
-Last activity: 2026-03-16 — Phase 13 Plan 01 TDD Wave 0 complete (test scaffold for soda_level)
+Phase: 13-soda-level-propagation-to-ha-sensor (Plan 2 of 2 complete)
+Plan: 02 complete (phase complete)
+Status: Phase 13 complete
+Last activity: 2026-03-16 — Phase 13 Plan 02 soda_level propagation to HA sensor complete
 
-Progress: [#####_____] 50% (1/2 plans complete in Phase 13)
+Progress: [##########] 100% (2/2 plans complete in Phase 13)
 
 ## Phase Summary (v2.0)
 
 | Phase | Goal | Requirements | Status |
 |-------|------|--------------|--------|
 | 12. Structured Level 4 Logging | Level 4 behavior visible in HA logs | OBS-02 | Not started |
-| 13. soda_level Propagation | soda_level in HA sensor attributes | OBS-01 | In progress (1/2 plans) |
+| 13. soda_level Propagation | soda_level in HA sensor attributes | OBS-01 | Complete (2/2 plans) |
 | 14. graph.json Size Reduction | graph.json ≤4 MB at build time | PERF-01 | Not started |
 | 15. Queens and Manhattan Coverage Fix | Queens ≥50%, Manhattan ≥60% | COV-02, COV-04 | Not started |
 
@@ -67,6 +67,7 @@ Progress: [#####_____] 50% (1/2 plans complete in Phase 13)
 | 11 | 3/3 | — | — |
 | Phase 12-structured-level-4-logging P01 | 7 | 2 tasks | 2 files |
 | Phase 13-soda-level-propagation P01 | 5 | 3 tasks | 2 files |
+| Phase 13 P02 | 7 | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -160,6 +161,8 @@ Progress: [#####_____] 50% (1/2 plans complete in Phase 13)
 - [Quick-260316-cvs]: urgency key absent when next_window is None — avoids misleading urgency with no concrete move datetime
 - [Phase 13-01]: TestSodaLevelAttribute tests pass immediately (test-local mirror, not production code) — TDD contract verified by Plan 02 integration
 - [Phase 13-01]: TestASPResultSodaLevel tests intentionally RED (AttributeError on ASPResult.soda_level) — Plan 02 makes them GREEN
+- [Phase 13]: NoMatchFound test fixture corrected: removed invalid kwargs that NoMatchFound does not accept
+- [Phase 13]: Generic except Exception in coordinator retains last soda_level (same pattern as sign_count)
 
 ### Roadmap Evolution
 
@@ -189,6 +192,6 @@ Progress: [#####_____] 50% (1/2 plans complete in Phase 13)
 
 ## Session Continuity
 
-Last session: 2026-03-16T19:45:13Z
-Stopped at: Completed 13-01-PLAN.md (TDD Wave 0 tests for soda_level)
-Resume file: .planning/phases/13-soda-level-propagation-to-ha-sensor/13-02-PLAN.md
+Last session: 2026-03-16T19:59:04.213Z
+Stopped at: Completed 13-02-PLAN.md (soda_level propagation to HA sensor)
+Resume file: None

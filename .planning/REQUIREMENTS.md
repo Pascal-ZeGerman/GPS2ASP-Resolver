@@ -14,7 +14,7 @@ Requirements for the v2.0 Full Borough Coverage milestone.
 
 ### Observability
 
-- [ ] **OBS-01**: HA sensor `extra_state_attributes` includes `soda_level` integer (1–4) indicating which API fallback level resolved the parking data
+- [x] **OBS-01**: HA sensor `extra_state_attributes` includes `soda_level` integer (1–4) indicating which API fallback level resolved the parking data
 - [x] **OBS-02**: Level 4 fallback emits structured INFO log entries at entry, match (Case A), and both miss cases (Case B: no covering span; Case C: no SODA records)
 
 ### Performance
