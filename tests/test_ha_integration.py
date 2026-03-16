@@ -71,6 +71,7 @@ class ASPParkingData:
     confidence_score: float | None = None
     sign_count: int = 0
     parse_failures: int = 0
+    soda_level: int = 0  # mirrors coordinator.py ASPParkingData
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +178,7 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
     attrs["confidence_score"] = data.confidence_score
     attrs["sign_count"] = data.sign_count
     attrs["parse_failures"] = data.parse_failures
+    attrs["soda_level"] = data.soda_level
 
     if data.last_error is not None:
         attrs["last_error"] = data.last_error
