@@ -307,3 +307,65 @@ async def test_soda_level_zero_for_no_match_found() -> None:
     assert isinstance(result, ASPDebugResult)
     assert result.soda_level == 0
     assert result.resolution_failed is False
+
+
+class TestASPResultSodaLevel:
+    """Test that ASPResult.soda_level is populated on the non-debug path.
+
+    These tests are RED until Plan 02 adds soda_level to ASPResult and
+    populates it in pipeline.py.
+    """
+
+    async def test_asp_result_soda_level_populated(self) -> None:
+        """Non-debug resolve_asp -> ASPResult.soda_level == sign_result.soda_level."""
+        sign_success = _make_sign_success(soda_level=2)
+        schedule = _make_schedule_found()
+        resolution = _make_resolution_result()
+
+        with (
+            patch("gps2asp.pipeline.convert", return_value=(100.0, 200.0)),
+            patch(
+                "gps2asp.pipeline.resolve_segment",
+                new=AsyncMock(return_value=resolution),
+            ),
+            patch(
+                "gps2asp.pipeline.retrieve_signs",
+                new=AsyncMock(return_value=sign_success),
+            ),
+            patch("gps2asp.pipeline.compute_schedule", return_value=schedule),
+        ):
+            result = await resolve_asp(40.676, -73.979)
+
+        assert isinstance(result, ASPResult)
+        # This assertion is RED until Plan 02 adds soda_level to ASPResult
+        assert result.soda_level == 2
+
+    async def test_asp_result_soda_level_zero_on_no_match(self) -> None:
+        """Non-debug resolve_asp with NoMatchFound -> ASPResult.soda_level == 0."""
+        no_match = NoMatchFound(
+            status="no_match",
+            on_street="PROSPECT PL",
+            from_street="VANDERBILT AVE",
+            to_street="CARLTON AVE",
+            side_of_street="N",
+        )
+        schedule = _make_schedule_found()
+        resolution = _make_resolution_result()
+
+        with (
+            patch("gps2asp.pipeline.convert", return_value=(100.0, 200.0)),
+            patch(
+                "gps2asp.pipeline.resolve_segment",
+                new=AsyncMock(return_value=resolution),
+            ),
+            patch(
+                "gps2asp.pipeline.retrieve_signs",
+                new=AsyncMock(return_value=no_match),
+            ),
+            patch("gps2asp.pipeline.compute_schedule", return_value=schedule),
+        ):
+            result = await resolve_asp(40.676, -73.979)
+
+        assert isinstance(result, ASPResult)
+        # This assertion is RED until Plan 02 adds soda_level to ASPResult
+        assert result.soda_level == 0
