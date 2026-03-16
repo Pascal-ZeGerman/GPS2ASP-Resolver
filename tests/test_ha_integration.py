@@ -12,6 +12,7 @@ correct state mapping.
 from __future__ import annotations
 
 import math
+import re
 import pytest
 from datetime import datetime, time, timedelta
 from dataclasses import dataclass, field
@@ -562,3 +563,247 @@ class TestStaleTimeout:
         )
         data = ASPParkingData(last_gps_update=almost_stale)
         assert sensor_available(data, stale_timeout_hours=8) is True
+
+
+# ===========================================================================
+# Group 6: Human-friendly native_value format and urgency attribute
+# ===========================================================================
+
+
+# Pattern for normal case: "Mon 8:00 AM" (abbreviated day + no-leading-zero 12h time)
+_NORMAL_FORMAT_RE = re.compile(
+    r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2}:\d{2} (AM|PM)$"
+)
+
+# Pattern for urgent case: "⚠ Today 8:00 AM"
+_URGENT_FORMAT_RE = re.compile(r"^\u26a0 Today \d{1,2}:\d{2} (AM|PM)$")
+
+
+def _format_move_time_test(dt: datetime) -> str:
+    """Reference implementation of _format_move_time() for test assertions.
+
+    This mirrors the logic that sensor.py should implement, giving tests a
+    stable reference that does NOT depend on dt_util.
+    """
+    # Convert to NYC local time for display
+    local_dt = dt.astimezone(ZoneInfo("America/New_York"))
+    seconds_until = (dt - datetime.now(tz=ZoneInfo("UTC"))).total_seconds()
+    time_str = local_dt.strftime("%-I:%M %p")  # e.g. "8:00 AM"
+    if seconds_until < 12 * 3600:
+        return f"\u26a0 Today {time_str}"
+    day_str = local_dt.strftime("%a")  # "Mon", "Tue", etc.
+    return f"{day_str} {time_str}"
+
+
+@pytest.mark.ha_integration
+class TestHumanFriendlyNativeValue:
+    """Test that native_value returns human-friendly strings, not ISO."""
+
+    def test_schedule_found_normal_format(self) -> None:
+        """ScheduleFound >12h away returns 'Mon 8:00 AM' style string."""
+        # Create a window 24 hours from now (well past 12h threshold)
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=24)
+        window = _make_cleaning_window(
+            day=ASPDay.MONDAY,
+            start_dt=future_dt,
+            end_dt=future_dt + timedelta(hours=1, minutes=30),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+
+        # Must match "DDD H:MM AM/PM" pattern — NOT an ISO string
+        assert state is not None
+        assert _NORMAL_FORMAT_RE.match(state), (
+            f"Expected normal format like 'Mon 8:00 AM', got: {state!r}"
+        )
+        # Must NOT be an ISO string
+        assert "T" not in state or state.startswith("\u26a0"), (
+            f"ISO string leaked into native_value: {state!r}"
+        )
+
+    def test_schedule_found_urgent_format(self) -> None:
+        """ScheduleFound <12h away returns '⚠ Today 8:00 AM' prefix."""
+        # Create a window 3 hours from now (inside 12h threshold)
+        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=3)
+        window = _make_cleaning_window(
+            day=ASPDay.MONDAY,
+            start_dt=soon_dt,
+            end_dt=soon_dt + timedelta(hours=1, minutes=30),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+
+        assert state is not None
+        assert _URGENT_FORMAT_RE.match(state), (
+            f"Expected urgent format like '⚠ Today 8:00 AM', got: {state!r}"
+        )
+
+    def test_asp_active_now_normal_format(self) -> None:
+        """ASPActiveNow >12h end time returns 'Mon 8:00 AM' style for end time."""
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=24)
+        window = _make_cleaning_window(
+            day=ASPDay.MONDAY,
+            start_dt=future_dt - timedelta(hours=1),
+            end_dt=future_dt,
+        )
+        result = _make_asp_active_now(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+
+        assert state is not None
+        assert _NORMAL_FORMAT_RE.match(state), (
+            f"Expected normal format for ASPActiveNow, got: {state!r}"
+        )
+
+    def test_asp_active_now_urgent_format(self) -> None:
+        """ASPActiveNow with end time <12h away gets urgency prefix."""
+        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=2)
+        window = _make_cleaning_window(
+            day=ASPDay.MONDAY,
+            start_dt=soon_dt - timedelta(minutes=30),
+            end_dt=soon_dt,
+        )
+        result = _make_asp_active_now(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+
+        assert state is not None
+        assert _URGENT_FORMAT_RE.match(state), (
+            f"Expected urgent format for ASPActiveNow end, got: {state!r}"
+        )
+
+    def test_no_iso_string_leaks_in_schedule_found(self) -> None:
+        """native_value for ScheduleFound must never contain raw ISO datetime."""
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=48)
+        window = _make_cleaning_window(
+            start_dt=future_dt,
+            end_dt=future_dt + timedelta(hours=2),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+        # ISO 8601 pattern: digits-digits-digitsT
+        assert state is not None
+        assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
+            f"Raw ISO string returned from native_value: {state!r}"
+        )
+
+    def test_no_iso_string_leaks_in_asp_active_now(self) -> None:
+        """native_value for ASPActiveNow must never contain raw ISO datetime."""
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=48)
+        window = _make_cleaning_window(
+            start_dt=future_dt,
+            end_dt=future_dt + timedelta(hours=2),
+        )
+        result = _make_asp_active_now(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+        assert state is not None
+        assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
+            f"Raw ISO string returned from ASPActiveNow native_value: {state!r}"
+        )
+
+
+@pytest.mark.ha_integration
+class TestUrgencyAttribute:
+    """Test that extra_state_attributes gains 'urgency' key."""
+
+    def test_urgency_normal_when_far_away(self) -> None:
+        """Move time >12h away -> urgency='normal'."""
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=24)
+        window = _make_cleaning_window(
+            start_dt=future_dt,
+            end_dt=future_dt + timedelta(hours=2),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        attrs = sensor_extra_attributes(data)
+        assert "urgency" in attrs, "urgency key missing from extra_state_attributes"
+        assert attrs["urgency"] == "normal"
+
+    def test_urgency_high_when_soon(self) -> None:
+        """Move time <12h away -> urgency='high'."""
+        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=3)
+        window = _make_cleaning_window(
+            start_dt=soon_dt,
+            end_dt=soon_dt + timedelta(hours=2),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        attrs = sensor_extra_attributes(data)
+        assert "urgency" in attrs
+        assert attrs["urgency"] == "high"
+
+    def test_urgency_high_for_asp_active_now_soon(self) -> None:
+        """ASPActiveNow with end time <12h -> urgency='high'."""
+        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=1)
+        window = _make_cleaning_window(
+            start_dt=soon_dt - timedelta(minutes=30),
+            end_dt=soon_dt,
+        )
+        result = _make_asp_active_now(window)
+        data = ASPParkingData(schedule_result=result)
+
+        attrs = sensor_extra_attributes(data)
+        assert "urgency" in attrs
+        assert attrs["urgency"] == "high"
+
+    def test_urgency_absent_when_next_window_none(self) -> None:
+        """ScheduleFound with next_window=None -> no urgency key."""
+        tw = TimeWindow(
+            day=ASPDay.MONDAY,
+            start_time=time(8, 30),
+            end_time=time(10, 0),
+            source_sign="NO PARKING 8:30AM-10AM MON",
+        )
+        schedule = ScheduleFound(
+            status="schedule_found",
+            next_window=None,
+            weekly_schedule=WeeklySchedule(windows=(tw,)),
+            on_street="PROSPECT PLACE",
+            from_street="VANDERBILT AVENUE",
+            to_street="UNDERHILL AVENUE",
+            side_of_street="N",
+            source_signs=["NO PARKING 8:30AM-10AM MON"],
+            summary="Mon 8:30-10am",
+            parse_failures=[],
+        )
+        data = ASPParkingData(schedule_result=schedule)
+
+        attrs = sensor_extra_attributes(data)
+        # urgency must NOT be present when no datetime is available
+        assert "urgency" not in attrs
+
+    def test_urgency_absent_for_no_asp_schedule(self) -> None:
+        """NoASPSchedule -> no urgency key in attributes."""
+        data = ASPParkingData(schedule_result=NoASPSchedule())
+        attrs = sensor_extra_attributes(data)
+        assert "urgency" not in attrs
+
+    def test_iso_attributes_still_present(self) -> None:
+        """next_window_start/end still use .isoformat() (unchanged)."""
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=24)
+        window = _make_cleaning_window(
+            day=ASPDay.MONDAY,
+            start_dt=future_dt,
+            end_dt=future_dt + timedelta(hours=2),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        attrs = sensor_extra_attributes(data)
+        # ISO format must still be present in attributes
+        assert "next_window_start" in attrs
+        assert re.match(r"\d{4}-\d{2}-\d{2}T", attrs["next_window_start"]), (
+            f"next_window_start not in ISO format: {attrs['next_window_start']!r}"
+        )

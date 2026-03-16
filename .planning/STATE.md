@@ -1,37 +1,46 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: Bug Fixes
-current_plan: 3 of 3 (complete)
-status: completed
-stopped_at: Phase 11 complete — Plan 11-03 done; spatial index rebuilt with BFS propagation; 62,455 interior blocks added; Manhattan 58.2%, Brooklyn 74.1%; graph.json 7.9MB; 273 tests pass
-last_updated: "2026-03-07T15:51:51.111Z"
+milestone: v2.0
+milestone_name: Full Borough Coverage
+status: planning
+stopped_at: Completed 12-01-PLAN.md
+last_updated: "2026-03-15T13:04:38.008Z"
+last_activity: 2026-03-13 — v2.0 roadmap created (4 phases, 5 requirements)
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 13
-  completed_plans: 13
-  percent: 100
+  total_phases: 4
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-07)
+See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]"
-**Current focus:** Between milestones — v1.1 archived, planning next milestone
+**Current focus:** v2.0 Full Borough Coverage — Phase 12 next
 
 ## Current Position
 
-Milestone: v1.1 Bug Fixes
-Phase: 11-improve-asp-coverage-through-mid-span-coverage
-Current Plan: 3 of 3 (complete)
-Status: Phase 11 complete — spatial index rebuilt with BFS propagation; 62,455 interior blocks added; Manhattan 58.2%, Brooklyn 74.1%; graph.json 7.9 MB; 273 tests pass
-Next: Phase 11 complete — all phases done
+Milestone: v2.0 Full Borough Coverage
+Phase: Not started (roadmap defined, planning Phase 12 next)
+Plan: —
+Status: Ready to plan Phase 12
+Last activity: 2026-03-13 — v2.0 roadmap created (4 phases, 5 requirements)
 
-Progress: [██████████] 100% (13/13 plans complete)
+Progress: [__________] 0% (0/? plans complete)
+
+## Phase Summary (v2.0)
+
+| Phase | Goal | Requirements | Status |
+|-------|------|--------------|--------|
+| 12. Structured Level 4 Logging | Level 4 behavior visible in HA logs | OBS-02 | Not started |
+| 13. soda_level Propagation | soda_level in HA sensor attributes | OBS-01 | Not started |
+| 14. graph.json Size Reduction | graph.json ≤4 MB at build time | PERF-01 | Not started |
+| 15. Queens and Manhattan Coverage Fix | Queens ≥50%, Manhattan ≥60% | COV-02, COV-04 | Not started |
 
 ## Performance Metrics
 
@@ -41,7 +50,7 @@ Progress: [██████████] 100% (13/13 plans complete)
 - Total execution time: 1.26 hours
 - Timeline: 2 days (2026-02-21 → 2026-02-22)
 
-**By Phase:**
+**By Phase (v1.0 + v1.1):**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
@@ -54,20 +63,29 @@ Progress: [██████████] 100% (13/13 plans complete)
 | 7 | 2/2 | 6 min | 3 min |
 | 8 | 3/3 | 14 min | 5 min |
 | 9 | 2/2 | 15 min | 8 min |
-| Phase 11-improve-asp-coverage-through-mid-span-coverage P03 | 10 | 2 tasks | 5 files |
+| 10 | 1/1 | — | — |
+| 11 | 3/3 | — | — |
+| Phase 12-structured-level-4-logging P01 | 7 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
-### Pending Todos
+### Key Decisions (v2.0 Roadmap)
 
-- Add env config for caching area range (v2)
-- Parse non-ASP parking restrictions in future phase (v2+)
-- Add HA diagnostics endpoint to asp_parking integration (v2)
+- Phase 12 before Phase 15: structured logs are the diagnostic tool for identifying Queens failure point
+- Phase 13 and Phase 12 are independent (different files); can be planned in parallel if desired
+- Phase 14 (graph.json filter) is fully offline; its rebuild is scheduled to combine with Phase 15's index rebuild
+- COV-03 coordinator migration explicitly deferred to v2.x; soda_level achievable without it
+- Queens failure point unknown until Phase 12 logs are analyzed — three candidates: build-time cross-street normalization, runtime name_variants() coverage, BFS cross-street PID lookup
+- zstandard compression is conditional: add only if ASP + 1-hop neighbor filter alone exceeds 4 MB
+- Coverage target is runtime Level 1/2 success rate (GPS spot-check fixtures), not build_info.json segment counts
+
+### Pending Todos (from v1.1)
+
+- Add env config for caching area range (v2.x CACHE-02)
+- Parse non-ASP parking restrictions in future phase (v3+)
+- Add HA diagnostics endpoint to asp_parking integration (v2.x)
 - Schedule monthly spatial index rebuild in HA integration
-- Investigate Manhattan mid-span coverage gap (58.2% vs 60% target)
-- Improve Queens coverage via BFS tuning (currently 36.8%)
-- Add Level 4 hit rate observability metrics
-- Reduce graph.json size for faster Level 4 startup (currently 7.9 MB)
+- Write scripts/audit_queens_coverage.py to drive Phase 15 diagnosis
 
 ### Completed in Phase 5
 
@@ -132,6 +150,10 @@ Progress: [██████████] 100% (13/13 plans complete)
 - [Phase 11-03]: Manhattan 58.2% accepted as close enough to 60-80% target (was 29.5% — near-double improvement)
 - [Phase 11-03]: Brooklyn 74.1% accepted above 50-65% ceiling — user approved, no action required
 - [Phase 11-03]: 6 pre-existing socket-blocked integration tests not counted as regressions from this phase
+- [Phase 12-01]: l4_entry fires before on_variants loop (once per Level 4 activation, not once per variant)
+- [Phase 12-01]: l4_match replaces old unstructured 'Level 4 matched' log — no duplicate logs
+- [Phase 12-01]: l4_no_records omits span_candidates to distinguish empty-SODA case (C) from unreachable-span case (B)
+- [Phase 12-01]: Tests use _CapturingHandler (custom logging.Handler) instead of caplog fixture for async test compatibility
 
 ### Roadmap Evolution
 
@@ -142,6 +164,7 @@ Progress: [██████████] 100% (13/13 plans complete)
 - Phase 9 added: Rebuild the spatial index
 - Phase 10 added: Update documentation
 - Phase 11 added: Improve ASP coverage through mid-span coverage
+- Phases 12-15 added: v2.0 Full Borough Coverage roadmap (2026-03-13)
 
 ### Quick Tasks Completed
 
@@ -155,9 +178,10 @@ Progress: [██████████] 100% (13/13 plans complete)
 ### Blockers/Concerns
 
 - nyc311calendar is alpha -- relevant for v2 suspension handling
+- Queens failure point identity unknown — will be diagnosed in Phase 15 using Phase 12 logs
 
 ## Session Continuity
 
-Last session: 2026-03-03T15:44:45.377Z
-Stopped at: Phase 11 complete — Plan 11-03 done; spatial index rebuilt with BFS propagation; 62,455 interior blocks added; Manhattan 58.2%, Brooklyn 74.1%; graph.json 7.9MB; 273 tests pass
+Last session: 2026-03-15T13:04:38.001Z
+Stopped at: Completed 12-01-PLAN.md
 Resume file: None
