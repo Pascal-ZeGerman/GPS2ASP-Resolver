@@ -40,7 +40,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 - [x] **Phase 12: Structured Level 4 Logging** — Emit grep-friendly INFO logs at Level 4 entry and all miss cases in signs/__init__.py (completed 2026-03-15)
 - [ ] **Phase 13: soda_level Propagation to HA Sensor** — Surface soda_level from ASPResult through coordinator to HA sensor extra_state_attributes
 - [ ] **Phase 14: graph.json Size Reduction** — Filter graph.json to ASP-reachable segments at build time, reducing file from 7.9 MB to ≤4 MB
-- [ ] **Phase 15: Queens and Manhattan Coverage Fix** — Diagnose Queens normalization failure point using Phase 12 logs and fix; rebuild index
+- [x] **Phase 15: Queens and Manhattan Coverage Fix** — Diagnose Queens normalization failure point using Phase 12 logs and fix; rebuild index (completed 2026-03-15)
 
 ## Phase Details
 
@@ -69,7 +69,11 @@ Plans:
   3. soda_level shows 4 for a location that required the graph BFS fallback to find a covering span
   4. soda_level shows 0 when resolution fails before reaching the SODA query stage
   5. resolve_asp() ASPResult.soda_level is populated for non-debug callers (not just ASPDebugResult)
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 13-01-PLAN.md — TDD Wave 0: write failing tests (test-local mirror + TestSodaLevelAttribute + TestASPResultSodaLevel)
+- [ ] 13-02-PLAN.md — Implementation: thread soda_level through models, pipeline, coordinator, sensor, and vendored copies
 
 ### Phase 14: graph.json Size Reduction
 **Goal**: graph.json is ≤4 MB so HA startup memory and cold-start latency are reduced
@@ -108,7 +112,7 @@ Plans:
 | 9. Rebuild Spatial Index | v1.1 | 2/2 | Complete | 2026-03-01 |
 | 10. Update Documentation | v1.1 | 1/1 | Complete | 2026-03-02 |
 | 11. Improve ASP Coverage | v1.1 | 3/3 | Complete | 2026-03-03 |
-| 12. Structured Level 4 Logging | 1/1 | Complete   | 2026-03-15 | — |
-| 13. soda_level Propagation | v2.0 | 0/? | Not started | — |
+| 12. Structured Level 4 Logging | v2.0 | 1/1 | Complete | 2026-03-15 |
+| 13. soda_level Propagation | v2.0 | 0/2 | Not started | — |
 | 14. graph.json Size Reduction | v2.0 | 0/? | Not started | — |
 | 15. Queens and Manhattan Coverage Fix | v2.0 | 0/? | Not started | — |
