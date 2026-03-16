@@ -827,3 +827,38 @@ class TestUrgencyAttribute:
         assert re.match(r"\d{4}-\d{2}-\d{2}T", attrs["next_window_start"]), (
             f"next_window_start not in ISO format: {attrs['next_window_start']!r}"
         )
+
+
+# ===========================================================================
+# Group 7: soda_level attribute
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestSodaLevelAttribute:
+    """Test soda_level always present in extra_state_attributes."""
+
+    def test_soda_level_default_zero_on_initial_state(self) -> None:
+        """Initial state (no schedule) -> soda_level=0."""
+        data = ASPParkingData()
+        attrs = sensor_extra_attributes(data)
+        assert "soda_level" in attrs
+        assert attrs["soda_level"] == 0
+
+    def test_soda_level_set_when_schedule_found(self) -> None:
+        """soda_level from data propagates to attributes."""
+        data = ASPParkingData(schedule_result=_make_schedule_found(), soda_level=2)
+        attrs = sensor_extra_attributes(data)
+        assert attrs["soda_level"] == 2
+
+    def test_soda_level_zero_on_special_state(self) -> None:
+        """special_state='outside_coverage' with soda_level=0 -> soda_level=0 in attrs."""
+        data = ASPParkingData(special_state="outside_coverage", soda_level=0)
+        attrs = sensor_extra_attributes(data)
+        assert attrs["soda_level"] == 0
+
+    def test_soda_level_4_present(self) -> None:
+        """Level 4 match -> soda_level=4 in attributes."""
+        data = ASPParkingData(schedule_result=_make_schedule_found(), soda_level=4)
+        attrs = sensor_extra_attributes(data)
+        assert attrs["soda_level"] == 4
