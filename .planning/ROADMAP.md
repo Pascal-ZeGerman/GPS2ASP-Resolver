@@ -113,6 +113,6 @@ Plans:
 | 10. Update Documentation | v1.1 | 1/1 | Complete | 2026-03-02 |
 | 11. Improve ASP Coverage | v1.1 | 3/3 | Complete | 2026-03-03 |
 | 12. Structured Level 4 Logging | v2.0 | 1/1 | Complete | 2026-03-15 |
-| 13. soda_level Propagation | v2.0 | 0/2 | Not started | — |
+| 13. soda_level Propagation | 1/2 | In Progress|  | — |
 | 14. graph.json Size Reduction | v2.0 | 0/? | Not started | — |
 | 15. Queens and Manhattan Coverage Fix | v2.0 | 0/? | Not started | — |
