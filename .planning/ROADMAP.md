@@ -83,7 +83,11 @@ Plans:
   1. Running build_index.py produces a graph.json file that is ≤4 MB on disk
   2. Level 4 mid-span match rate against the existing set of known mid-span test blocks is unchanged after the rebuild
   3. BFS traversal through non-ASP intermediate segments still works (non-ASP 1-hop neighbors retained in graph)
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — TDD tests + 2-hop BFS filter + zstd write in build_index.py
+- [ ] 14-02-PLAN.md — StreetGraph.load() .zst support + zstandard dependency + vendored mirror
 
 ### Phase 15: Queens and Manhattan Coverage Fix
 **Goal**: Users in Queens get ASP results at ≥50% success rate and Manhattan reaches ≥60%
@@ -113,6 +117,6 @@ Plans:
 | 10. Update Documentation | v1.1 | 1/1 | Complete | 2026-03-02 |
 | 11. Improve ASP Coverage | v1.1 | 3/3 | Complete | 2026-03-03 |
 | 12. Structured Level 4 Logging | v2.0 | 1/1 | Complete | 2026-03-15 |
-| 13. soda_level Propagation | 2/2 | Complete   | 2026-03-16 | — |
-| 14. graph.json Size Reduction | v2.0 | 0/? | Not started | — |
+| 13. soda_level Propagation | 2/2 | Complete    | 2026-03-16 | — |
+| 14. graph.json Size Reduction | v2.0 | 0/2 | Not started | — |
 | 15. Queens and Manhattan Coverage Fix | v2.0 | 0/? | Not started | — |
