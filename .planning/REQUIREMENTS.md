@@ -19,7 +19,7 @@ Requirements for the v2.0 Full Borough Coverage milestone.
 
 ### Performance
 
-- [ ] **PERF-01**: `graph.json` file size is ≤4 MB at build time (ASP-reachable segment filter preserving full BFS traversal correctness)
+- [x] **PERF-01**: `graph.json` file size is ≤4 MB at build time (ASP-reachable segment filter preserving full BFS traversal correctness)
 
 ## v2.x Requirements
 
@@ -69,7 +69,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | OBS-02 | Phase 12 | Complete |
 | OBS-01 | Phase 13 | In Progress (tests only, Plan 02 pending) |
-| PERF-01 | Phase 14 | Pending |
+| PERF-01 | Phase 14 | Complete |
 | COV-02 | Phase 15 | Pending |
 | COV-04 | Phase 15 | Pending |
 

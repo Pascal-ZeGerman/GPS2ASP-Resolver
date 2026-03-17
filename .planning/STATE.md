@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Full Borough Coverage
-status: executing
-stopped_at: Completed 13-02-PLAN.md (soda_level propagation to HA sensor)
-last_updated: "2026-03-16T19:59:04.220Z"
-last_activity: 2026-03-16 — Phase 13 Plan 01 TDD Wave 0 complete (test scaffold for soda_level)
+status: in_progress
+stopped_at: Completed 14-01-PLAN.md
+last_updated: "2026-03-17T02:01:00Z"
+last_activity: 2026-03-17 — Phase 14 Plan 01 graph filter + compressed write complete
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 3
+  total_plans: 4
   completed_plans: 3
-  percent: 50
+  percent: 75
 ---
 
 # Project State
@@ -26,12 +26,12 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 ## Current Position
 
 Milestone: v2.0 Full Borough Coverage
-Phase: 13-soda-level-propagation-to-ha-sensor (Plan 2 of 2 complete)
-Plan: 02 complete (phase complete)
-Status: Phase 13 complete
-Last activity: 2026-03-16 — Phase 13 Plan 02 soda_level propagation to HA sensor complete
+Phase: 14-graph-json-size-reduction (Plan 1 of 2 complete)
+Plan: 01 complete
+Status: In progress
+Last activity: 2026-03-17 — Phase 14 Plan 01 graph filter + compressed write complete
 
-Progress: [##########] 100% (2/2 plans complete in Phase 13)
+Progress: [#####-----] 50% (1/2 plans complete in Phase 14)
 
 ## Phase Summary (v2.0)
 
@@ -39,7 +39,7 @@ Progress: [##########] 100% (2/2 plans complete in Phase 13)
 |-------|------|--------------|--------|
 | 12. Structured Level 4 Logging | Level 4 behavior visible in HA logs | OBS-02 | Not started |
 | 13. soda_level Propagation | soda_level in HA sensor attributes | OBS-01 | Complete (2/2 plans) |
-| 14. graph.json Size Reduction | graph.json ≤4 MB at build time | PERF-01 | Not started |
+| 14. graph.json Size Reduction | graph.json ≤4 MB at build time | PERF-01 | In progress (1/2 plans) |
 | 15. Queens and Manhattan Coverage Fix | Queens ≥50%, Manhattan ≥60% | COV-02, COV-04 | Not started |
 
 ## Performance Metrics
@@ -68,6 +68,7 @@ Progress: [##########] 100% (2/2 plans complete in Phase 13)
 | Phase 12-structured-level-4-logging P01 | 7 | 2 tasks | 2 files |
 | Phase 13-soda-level-propagation P01 | 5 | 3 tasks | 2 files |
 | Phase 13 P02 | 7 | 3 tasks | 9 files |
+| Phase 14-graph-json-size-reduction P01 | 8 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -163,6 +164,8 @@ Progress: [##########] 100% (2/2 plans complete in Phase 13)
 - [Phase 13-01]: TestASPResultSodaLevel tests intentionally RED (AttributeError on ASPResult.soda_level) — Plan 02 makes them GREEN
 - [Phase 13]: NoMatchFound test fixture corrected: removed invalid kwargs that NoMatchFound does not accept
 - [Phase 13]: Generic except Exception in coordinator retains last soda_level (same pattern as sign_count)
+- [Phase 14-01]: Filter function defined as reference impl in test file since scripts/ is not importable; identical copy in build_index.py
+- [Phase 14-01]: 2-hop BFS from ASP seeds: hop0=seeds, hop1=neighbors of seeds, hop2=neighbors of hop1; compact JSON separators before zstd compression
 
 ### Roadmap Evolution
 
@@ -192,6 +195,6 @@ Progress: [##########] 100% (2/2 plans complete in Phase 13)
 
 ## Session Continuity
 
-Last session: 2026-03-16T19:59:04.213Z
-Stopped at: Completed 13-02-PLAN.md (soda_level propagation to HA sensor)
-Resume file: None
+Last session: 2026-03-17T02:01:00Z
+Stopped at: Completed 14-01-PLAN.md
+Resume file: .planning/phases/14-graph-json-size-reduction/14-02-PLAN.md
