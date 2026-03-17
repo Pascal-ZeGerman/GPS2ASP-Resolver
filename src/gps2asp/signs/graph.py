@@ -9,11 +9,14 @@ record's cross streets verbatim).
 from __future__ import annotations
 
 import collections
+import io
 import json
 import logging
 from pathlib import Path
 
-from gps2asp.signs.normalize import normalize_to_soda
+import zstandard
+
+from .normalize import normalize_to_soda
 
 logger = logging.getLogger("gps2asp.signs")
 
@@ -50,25 +53,37 @@ class StreetGraph:
 
     @classmethod
     def load(cls, index_dir: Path | None = None) -> StreetGraph | None:
-        """Load StreetGraph from graph.json in the index directory.
+        """Load StreetGraph from graph.json.zst (or graph.json fallback).
+
+        Tries graph.json.zst first (zstandard compressed). Falls back to
+        plain graph.json for local development without a rebuild.
 
         Args:
-            index_dir: Directory containing graph.json. Defaults to
+            index_dir: Directory containing graph file. Defaults to
                 src/gps2asp/data/index/.
 
         Returns:
-            StreetGraph instance, or None if graph.json does not exist.
+            StreetGraph instance, or None if no graph file exists.
         """
         if index_dir is None:
             index_dir = _default_index_dir()
 
-        graph_path = index_dir / "graph.json"
-        if not graph_path.exists():
-            logger.debug("graph.json not found at %s -- Level 4 unavailable", graph_path)
-            return None
+        zst_path = index_dir / "graph.json.zst"
+        json_path = index_dir / "graph.json"
 
-        with graph_path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
+        if zst_path.exists():
+            dctx = zstandard.ZstdDecompressor()
+            with zst_path.open("rb") as fh:
+                with dctx.stream_reader(fh) as reader:
+                    data = json.load(io.TextIOWrapper(reader, encoding="utf-8"))
+        elif json_path.exists():
+            with json_path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        else:
+            logger.debug(
+                "No graph file found at %s -- Level 4 unavailable", index_dir,
+            )
+            return None
 
         adjacency: dict[str, list[int]] = data.get("adjacency", {})
         raw_streets: dict[str, str] = data.get("segment_streets", {})
@@ -82,7 +97,7 @@ class StreetGraph:
         }
 
         logger.debug(
-            "Loaded graph.json: %d segments, %d adjacency entries",
+            "Loaded graph: %d segments, %d adjacency entries",
             len(segment_streets),
             len(adjacency),
         )

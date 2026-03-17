@@ -13,12 +13,14 @@ dependencies = [
     "shapely>=2.1.0",
     "numpy",
     "httpx>=0.28.0",
+    "zstandard>=0.21.0",
 ]
 
 [project.optional-dependencies]
 build = [
     "geopandas>=1.1.0",
     "requests",
+    "zstandard>=0.21.0",
 ]
 dev = [
     "pytest",
