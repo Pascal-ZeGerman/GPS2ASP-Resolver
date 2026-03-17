@@ -39,7 +39,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 
 - [x] **Phase 12: Structured Level 4 Logging** — Emit grep-friendly INFO logs at Level 4 entry and all miss cases in signs/__init__.py (completed 2026-03-15)
 - [x] **Phase 13: soda_level Propagation to HA Sensor** — Surface soda_level from ASPResult through coordinator to HA sensor extra_state_attributes (completed 2026-03-16)
-- [ ] **Phase 14: graph.json Size Reduction** — Filter graph.json to ASP-reachable segments at build time, reducing file from 7.9 MB to ≤4 MB
+- [x] **Phase 14: graph.json Size Reduction** — Filter graph.json to ASP-reachable segments at build time, reducing file from 7.9 MB to ≤4 MB (completed 2026-03-17)
 - [x] **Phase 15: Queens and Manhattan Coverage Fix** — Diagnose Queens normalization failure point using Phase 12 logs and fix; rebuild index (completed 2026-03-15)
 
 ## Phase Details
@@ -118,5 +118,5 @@ Plans:
 | 11. Improve ASP Coverage | v1.1 | 3/3 | Complete | 2026-03-03 |
 | 12. Structured Level 4 Logging | v2.0 | 1/1 | Complete | 2026-03-15 |
 | 13. soda_level Propagation | 2/2 | Complete    | 2026-03-16 | — |
-| 14. graph.json Size Reduction | 1/2 | In Progress|  | — |
+| 14. graph.json Size Reduction | 2/2 | Complete   | 2026-03-17 | — |
 | 15. Queens and Manhattan Coverage Fix | v2.0 | 0/? | Not started | — |

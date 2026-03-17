@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Full Borough Coverage
 status: in_progress
-stopped_at: Completed 14-01-PLAN.md
-last_updated: "2026-03-17T02:01:00Z"
-last_activity: 2026-03-17 — Phase 14 Plan 01 graph filter + compressed write complete
+stopped_at: Completed 14-02-PLAN.md
+last_updated: "2026-03-17T02:12:49.294Z"
+last_activity: 2026-03-17 — Phase 14 complete (graph.json filter + zstandard compression)
 progress:
   total_phases: 4
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 3
-  percent: 75
+  completed_phases: 3
+  total_plans: 5
+  completed_plans: 5
+  percent: 50
 ---
 
 # Project State
@@ -26,12 +26,12 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 ## Current Position
 
 Milestone: v2.0 Full Borough Coverage
-Phase: 14-graph-json-size-reduction (Plan 1 of 2 complete)
-Plan: 01 complete
-Status: In progress
-Last activity: 2026-03-17 — Phase 14 Plan 01 graph filter + compressed write complete
+Phase: 14-graph-json-size-reduction (Plan 2 of 2 complete)
+Plan: 02 complete
+Status: Complete
+Last activity: 2026-03-17 — Phase 14 Plan 02 runtime zstandard decompression complete
 
-Progress: [#####-----] 50% (1/2 plans complete in Phase 14)
+Progress: [##########] 100% (2/2 plans complete in Phase 14)
 
 ## Phase Summary (v2.0)
 
@@ -39,7 +39,7 @@ Progress: [#####-----] 50% (1/2 plans complete in Phase 14)
 |-------|------|--------------|--------|
 | 12. Structured Level 4 Logging | Level 4 behavior visible in HA logs | OBS-02 | Not started |
 | 13. soda_level Propagation | soda_level in HA sensor attributes | OBS-01 | Complete (2/2 plans) |
-| 14. graph.json Size Reduction | graph.json ≤4 MB at build time | PERF-01 | In progress (1/2 plans) |
+| 14. graph.json Size Reduction | graph.json ≤4 MB at build time | PERF-01 | Complete (2/2 plans) |
 | 15. Queens and Manhattan Coverage Fix | Queens ≥50%, Manhattan ≥60% | COV-02, COV-04 | Not started |
 
 ## Performance Metrics
@@ -69,6 +69,7 @@ Progress: [#####-----] 50% (1/2 plans complete in Phase 14)
 | Phase 13-soda-level-propagation P01 | 5 | 3 tasks | 2 files |
 | Phase 13 P02 | 7 | 3 tasks | 9 files |
 | Phase 14-graph-json-size-reduction P01 | 8 | 2 tasks | 2 files |
+| Phase 14 P02 | 5 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -166,6 +167,7 @@ Progress: [#####-----] 50% (1/2 plans complete in Phase 14)
 - [Phase 13]: Generic except Exception in coordinator retains last soda_level (same pattern as sign_count)
 - [Phase 14-01]: Filter function defined as reference impl in test file since scripts/ is not importable; identical copy in build_index.py
 - [Phase 14-01]: 2-hop BFS from ASP seeds: hop0=seeds, hop1=neighbors of seeds, hop2=neighbors of hop1; compact JSON separators before zstd compression
+- [Phase 14]: zstandard stream_reader with TextIOWrapper for memory-efficient decompression of graph.json.zst
 
 ### Roadmap Evolution
 
@@ -195,6 +197,6 @@ Progress: [#####-----] 50% (1/2 plans complete in Phase 14)
 
 ## Session Continuity
 
-Last session: 2026-03-17T02:01:00Z
-Stopped at: Completed 14-01-PLAN.md
-Resume file: .planning/phases/14-graph-json-size-reduction/14-02-PLAN.md
+Last session: 2026-03-17T02:12:49.285Z
+Stopped at: Completed 14-02-PLAN.md
+Resume file: None
