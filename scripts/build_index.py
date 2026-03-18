@@ -651,12 +651,13 @@ def _fetch_asp_signs() -> set[tuple[str, str, str, str]]:
             break
 
         for record in records:
-            # Collapse internal whitespace so "EAST   22 STREET" (3 spaces
-            # from SODA) matches "EAST 22 STREET" (1 space after normalization
-            # of CSCL "E  22 ST").
-            on_street = " ".join((record.get("on_street") or "").upper().split())
-            from_street = " ".join((record.get("from_street") or "").upper().split())
-            to_street = " ".join((record.get("to_street") or "").upper().split())
+            # Normalize SODA street names through _normalize_street_name() to
+            # match the format used in intersection_index and segments.json.
+            # This handles both whitespace collapsing and SODA fixed-width
+            # formatting (e.g., "EAST   22 STREET" -> "EAST   22 STREET").
+            on_street = _normalize_street_name(record.get("on_street") or "")
+            from_street = _normalize_street_name(record.get("from_street") or "")
+            to_street = _normalize_street_name(record.get("to_street") or "")
             side = (record.get("side_of_street") or "").upper().strip()
 
             if on_street and side:
