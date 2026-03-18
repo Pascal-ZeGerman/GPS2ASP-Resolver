@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Full Borough Coverage
-status: in_progress
-stopped_at: Completed 14-02-PLAN.md
-last_updated: "2026-03-17T02:12:49.294Z"
-last_activity: 2026-03-17 — Phase 14 complete (graph.json filter + zstandard compression)
+status: in-progress
+stopped_at: Completed 15-01-PLAN.md
+last_updated: "2026-03-18T14:10:40.067Z"
+last_activity: 2026-03-18 — Phase 15 Plan 01 diagnosis tooling (fixtures + audit script + RED tests)
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 5
-  completed_plans: 5
-  percent: 50
+  total_plans: 7
+  completed_plans: 6
+  percent: 100
 ---
 
 # Project State
@@ -21,17 +21,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]"
-**Current focus:** v2.0 Full Borough Coverage — Phase 12 next
+**Current focus:** v2.0 Full Borough Coverage — Phase 15 in progress
 
 ## Current Position
 
 Milestone: v2.0 Full Borough Coverage
-Phase: 14-graph-json-size-reduction (Plan 2 of 2 complete)
-Plan: 02 complete
-Status: Complete
-Last activity: 2026-03-17 — Phase 14 Plan 02 runtime zstandard decompression complete
+Phase: 15-queens-and-manhattan-coverage-fix (Plan 1 of 2 complete)
+Plan: 01 complete
+Status: In Progress
+Last activity: 2026-03-18 — Phase 15 Plan 01 diagnosis tooling (fixtures + audit script + RED tests)
 
-Progress: [##########] 100% (2/2 plans complete in Phase 14)
+Progress: [#####-----] 50% (1/2 plans complete in Phase 15)
 
 ## Phase Summary (v2.0)
 
@@ -40,7 +40,7 @@ Progress: [##########] 100% (2/2 plans complete in Phase 14)
 | 12. Structured Level 4 Logging | Level 4 behavior visible in HA logs | OBS-02 | Not started |
 | 13. soda_level Propagation | soda_level in HA sensor attributes | OBS-01 | Complete (2/2 plans) |
 | 14. graph.json Size Reduction | graph.json ≤4 MB at build time | PERF-01 | Complete (2/2 plans) |
-| 15. Queens and Manhattan Coverage Fix | Queens ≥50%, Manhattan ≥60% | COV-02, COV-04 | Not started |
+| 15. Queens and Manhattan Coverage Fix | Queens ≥50%, Manhattan ≥60% | COV-02, COV-04 | In progress (1/2 plans) |
 
 ## Performance Metrics
 
@@ -70,6 +70,7 @@ Progress: [##########] 100% (2/2 plans complete in Phase 14)
 | Phase 13 P02 | 7 | 3 tasks | 9 files |
 | Phase 14-graph-json-size-reduction P01 | 8 | 2 tasks | 2 files |
 | Phase 14 P02 | 5 | 2 tasks | 4 files |
+| Phase 15-queens-and-manhattan-coverage-fix P01 | 4 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -89,7 +90,7 @@ Progress: [##########] 100% (2/2 plans complete in Phase 14)
 - Parse non-ASP parking restrictions in future phase (v3+)
 - Add HA diagnostics endpoint to asp_parking integration (v2.x)
 - Schedule monthly spatial index rebuild in HA integration
-- Write scripts/audit_queens_coverage.py to drive Phase 15 diagnosis
+- ~~Write scripts/audit_queens_coverage.py to drive Phase 15 diagnosis~~ (done in 15-01)
 
 ### Completed in Phase 5
 
@@ -168,6 +169,8 @@ Progress: [##########] 100% (2/2 plans complete in Phase 14)
 - [Phase 14-01]: Filter function defined as reference impl in test file since scripts/ is not importable; identical copy in build_index.py
 - [Phase 14-01]: 2-hop BFS from ASP seeds: hop0=seeds, hop1=neighbors of seeds, hop2=neighbors of hop1; compact JSON separators before zstd compression
 - [Phase 14]: zstandard stream_reader with TextIOWrapper for memory-efficient decompression of graph.json.zst
+- [Phase 15-01]: Coverage fixtures use 'description' key (not 'name') since they are spot-check locations without expected_on_street/side
+- [Phase 15-01]: Audit script catches all exceptions including OutsideNYCError/NoSegmentFoundError and records as errors with soda_level=0
 
 ### Roadmap Evolution
 
@@ -197,6 +200,6 @@ Progress: [##########] 100% (2/2 plans complete in Phase 14)
 
 ## Session Continuity
 
-Last session: 2026-03-17T02:12:49.285Z
-Stopped at: Completed 14-02-PLAN.md
-Resume file: None
+Last session: 2026-03-18T14:09:25Z
+Stopped at: Completed 15-01-PLAN.md
+Resume file: .planning/phases/15-queens-and-manhattan-coverage-fix/15-01-SUMMARY.md

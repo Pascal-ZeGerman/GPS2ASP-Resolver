@@ -40,7 +40,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 - [x] **Phase 12: Structured Level 4 Logging** — Emit grep-friendly INFO logs at Level 4 entry and all miss cases in signs/__init__.py (completed 2026-03-15)
 - [x] **Phase 13: soda_level Propagation to HA Sensor** — Surface soda_level from ASPResult through coordinator to HA sensor extra_state_attributes (completed 2026-03-16)
 - [x] **Phase 14: graph.json Size Reduction** — Filter graph.json to ASP-reachable segments at build time, reducing file from 7.9 MB to ≤4 MB (completed 2026-03-17)
-- [x] **Phase 15: Queens and Manhattan Coverage Fix** — Diagnose Queens normalization failure point using Phase 12 logs and fix; rebuild index (completed 2026-03-15)
+- [ ] **Phase 15: Queens and Manhattan Coverage Fix** — Diagnose Queens normalization failure point using Phase 12 logs and fix; rebuild index
 
 ## Phase Details
 
@@ -90,16 +90,20 @@ Plans:
 - [ ] 14-02-PLAN.md — StreetGraph.load() .zst support + zstandard dependency + vendored mirror
 
 ### Phase 15: Queens and Manhattan Coverage Fix
-**Goal**: Users in Queens get ASP results at ≥50% success rate and Manhattan reaches ≥60%
+**Goal**: Users in Queens get ASP results at >=50% success rate and Manhattan reaches >=60%
 **Depends on**: Phase 12 (structured logs required to identify Queens failure point before writing normalization code)
 **Requirements**: COV-02, COV-04
 **Success Criteria** (what must be TRUE):
-  1. GPS spot-check fixture set for Queens returns a Level 1 or Level 2 SODA match at ≥50% of locations
-  2. GPS spot-check fixture set for Manhattan returns a Level 1 or Level 2 SODA match at ≥60% of locations
+  1. GPS spot-check fixture set for Queens returns a Level 1 or Level 2 SODA match at >=50% of locations
+  2. GPS spot-check fixture set for Manhattan returns a Level 1 or Level 2 SODA match at >=60% of locations
   3. Existing Brooklyn and Bronx spot-check fixtures show no regression after normalization changes
   4. Phase 12 logs from the audit script identify which of the three candidate failure points (build-time cross-street normalization, runtime name_variants expansion, or BFS cross-street PID lookup) causes the Queens gap
   5. The index rebuild for the fix also incorporates the Phase 14 graph.json size reduction in the same invocation
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 15-01-PLAN.md — Create GPS fixture files (Queens 25 locations, Manhattan 18 locations), audit script, and TDD RED tests for TPKE/CRES
+- [ ] 15-02-PLAN.md — Apply TPKE/CRES normalization fix, rebuild index, verify coverage thresholds via audit
 
 ## Progress
 
@@ -117,6 +121,6 @@ Plans:
 | 10. Update Documentation | v1.1 | 1/1 | Complete | 2026-03-02 |
 | 11. Improve ASP Coverage | v1.1 | 3/3 | Complete | 2026-03-03 |
 | 12. Structured Level 4 Logging | v2.0 | 1/1 | Complete | 2026-03-15 |
-| 13. soda_level Propagation | 2/2 | Complete    | 2026-03-16 | — |
-| 14. graph.json Size Reduction | 2/2 | Complete   | 2026-03-17 | — |
-| 15. Queens and Manhattan Coverage Fix | v2.0 | 0/? | Not started | — |
+| 13. soda_level Propagation | v2.0 | 2/2 | Complete | 2026-03-16 |
+| 14. graph.json Size Reduction | v2.0 | 2/2 | Complete | 2026-03-17 |
+| 15. Queens and Manhattan Coverage Fix | 1/2 | In Progress|  | — |

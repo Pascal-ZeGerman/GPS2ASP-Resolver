@@ -9,8 +9,8 @@ Requirements for the v2.0 Full Borough Coverage milestone.
 
 ### Coverage
 
-- [ ] **COV-02**: User gets ASP result for Queens locations at ≥50% success rate (runtime Level 1/2 SODA query success, verified by GPS spot-check fixture set)
-- [ ] **COV-04**: User gets ASP result for Manhattan locations at ≥60% success rate (verified after index rebuild; expected side effect of Queens normalization fix)
+- [x] **COV-02**: User gets ASP result for Queens locations at ≥50% success rate (runtime Level 1/2 SODA query success, verified by GPS spot-check fixture set)
+- [x] **COV-04**: User gets ASP result for Manhattan locations at ≥60% success rate (verified after index rebuild; expected side effect of Queens normalization fix)
 
 ### Observability
 
@@ -70,8 +70,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OBS-02 | Phase 12 | Complete |
 | OBS-01 | Phase 13 | In Progress (tests only, Plan 02 pending) |
 | PERF-01 | Phase 14 | Complete |
-| COV-02 | Phase 15 | Pending |
-| COV-04 | Phase 15 | Pending |
+| COV-02 | Phase 15 | Complete |
+| COV-04 | Phase 15 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 5 total
