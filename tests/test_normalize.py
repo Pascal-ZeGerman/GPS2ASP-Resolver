@@ -131,6 +131,14 @@ class TestNormalizeToSoda:
         """WESTERN AVE should NOT expand W prefix."""
         assert normalize_to_soda("WESTERN AVE") == "WESTERN AVENUE"
 
+    def test_suffix_expansion_tpke(self) -> None:
+        """UNION TPKE should become UNION TURNPIKE (Queens coverage fix)."""
+        assert normalize_to_soda("UNION TPKE") == "UNION TURNPIKE"
+
+    def test_suffix_expansion_cres(self) -> None:
+        """72 CRES should become 72 CRESCENT (Queens coverage fix)."""
+        assert normalize_to_soda("72 CRES") == "72 CRESCENT"
+
 
 # ── name_variants ────────────────────────────────────────────────────
 

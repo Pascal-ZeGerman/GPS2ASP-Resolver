@@ -1,0 +1,92 @@
+[
+  {
+    "description": "Upper West Side - W 76th St between Columbus and Amsterdam",
+    "lat": 40.7805,
+    "lon": -73.9765
+  },
+  {
+    "description": "Upper West Side - W 83rd St near Amsterdam Ave",
+    "lat": 40.7850,
+    "lon": -73.9770
+  },
+  {
+    "description": "Upper West Side - W 88th St between Columbus and Amsterdam",
+    "lat": 40.7882,
+    "lon": -73.9755
+  },
+  {
+    "description": "Upper West Side - W 72nd St near West End Ave",
+    "lat": 40.7785,
+    "lon": -73.9780
+  },
+  {
+    "description": "UWS - W 91st St between Columbus and Amsterdam",
+    "lat": 40.7900,
+    "lon": -73.9745
+  },
+  {
+    "description": "Harlem - W 125th St near Lenox Ave",
+    "lat": 40.8085,
+    "lon": -73.9460
+  },
+  {
+    "description": "Harlem - W 130th St near Adam Clayton Powell Jr Blvd",
+    "lat": 40.8115,
+    "lon": -73.9445
+  },
+  {
+    "description": "Harlem - W 116th St near Frederick Douglass Blvd",
+    "lat": 40.8045,
+    "lon": -73.9510
+  },
+  {
+    "description": "Harlem - W 135th St between Lenox and 5th Ave",
+    "lat": 40.8140,
+    "lon": -73.9425
+  },
+  {
+    "description": "East Village - E 7th St between 1st and 2nd Ave",
+    "lat": 40.7275,
+    "lon": -73.9860
+  },
+  {
+    "description": "East Village - E 5th St between 1st and 2nd Ave",
+    "lat": 40.7265,
+    "lon": -73.9870
+  },
+  {
+    "description": "East Village - E 9th St near 1st Ave",
+    "lat": 40.7295,
+    "lon": -73.9855
+  },
+  {
+    "description": "East Village - E 4th St between 1st and 2nd Ave",
+    "lat": 40.7260,
+    "lon": -73.9880
+  },
+  {
+    "description": "East Village - St Marks Pl near 1st Ave",
+    "lat": 40.7285,
+    "lon": -73.9865
+  },
+  {
+    "description": "Midtown - W 46th St between 5th and 6th Ave",
+    "lat": 40.7575,
+    "lon": -73.9810
+  },
+  {
+    "description": "Midtown - E 50th St near 2nd Ave",
+    "lat": 40.7555,
+    "lon": -73.9700
+  },
+  {
+    "description": "Midtown - W 54th St between 8th and 9th Ave",
+    "lat": 40.7640,
+    "lon": -73.9845
+  },
+  {
+    "description": "Midtown - E 43rd St near 3rd Ave",
+    "lat": 40.7530,
+    "lon": -73.9745
+  }
+]

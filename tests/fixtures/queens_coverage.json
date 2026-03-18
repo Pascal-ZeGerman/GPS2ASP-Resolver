@@ -1,0 +1,127 @@
+[
+  {
+    "description": "Jamaica - residential on 160th St near Jamaica Ave",
+    "lat": 40.7030,
+    "lon": -73.7935
+  },
+  {
+    "description": "Jamaica - Sutphin Blvd south of Hillside Ave",
+    "lat": 40.7065,
+    "lon": -73.7910
+  },
+  {
+    "description": "Jamaica - 150th St near 89th Ave residential",
+    "lat": 40.7045,
+    "lon": -73.7985
+  },
+  {
+    "description": "Jamaica - side street off Merrick Blvd",
+    "lat": 40.7020,
+    "lon": -73.7895
+  },
+  {
+    "description": "Jamaica - 109th Ave near Sutphin Blvd",
+    "lat": 40.6985,
+    "lon": -73.7920
+  },
+  {
+    "description": "Flushing - side street off Main St near Roosevelt Ave",
+    "lat": 40.7590,
+    "lon": -73.8300
+  },
+  {
+    "description": "Flushing - Kissena Blvd near Barclay Ave",
+    "lat": 40.7615,
+    "lon": -73.8260
+  },
+  {
+    "description": "Flushing - Bowne St near Northern Blvd",
+    "lat": 40.7635,
+    "lon": -73.8280
+  },
+  {
+    "description": "Flushing - Sanford Ave east of Main St",
+    "lat": 40.7575,
+    "lon": -73.8275
+  },
+  {
+    "description": "Flushing - 41st Ave near College Point Blvd",
+    "lat": 40.7625,
+    "lon": -73.8340
+  },
+  {
+    "description": "Astoria - 30th Ave near Steinway St",
+    "lat": 40.7720,
+    "lon": -73.9150
+  },
+  {
+    "description": "Astoria - Ditmars Blvd near 31st St",
+    "lat": 40.7755,
+    "lon": -73.9120
+  },
+  {
+    "description": "Astoria - Broadway near Crescent St",
+    "lat": 40.7695,
+    "lon": -73.9175
+  },
+  {
+    "description": "Astoria - 28th Ave near 38th St",
+    "lat": 40.7740,
+    "lon": -73.9080
+  },
+  {
+    "description": "Astoria - 35th St near 30th Ave",
+    "lat": 40.7730,
+    "lon": -73.9095
+  },
+  {
+    "description": "Jackson Heights - 37th Ave near 74th St",
+    "lat": 40.7495,
+    "lon": -73.8920
+  },
+  {
+    "description": "Jackson Heights - Roosevelt Ave near 82nd St",
+    "lat": 40.7505,
+    "lon": -73.8835
+  },
+  {
+    "description": "Jackson Heights - Broadway near 76th St",
+    "lat": 40.7515,
+    "lon": -73.8890
+  },
+  {
+    "description": "Jackson Heights - 34th Ave near 78th St",
+    "lat": 40.7535,
+    "lon": -73.8870
+  },
+  {
+    "description": "Forest Hills - Austin St near 71st Ave",
+    "lat": 40.7210,
+    "lon": -73.8445
+  },
+  {
+    "description": "Forest Hills - Queens Blvd near 67th Ave",
+    "lat": 40.7230,
+    "lon": -73.8465
+  },
+  {
+    "description": "Forest Hills - 108th St near 68th Rd",
+    "lat": 40.7195,
+    "lon": -73.8420
+  },
+  {
+    "description": "Forest Hills - Continental Ave near Burns St",
+    "lat": 40.7205,
+    "lon": -73.8450
+  },
+  {
+    "description": "Union Tpke near 164th St (TPKE suffix test)",
+    "lat": 40.7165,
+    "lon": -73.7965
+  },
+  {
+    "description": "Union Tpke near Chevy Chase St (TPKE suffix test)",
+    "lat": 40.7180,
+    "lon": -73.8150
+  }
+]
