@@ -57,7 +57,28 @@ QUEENS_ADDRESSES = [
 ]
 
 MANHATTAN_ADDRESSES: list[str] = [
-    # Placeholder for Phase 17
+    # Upper West Side (5)
+    "215 West 76th Street, New York, NY",
+    "310 West 83rd Street, New York, NY",
+    "225 West 88th Street, New York, NY",
+    "305 West 72nd Street, New York, NY",
+    "240 West 91st Street, New York, NY",
+    # Harlem (4)
+    "210 West 122nd Street, New York, NY",
+    "215 West 130th Street, New York, NY",
+    "310 West 116th Street, New York, NY",
+    "120 West 135th Street, New York, NY",
+    # East Village (5)
+    "215 East 7th Street, New York, NY",
+    "220 East 5th Street, New York, NY",
+    "310 East 9th Street, New York, NY",
+    "225 East 4th Street, New York, NY",
+    "25 St Marks Place, New York, NY",
+    # Midtown side streets (4)
+    "340 West 46th Street, New York, NY",
+    "225 East 50th Street, New York, NY",
+    "410 West 54th Street, New York, NY",
+    "320 East 43rd Street, New York, NY",
 ]
 
 _BOROUGH_ADDRESSES: dict[str, list[str]] = {
