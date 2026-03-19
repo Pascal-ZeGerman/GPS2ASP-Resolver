@@ -4,7 +4,7 @@
 
 - ✅ **v1.0 MVP** — Phases 1-4 (shipped 2026-02-23)
 - ✅ **v1.1 Bug Fixes** — Phases 5-11 (shipped 2026-03-07)
-- 🔄 **v2.0 Full Borough Coverage** — Phases 12-15 (active)
+- 🔄 **v2.0 Full Borough Coverage** — Phases 12-17 (active)
 
 ## Phases
 
@@ -35,12 +35,14 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 
 </details>
 
-### v2.0 Full Borough Coverage (Phases 12-15) — Active
+### v2.0 Full Borough Coverage (Phases 12-17) — Active
 
 - [x] **Phase 12: Structured Level 4 Logging** — Emit grep-friendly INFO logs at Level 4 entry and all miss cases in signs/__init__.py (completed 2026-03-15)
 - [x] **Phase 13: soda_level Propagation to HA Sensor** — Surface soda_level from ASPResult through coordinator to HA sensor extra_state_attributes (completed 2026-03-16)
 - [x] **Phase 14: graph.json Size Reduction** — Filter graph.json to ASP-reachable segments at build time, reducing file from 7.9 MB to ≤4 MB (completed 2026-03-17)
 - [ ] **Phase 15: Queens and Manhattan Coverage Fix** — Diagnose Queens normalization failure point using Phase 12 logs and fix; rebuild index
+- [ ] **Phase 16: Queens Coverage Fix — Geocoded Fixtures + L3 Diagnosis** — Regenerate Queens fixtures from real addresses, extend audit with L3 diagnostics, fix normalization gaps, verify ≥50%
+- [ ] **Phase 17: Manhattan Coverage Fix — Geocoded Fixtures + L3 Diagnosis** — Same approach for Manhattan, target ≥60%
 
 ## Phase Details
 
@@ -105,6 +107,39 @@ Plans:
 - [ ] 15-01-PLAN.md — Create GPS fixture files (Queens 25 locations, Manhattan 18 locations), audit script, and TDD RED tests for TPKE/CRES
 - [ ] 15-02-PLAN.md — Apply TPKE/CRES normalization fix, rebuild index, verify coverage thresholds via audit
 
+### Phase 16: Queens Coverage Fix — Geocoded Fixtures + L3 Diagnosis
+**Goal**: Queens address-geocoded fixture set achieves ≥50% Level 1+2 SODA match rate after regenerating fixtures from real street addresses and fixing all safely fixable normalization gaps
+**Depends on**: Phase 15 (TPKE/CRES normalization code already applied; this phase replaces the bad fixture set and goes deeper on remaining L3 failures)
+**Requirements**: COV-02
+**Success Criteria** (what must be TRUE):
+  1. Queens fixture set of 25 GPS locations is regenerated from real street addresses via NYC GeoSearch geocoding (no random offsets)
+  2. Fixtures are biased toward residential side streets where ASP is common (not wide avenues or commercial corridors)
+  3. Audit script extended to show, for Level 3 failures, what CSCL from/to was sent vs what SODA from/to was in the response
+  4. All L3 failures categorized: missing suffix, geometric mismatch, or SODA data gap
+  5. All safely fixable L3 failures fixed (suffix table additions and/or `_cross_streets_match()` logic if warranted)
+  6. Spatial index rebuilt with any new normalization changes
+  7. Queens fixture set achieves Level 1+2 ≥50% after rebuild
+  8. Brooklyn and Bronx spot-check fixtures show no regression
+**Plans**: 2 plans
+
+Plans:
+- [ ] 16-01-PLAN.md — Create geocoding script, regenerate Queens fixtures from real addresses, extend audit with L3 diagnostics
+- [ ] 16-02-PLAN.md — Run L3 diagnostic audit, fix normalization gaps, rebuild index, human-verify Queens >=50%
+
+### Phase 17: Manhattan Coverage Fix — Geocoded Fixtures + L3 Diagnosis
+**Goal**: Manhattan address-geocoded fixture set achieves ≥60% Level 1+2 SODA match rate using same approach as Phase 16
+**Depends on**: Phase 16 (reuses geocoding script, extended audit script, and any normalization fixes discovered for Queens)
+**Requirements**: COV-04
+**Success Criteria** (what must be TRUE):
+  1. Manhattan fixture set of 18 GPS locations regenerated from real street addresses via NYC GeoSearch
+  2. Fixtures biased toward residential side streets (UWS, Harlem, East Village, Midtown side streets)
+  3. Extended audit run against Manhattan fixtures using L3 diagnostic output from Phase 16
+  4. Manhattan-specific normalization gaps discovered and fixed
+  5. Spatial index rebuilt with Manhattan normalization additions
+  6. Manhattan fixture set achieves Level 1+2 ≥60% after rebuild
+  7. Queens, Brooklyn, and Bronx spot-check fixtures show no regression
+**Plans**: TBD
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -123,4 +158,6 @@ Plans:
 | 12. Structured Level 4 Logging | v2.0 | 1/1 | Complete | 2026-03-15 |
 | 13. soda_level Propagation | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. graph.json Size Reduction | v2.0 | 2/2 | Complete | 2026-03-17 |
-| 15. Queens and Manhattan Coverage Fix | 1/2 | In Progress|  | — |
+| 15. Queens and Manhattan Coverage Fix | v2.0 | 1/2 | In Progress | — |
+| 16. Queens Coverage Fix — Geocoded Fixtures | v2.0 | 0/2 | Pending | — |
+| 17. Manhattan Coverage Fix — Geocoded Fixtures | v2.0 | 0/TBD | Pending | — |
