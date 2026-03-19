@@ -163,6 +163,27 @@ class TestNormalizeToSoda:
         """72 CRES should become 72 CRESCENT (Queens coverage fix)."""
         assert normalize_to_soda("72 CRES") == "72 CRESCENT"
 
+    # Lettered avenue prefix expansion (Manhattan East Village)
+    def test_lettered_avenue_ave_a(self) -> None:
+        """AVE A should become AVENUE A (Manhattan coverage fix)."""
+        assert normalize_to_soda("AVE A") == "AVENUE A"
+
+    def test_lettered_avenue_ave_b(self) -> None:
+        """AVE B should become AVENUE B (Manhattan coverage fix)."""
+        assert normalize_to_soda("AVE B") == "AVENUE B"
+
+    def test_lettered_avenue_ave_c(self) -> None:
+        """AVE C should become AVENUE C (Manhattan coverage fix)."""
+        assert normalize_to_soda("AVE C") == "AVENUE C"
+
+    def test_lettered_avenue_ave_d(self) -> None:
+        """AVE D should become AVENUE D (Manhattan coverage fix)."""
+        assert normalize_to_soda("AVE D") == "AVENUE D"
+
+    def test_lettered_avenue_does_not_affect_numbered(self) -> None:
+        """3 AVE should still become 3 AVENUE (suffix expansion, not prefix)."""
+        assert normalize_to_soda("3 AVE") == "3 AVENUE"
+
 
 # ── name_variants ────────────────────────────────────────────────────
 

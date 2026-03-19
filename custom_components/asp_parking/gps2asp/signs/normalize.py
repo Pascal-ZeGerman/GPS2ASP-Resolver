@@ -50,6 +50,10 @@ _DIRECTIONAL_EXPANSIONS: dict[str, str] = {
 
 _SODA_NUMBERED_WIDTH = 5  # SODA right-justifies the number in a 5-char field
 
+# Regex: "AVE" followed by a single letter (lettered avenues: AVE A, AVE B, etc.)
+# Manhattan: CSCL uses "AVE A" but SODA uses "AVENUE A"
+_LETTERED_AVE_RE = re.compile(r"^AVE ([A-Z])$")
+
 # Regex: expanded directional word, one+ spaces, digits, one+ spaces, rest
 _DIR_NUMBERED_RE = re.compile(
     r"^(EAST|WEST|NORTH|SOUTH)\s+(\d+)\s+(.+)$"
@@ -98,6 +102,14 @@ def normalize_to_soda(cscl_name: str) -> str:
     # SODA has "EAST  100 STREET" (2 spaces for 3-digit numbers). Collapsing
     # first ensures consistent token splitting before re-formatting.
     name = " ".join(cscl_name.upper().split())
+
+    # Step 0: Expand lettered avenue prefix: "AVE A" -> "AVENUE A"
+    # Manhattan East Village uses "AVE A", "AVE B", etc. in CSCL but SODA
+    # uses "AVENUE A", "AVENUE B". The suffix expansion (step 2) won't catch
+    # this because "A"/"B" is the last word, not "AVE".
+    m_ave = _LETTERED_AVE_RE.match(name)
+    if m_ave:
+        name = "AVENUE " + m_ave.group(1)
 
     # Step 1: Expand directional prefix.
     # The "abbrev + space" guard ensures "ESSEX" (no space after E) and
