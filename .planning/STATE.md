@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Full Borough Coverage
 status: unknown
-stopped_at: Completed 17-01-PLAN.md
+stopped_at: Completed 17-02-PLAN.md
 last_updated: "2026-03-19T17:33:16.151Z"
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 11
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -23,8 +23,8 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 
 ## Current Position
 
-Phase: 17 (manhattan-coverage-fix-geocoded-fixtures-l3-diagnosis) — EXECUTING
-Plan: 2 of 2
+Phase: 17 (manhattan-coverage-fix-geocoded-fixtures-l3-diagnosis) — COMPLETE
+Plan: 2 of 2 (all complete)
 
 ## Phase Summary (v2.0)
 
@@ -68,6 +68,7 @@ Plan: 2 of 2
 | Phase 16 P01 | 5 | 2 tasks | 3 files |
 | Phase 16 P02 | 5 | 1 tasks | 0 files |
 | Phase 17 P01 | 9 | 2 tasks | 2 files |
+| Phase 17 P02 | 13 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -173,6 +174,9 @@ Plan: 2 of 2
 - [Phase 16]: Queens Level 1+2 at 20% (5/25) -- COV-02 target (50%) not met; root cause is CSCL/SODA cross-street boundary disagreements, not abbreviation gaps
 - [Phase 16]: Queens L1+2 at 20% (5/25) approved -- all fixable normalization gaps addressed, remaining failures are CSCL/SODA cross-street boundary disagreements
 - [Phase 17]: [Phase 17-01]: Manhattan L1+2 baseline at 5.6% (1/18) with geocoded fixtures -- 3 fixable normalization patterns identified for Plan 02
+- [Phase 17]: [Phase 17-02]: Lettered avenue prefix expansion (AVE A -> AVENUE A) improved Manhattan L1+2 from 5.6% to 11.1% (2/18)
+- [Phase 17]: [Phase 17-02]: Manhattan L1+2 at 11.1% accepted pragmatically -- remaining failures are geometric mismatches, name alias mismatches (ADAM CLAYTON POWELL JR vs ADAM C POWELL), or SODA data gaps
+- [Phase 17]: [Phase 17-02]: Name alias table deferred as architectural scope -- not a suffix expansion fix
 
 ### Roadmap Evolution
 
@@ -202,6 +206,6 @@ Plan: 2 of 2
 
 ## Session Continuity
 
-Last session: 2026-03-19T17:33:16.111Z
-Stopped at: Completed 17-01-PLAN.md
+Last session: 2026-03-19T17:50:07Z
+Stopped at: Completed 17-02-PLAN.md
 Resume file: None
