@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Full Borough Coverage
 status: unknown
-stopped_at: Completed 16-01-PLAN.md
-last_updated: "2026-03-19T16:24:15.632Z"
+stopped_at: "Completed 16-02-PLAN.md (checkpoint: Queens 20% L1+2 vs 50% target)"
+last_updated: "2026-03-19T16:34:20.491Z"
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 9
-  completed_plans: 7
+  completed_plans: 8
 ---
 
 # Project State
@@ -66,6 +66,7 @@ Plan: 2 of 2
 | Phase 14 P02 | 5 | 2 tasks | 4 files |
 | Phase 15-queens-and-manhattan-coverage-fix P01 | 4 | 2 tasks | 4 files |
 | Phase 16 P01 | 5 | 2 tasks | 3 files |
+| Phase 16 P02 | 5 | 1 tasks | 0 files |
 
 ## Accumulated Context
 
@@ -167,6 +168,8 @@ Plan: 2 of 2
 - [Phase 15-01]: Coverage fixtures use 'description' key (not 'name') since they are spot-check locations without expected_on_street/side
 - [Phase 15-01]: Audit script catches all exceptions including OutsideNYCError/NoSegmentFoundError and records as errors with soda_level=0
 - [Phase 16]: GeoSearch v2 API used for geocoding (v1 returns HTTP 410 Gone)
+- [Phase 16]: No new suffix expansions needed -- all Queens L3+ failures are geometric mismatches or SODA data gaps
+- [Phase 16]: Queens Level 1+2 at 20% (5/25) -- COV-02 target (50%) not met; root cause is CSCL/SODA cross-street boundary disagreements, not abbreviation gaps
 
 ### Roadmap Evolution
 
@@ -196,6 +199,6 @@ Plan: 2 of 2
 
 ## Session Continuity
 
-Last session: 2026-03-19T16:24:15.625Z
-Stopped at: Completed 16-01-PLAN.md
+Last session: 2026-03-19T16:34:20.480Z
+Stopped at: Completed 16-02-PLAN.md (checkpoint: Queens 20% L1+2 vs 50% target)
 Resume file: None

@@ -41,7 +41,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 - [x] **Phase 13: soda_level Propagation to HA Sensor** — Surface soda_level from ASPResult through coordinator to HA sensor extra_state_attributes (completed 2026-03-16)
 - [x] **Phase 14: graph.json Size Reduction** — Filter graph.json to ASP-reachable segments at build time, reducing file from 7.9 MB to ≤4 MB (completed 2026-03-17)
 - [ ] **Phase 15: Queens and Manhattan Coverage Fix** — Diagnose Queens normalization failure point using Phase 12 logs and fix; rebuild index
-- [ ] **Phase 16: Queens Coverage Fix — Geocoded Fixtures + L3 Diagnosis** — Regenerate Queens fixtures from real addresses, extend audit with L3 diagnostics, fix normalization gaps, verify ≥50%
+- [x] **Phase 16: Queens Coverage Fix — Geocoded Fixtures + L3 Diagnosis** — Regenerate Queens fixtures from real addresses, extend audit with L3 diagnostics, fix normalization gaps, verify ≥50% (completed 2026-03-19)
 - [ ] **Phase 17: Manhattan Coverage Fix — Geocoded Fixtures + L3 Diagnosis** — Same approach for Manhattan, target ≥60%
 
 ## Phase Details
@@ -159,5 +159,5 @@ Plans:
 | 13. soda_level Propagation | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. graph.json Size Reduction | v2.0 | 2/2 | Complete | 2026-03-17 |
 | 15. Queens and Manhattan Coverage Fix | v2.0 | 1/2 | In Progress | — |
-| 16. Queens Coverage Fix — Geocoded Fixtures | 1/2 | In Progress|  | — |
+| 16. Queens Coverage Fix — Geocoded Fixtures | 2/2 | Complete   | 2026-03-19 | — |
 | 17. Manhattan Coverage Fix — Geocoded Fixtures | v2.0 | 0/TBD | Pending | — |
