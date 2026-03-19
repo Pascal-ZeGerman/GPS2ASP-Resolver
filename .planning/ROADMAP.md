@@ -159,5 +159,5 @@ Plans:
 | 13. soda_level Propagation | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. graph.json Size Reduction | v2.0 | 2/2 | Complete | 2026-03-17 |
 | 15. Queens and Manhattan Coverage Fix | v2.0 | 1/2 | In Progress | — |
-| 16. Queens Coverage Fix — Geocoded Fixtures | v2.0 | 0/2 | Pending | — |
+| 16. Queens Coverage Fix — Geocoded Fixtures | 1/2 | In Progress|  | — |
 | 17. Manhattan Coverage Fix — Geocoded Fixtures | v2.0 | 0/TBD | Pending | — |

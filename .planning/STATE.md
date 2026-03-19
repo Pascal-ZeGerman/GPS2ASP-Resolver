@@ -2,16 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Full Borough Coverage
-status: in-progress
-stopped_at: Completed 15-01-PLAN.md
-last_updated: "2026-03-18T14:10:40.067Z"
-last_activity: 2026-03-18 — Phase 15 Plan 01 diagnosis tooling (fixtures + audit script + RED tests)
+status: unknown
+stopped_at: Completed 16-01-PLAN.md
+last_updated: "2026-03-19T16:24:15.632Z"
 progress:
-  total_phases: 4
+  total_phases: 6
   completed_phases: 3
-  total_plans: 7
-  completed_plans: 6
-  percent: 100
+  total_plans: 9
+  completed_plans: 7
 ---
 
 # Project State
@@ -21,17 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]"
-**Current focus:** v2.0 Full Borough Coverage — Phase 15 in progress
+**Current focus:** Phase 16 — queens-coverage-fix-geocoded-fixtures
 
 ## Current Position
 
-Milestone: v2.0 Full Borough Coverage
-Phase: 15-queens-and-manhattan-coverage-fix (Plan 1 of 2 complete)
-Plan: 01 complete
-Status: In Progress
-Last activity: 2026-03-18 — Phase 15 Plan 01 diagnosis tooling (fixtures + audit script + RED tests)
-
-Progress: [#####-----] 50% (1/2 plans complete in Phase 15)
+Phase: 16 (queens-coverage-fix-geocoded-fixtures) — EXECUTING
+Plan: 2 of 2
 
 ## Phase Summary (v2.0)
 
@@ -45,6 +38,7 @@ Progress: [#####-----] 50% (1/2 plans complete in Phase 15)
 ## Performance Metrics
 
 **v1.0 Velocity:**
+
 - Total plans completed: 9
 - Average duration: 8 min
 - Total execution time: 1.26 hours
@@ -71,6 +65,7 @@ Progress: [#####-----] 50% (1/2 plans complete in Phase 15)
 | Phase 14-graph-json-size-reduction P01 | 8 | 2 tasks | 2 files |
 | Phase 14 P02 | 5 | 2 tasks | 4 files |
 | Phase 15-queens-and-manhattan-coverage-fix P01 | 4 | 2 tasks | 4 files |
+| Phase 16 P01 | 5 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -171,6 +166,7 @@ Progress: [#####-----] 50% (1/2 plans complete in Phase 15)
 - [Phase 14]: zstandard stream_reader with TextIOWrapper for memory-efficient decompression of graph.json.zst
 - [Phase 15-01]: Coverage fixtures use 'description' key (not 'name') since they are spot-check locations without expected_on_street/side
 - [Phase 15-01]: Audit script catches all exceptions including OutsideNYCError/NoSegmentFoundError and records as errors with soda_level=0
+- [Phase 16]: GeoSearch v2 API used for geocoding (v1 returns HTTP 410 Gone)
 
 ### Roadmap Evolution
 
@@ -200,6 +196,6 @@ Progress: [#####-----] 50% (1/2 plans complete in Phase 15)
 
 ## Session Continuity
 
-Last session: 2026-03-18T14:09:25Z
-Stopped at: Completed 15-01-PLAN.md
-Resume file: .planning/phases/15-queens-and-manhattan-coverage-fix/15-01-SUMMARY.md
+Last session: 2026-03-19T16:24:15.625Z
+Stopped at: Completed 16-01-PLAN.md
+Resume file: None
