@@ -138,7 +138,11 @@ Plans:
   5. Spatial index rebuilt with Manhattan normalization additions
   6. Manhattan fixture set achieves Level 1+2 ≥60% after rebuild
   7. Queens, Brooklyn, and Bronx spot-check fixtures show no regression
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 17-01-PLAN.md — Populate Manhattan addresses in geocoding script, geocode fixtures, run L3 diagnostic audit
+- [ ] 17-02-PLAN.md — Analyze L3 diagnostics, fix normalization gaps, rebuild index, human-verify Manhattan >=60%
 
 ## Progress
 
@@ -160,4 +164,4 @@ Plans:
 | 14. graph.json Size Reduction | v2.0 | 2/2 | Complete | 2026-03-17 |
 | 15. Queens and Manhattan Coverage Fix | v2.0 | 1/2 | In Progress | — |
 | 16. Queens Coverage Fix — Geocoded Fixtures | 2/2 | Complete   | 2026-03-19 | — |
-| 17. Manhattan Coverage Fix — Geocoded Fixtures | v2.0 | 0/TBD | Pending | — |
+| 17. Manhattan Coverage Fix — Geocoded Fixtures | 1/2 | In Progress|  | — |

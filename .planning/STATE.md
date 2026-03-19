@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Full Borough Coverage
 status: unknown
-stopped_at: Completed 16-02-PLAN.md
-last_updated: "2026-03-19T16:42:57.228Z"
+stopped_at: Completed 17-01-PLAN.md
+last_updated: "2026-03-19T17:33:16.151Z"
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 9
-  completed_plans: 8
+  total_plans: 11
+  completed_plans: 9
 ---
 
 # Project State
@@ -19,11 +19,11 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]"
-**Current focus:** Phase 16 — queens-coverage-fix-geocoded-fixtures
+**Current focus:** Phase 17 — manhattan-coverage-fix-geocoded-fixtures-l3-diagnosis
 
 ## Current Position
 
-Phase: 16 (queens-coverage-fix-geocoded-fixtures) — EXECUTING
+Phase: 17 (manhattan-coverage-fix-geocoded-fixtures-l3-diagnosis) — EXECUTING
 Plan: 2 of 2
 
 ## Phase Summary (v2.0)
@@ -67,6 +67,7 @@ Plan: 2 of 2
 | Phase 15-queens-and-manhattan-coverage-fix P01 | 4 | 2 tasks | 4 files |
 | Phase 16 P01 | 5 | 2 tasks | 3 files |
 | Phase 16 P02 | 5 | 1 tasks | 0 files |
+| Phase 17 P01 | 9 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -171,6 +172,7 @@ Plan: 2 of 2
 - [Phase 16]: No new suffix expansions needed -- all Queens L3+ failures are geometric mismatches or SODA data gaps
 - [Phase 16]: Queens Level 1+2 at 20% (5/25) -- COV-02 target (50%) not met; root cause is CSCL/SODA cross-street boundary disagreements, not abbreviation gaps
 - [Phase 16]: Queens L1+2 at 20% (5/25) approved -- all fixable normalization gaps addressed, remaining failures are CSCL/SODA cross-street boundary disagreements
+- [Phase 17]: [Phase 17-01]: Manhattan L1+2 baseline at 5.6% (1/18) with geocoded fixtures -- 3 fixable normalization patterns identified for Plan 02
 
 ### Roadmap Evolution
 
@@ -200,6 +202,6 @@ Plan: 2 of 2
 
 ## Session Continuity
 
-Last session: 2026-03-19T16:42:50.847Z
-Stopped at: Completed 16-02-PLAN.md
+Last session: 2026-03-19T17:33:16.111Z
+Stopped at: Completed 17-01-PLAN.md
 Resume file: None
