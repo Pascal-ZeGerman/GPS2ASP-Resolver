@@ -1,127 +1,127 @@
 [
   {
-    "description": "Jamaica - residential on 160th St near Jamaica Ave",
-    "lat": 40.7030,
-    "lon": -73.7935
+    "description": "160-10 89 AVENUE, Jamaica, NY, USA",
+    "lat": 40.706023,
+    "lon": -73.800255
   },
   {
-    "description": "Jamaica - Sutphin Blvd south of Hillside Ave",
-    "lat": 40.7065,
-    "lon": -73.7910
+    "description": "107-06 150 STREET, Jamaica, NY, USA",
+    "lat": 40.69416,
+    "lon": -73.801028
   },
   {
-    "description": "Jamaica - 150th St near 89th Ave residential",
-    "lat": 40.7045,
-    "lon": -73.7985
+    "description": "144-30 SANFORD AVENUE, Flushing, NY, USA",
+    "lat": 40.7588,
+    "lon": -73.819406
   },
   {
-    "description": "Jamaica - side street off Merrick Blvd",
-    "lat": 40.7020,
-    "lon": -73.7895
+    "description": "35-35 168 STREET, Flushing, NY, USA",
+    "lat": 40.763968,
+    "lon": -73.797592
   },
   {
-    "description": "Jamaica - 109th Ave near Sutphin Blvd",
-    "lat": 40.6985,
-    "lon": -73.7920
+    "description": "147-20 ARCHER AVENUE, Jamaica, NY, USA",
+    "lat": 40.700522,
+    "lon": -73.806861
   },
   {
-    "description": "Flushing - side street off Main St near Roosevelt Ave",
-    "lat": 40.7590,
-    "lon": -73.8300
+    "description": "41-15 KISSENA BOULEVARD, Flushing, NY, USA",
+    "lat": 40.758203,
+    "lon": -73.828462
   },
   {
-    "description": "Flushing - Kissena Blvd near Barclay Ave",
-    "lat": 40.7615,
-    "lon": -73.8260
+    "description": "136-19 SANFORD AVENUE, Flushing, NY, USA",
+    "lat": 40.757122,
+    "lon": -73.828178
   },
   {
-    "description": "Flushing - Bowne St near Northern Blvd",
-    "lat": 40.7635,
-    "lon": -73.8280
+    "description": "33-33 FARRINGTON STREET, Flushing, NY, USA",
+    "lat": 40.76587,
+    "lon": -73.83199
   },
   {
-    "description": "Flushing - Sanford Ave east of Main St",
-    "lat": 40.7575,
-    "lon": -73.8275
+    "description": "45-15 BOWNE STREET, Flushing, NY, USA",
+    "lat": 40.753572,
+    "lon": -73.817783
   },
   {
-    "description": "Flushing - 41st Ave near College Point Blvd",
-    "lat": 40.7625,
-    "lon": -73.8340
+    "description": "138-11 FRANKLIN AVENUE, Flushing, NY, USA",
+    "lat": 40.755234,
+    "lon": -73.826216
   },
   {
-    "description": "Astoria - 30th Ave near Steinway St",
-    "lat": 40.7720,
-    "lon": -73.9150
+    "description": "31-15 DITMARS BOULEVARD, Astoria, NY, USA",
+    "lat": 40.775871,
+    "lon": -73.909936
   },
   {
-    "description": "Astoria - Ditmars Blvd near 31st St",
-    "lat": 40.7755,
-    "lon": -73.9120
+    "description": "25-30 31 STREET, Astoria, NY, USA",
+    "lat": 40.76993,
+    "lon": -73.91854
   },
   {
-    "description": "Astoria - Broadway near Crescent St",
-    "lat": 40.7695,
-    "lon": -73.9175
+    "description": "23-15 28 AVENUE, Astoria, NY, USA",
+    "lat": 40.770422,
+    "lon": -73.924771
   },
   {
-    "description": "Astoria - 28th Ave near 38th St",
-    "lat": 40.7740,
-    "lon": -73.9080
+    "description": "30-50 38 STREET, Astoria, NY, USA",
+    "lat": 40.763171,
+    "lon": -73.916999
   },
   {
-    "description": "Astoria - 35th St near 30th Ave",
-    "lat": 40.7730,
-    "lon": -73.9095
+    "description": "22-40 35 STREET, Astoria, NY, USA",
+    "lat": 40.774137,
+    "lon": -73.910152
   },
   {
-    "description": "Jackson Heights - 37th Ave near 74th St",
-    "lat": 40.7495,
-    "lon": -73.8920
+    "description": "37-21 80 STREET, Jackson Heights, NY, USA",
+    "lat": 40.748957,
+    "lon": -73.885789
   },
   {
-    "description": "Jackson Heights - Roosevelt Ave near 82nd St",
-    "lat": 40.7505,
-    "lon": -73.8835
+    "description": "34-20 74 STREET, Jackson Heights, NY, USA",
+    "lat": 40.752207,
+    "lon": -73.8926
   },
   {
-    "description": "Jackson Heights - Broadway near 76th St",
-    "lat": 40.7515,
-    "lon": -73.8890
+    "description": "35-40 82 STREET, Jackson Heights, NY, USA",
+    "lat": 40.750538,
+    "lon": -73.884717
   },
   {
-    "description": "Jackson Heights - 34th Ave near 78th St",
-    "lat": 40.7535,
-    "lon": -73.8870
+    "description": "78-10 34 AVENUE, Jackson Heights, NY, USA",
+    "lat": 40.753166,
+    "lon": -73.888209
   },
   {
-    "description": "Forest Hills - Austin St near 71st Ave",
-    "lat": 40.7210,
-    "lon": -73.8445
+    "description": "108-20 68 ROAD, Forest Hills, NY, USA",
+    "lat": 40.726353,
+    "lon": -73.845256
   },
   {
-    "description": "Forest Hills - Queens Blvd near 67th Ave",
-    "lat": 40.7230,
-    "lon": -73.8465
+    "description": "67-35 DARTMOUTH STREET, Forest Hills, NY, USA",
+    "lat": 40.721487,
+    "lon": -73.855706
   },
   {
-    "description": "Forest Hills - 108th St near 68th Rd",
-    "lat": 40.7195,
-    "lon": -73.8420
+    "description": "98-30 67 AVENUE, Forest Hills, NY, USA",
+    "lat": 40.724661,
+    "lon": -73.85493
   },
   {
-    "description": "Forest Hills - Continental Ave near Burns St",
-    "lat": 40.7205,
-    "lon": -73.8450
+    "description": "71-15 AUSTIN STREET, Forest Hills, NY, USA",
+    "lat": 40.720089,
+    "lon": -73.844023
   },
   {
-    "description": "Union Tpke near 164th St (TPKE suffix test)",
-    "lat": 40.7165,
-    "lon": -73.7965
+    "description": "189-10 UNION TURNPIKE, Fresh Meadows, NY, USA",
+    "lat": 40.729435,
+    "lon": -73.779647
   },
   {
-    "description": "Union Tpke near Chevy Chase St (TPKE suffix test)",
-    "lat": 40.7180,
-    "lon": -73.8150
+    "description": "80-80 CHEVY CHASE STREET, Jamaica Estates, NY, USA",
+    "lat": 40.726199,
+    "lon": -73.78307
   }
 ]
