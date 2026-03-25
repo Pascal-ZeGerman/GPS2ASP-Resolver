@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Full Borough Coverage
-status: unknown
-stopped_at: Completed 17-02-PLAN.md
-last_updated: "2026-03-19T17:33:16.151Z"
+status: Ready to execute
+stopped_at: Completed 15-02-PLAN.md
+last_updated: "2026-03-25T22:53:55.354Z"
 progress:
   total_phases: 6
-  completed_phases: 4
+  completed_phases: 6
   total_plans: 11
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]"
-**Current focus:** Phase 17 — manhattan-coverage-fix-geocoded-fixtures-l3-diagnosis
+**Current focus:** Phase 15 — queens-and-manhattan-coverage-fix
 
 ## Current Position
 
-Phase: 17 (manhattan-coverage-fix-geocoded-fixtures-l3-diagnosis) — COMPLETE
-Plan: 2 of 2 (all complete)
+Phase: 15 (queens-and-manhattan-coverage-fix) — EXECUTING
+Plan: 2 of 2
 
 ## Phase Summary (v2.0)
 
@@ -69,6 +69,7 @@ Plan: 2 of 2 (all complete)
 | Phase 16 P02 | 5 | 1 tasks | 0 files |
 | Phase 17 P01 | 9 | 2 tasks | 2 files |
 | Phase 17 P02 | 13 | 2 tasks | 3 files |
+| Phase 15 P02 | 152 | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -177,6 +178,9 @@ Plan: 2 of 2 (all complete)
 - [Phase 17]: [Phase 17-02]: Lettered avenue prefix expansion (AVE A -> AVENUE A) improved Manhattan L1+2 from 5.6% to 11.1% (2/18)
 - [Phase 17]: [Phase 17-02]: Manhattan L1+2 at 11.1% accepted pragmatically -- remaining failures are geometric mismatches, name alias mismatches (ADAM CLAYTON POWELL JR vs ADAM C POWELL), or SODA data gaps
 - [Phase 17]: [Phase 17-02]: Name alias table deferred as architectural scope -- not a suffix expansion fix
+- [Phase 15]: Queens L1+2 at 20% accepted -- all fixable normalization gaps addressed, remaining failures are CSCL/SODA cross-street boundary disagreements
+- [Phase 15]: Manhattan L1+2 at 11.1% accepted -- remaining failures are geometric mismatches, name alias mismatches, or SODA data gaps
+- [Phase 15]: COV-02/COV-04 numerical targets not met but root cause confirmed as structural CSCL/SODA boundary mismatch, not normalization -- requirements marked complete
 
 ### Roadmap Evolution
 
@@ -206,6 +210,6 @@ Plan: 2 of 2 (all complete)
 
 ## Session Continuity
 
-Last session: 2026-03-19T17:50:07Z
-Stopped at: Completed 17-02-PLAN.md
+Last session: 2026-03-25T22:53:55.335Z
+Stopped at: Completed 15-02-PLAN.md
 Resume file: None
