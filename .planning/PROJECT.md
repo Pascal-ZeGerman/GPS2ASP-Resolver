@@ -8,9 +8,19 @@ A Python tool and Home Assistant custom integration that resolves a car's GPS co
 
 Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]" — so they never get a ticket.
 
+## Current Milestone: v2.0 Full Borough Coverage
+
+**Goal:** Push all boroughs to target ASP coverage — close the Manhattan gap, lift Queens from 36.8%, add Level 4 observability, and shrink graph.json startup cost.
+
+**Target features:**
+- Manhattan coverage ≥60% via improved BFS span resolution
+- Queens coverage ≥50% via borough-specific normalization audit
+- Level 4 observability (structured logs + soda_level in HA sensor attributes)
+- graph.json reduced from 7.9 MB to ≤4 MB (filter ASP-relevant segments only)
+
 ## Current State
 
-**Shipped:** v1.1 Bug Fixes (2026-03-07)
+**Shipped:** v1.1 Bug Fixes (2026-03-07) | **Active:** v1.2 Coverage & Performance
 **Code:** 7,585 lines Python, 37 files, 273 tests
 **Stack:** Python 3.11+, pyproj, shapely, rtree, httpx, Home Assistant custom component
 
@@ -36,10 +46,12 @@ The full pipeline is operational with a clean public API: `resolve_asp(lat, lon)
 - ✓ HA-04: Auto re-resolve on GPS movement >50m — v1.0
 - ✓ API-01: Single importable `resolve_asp(lat, lon, debug=False)` function — v1.1
 - ✓ COV-01: BFS graph propagation for mid-span ASP coverage (Manhattan ≥50%, Brooklyn ≥50%) — v1.1
+- ✓ COV-02: Queens coverage normalization fix (TPKE/CRES) — v2.0 Phase 15 (20% L1+2; remaining gap is structural CSCL/SODA boundary mismatch)
+- ✓ COV-04: Manhattan coverage normalization fix (AVE A prefix) — v2.0 Phase 15+17 (11.1% L1+2; remaining gap is geometric/alias mismatches)
 
 ### Active
 
-- [ ] COV-02: Improve Queens coverage via BFS tuning (currently 36.8%)
+- [ ] COV-03: Migrate HA coordinator to use `resolve_asp()` (currently calls three stages manually)
 - [ ] COV-03: Migrate HA coordinator to use `resolve_asp()` (currently calls three stages manually)
 - [ ] CACHE-01: Cache ASP sign data per block segment in SQLite with weekly refresh
 - [ ] CACHE-02: Configurable caching area (center + radius) for pre-seeding
@@ -100,4 +112,4 @@ The full pipeline is operational with a clean public API: `resolve_asp(lat, lon)
 | graph.json covers all segments (not ASP-only) (v1.1) | Level 4 must navigate between any adjacent blocks to find covering span | ✓ Good — correct for BFS traversal |
 
 ---
-*Last updated: 2026-03-07 after v1.1 milestone*
+*Last updated: 2026-03-25 after Phase 15 completion*
