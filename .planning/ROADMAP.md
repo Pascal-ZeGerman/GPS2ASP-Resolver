@@ -162,6 +162,6 @@ Plans:
 | 12. Structured Level 4 Logging | v2.0 | 1/1 | Complete | 2026-03-15 |
 | 13. soda_level Propagation | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. graph.json Size Reduction | v2.0 | 2/2 | Complete | 2026-03-17 |
-| 15. Queens and Manhattan Coverage Fix | v2.0 | 2/2 | Complete   | 2026-03-25 |
+| 15. Queens and Manhattan Coverage Fix | v2.0 | 2/2 | Complete    | 2026-03-26 |
 | 16. Queens Coverage Fix — Geocoded Fixtures | 2/2 | Complete   | 2026-03-19 | — |
 | 17. Manhattan Coverage Fix — Geocoded Fixtures | 2/2 | Complete   | 2026-03-19 | — |
