@@ -67,17 +67,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| OBS-02 | Phase 12 | Complete |
-| OBS-01 | Phase 13 | In Progress (tests only, Plan 02 pending) |
+| OBS-02 | Phase 12, Phase 18 (gap closure) | Complete |
+| OBS-01 | Phase 13 | Complete |
 | PERF-01 | Phase 14 | Complete |
-| COV-02 | Phase 15 | Complete |
-| COV-04 | Phase 15 | Complete |
+| COV-02 | Phase 15, Phase 16 | Complete |
+| COV-04 | Phase 15, Phase 17 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 5 total
 - Mapped to phases: 5
 - Unmapped: 0 ✓
-
 ---
 *Requirements defined: 2026-03-13*
-*Last updated: 2026-03-13 after v2.0 roadmap creation — all 5 requirements mapped*
+*Last updated: 2026-03-29 after Phase 18 vendored sync complete*
