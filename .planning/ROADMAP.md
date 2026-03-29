@@ -4,7 +4,7 @@
 
 - ✅ **v1.0 MVP** — Phases 1-4 (shipped 2026-02-23)
 - ✅ **v1.1 Bug Fixes** — Phases 5-11 (shipped 2026-03-07)
-- 🔄 **v2.0 Full Borough Coverage** — Phases 12-17 (active)
+- 🔄 **v2.0 Full Borough Coverage** — Phases 12-18 (active)
 
 ## Phases
 
@@ -35,7 +35,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 
 </details>
 
-### v2.0 Full Borough Coverage (Phases 12-17) — Active
+### v2.0 Full Borough Coverage (Phases 12-18) — Active
 
 - [x] **Phase 12: Structured Level 4 Logging** — Emit grep-friendly INFO logs at Level 4 entry and all miss cases in signs/__init__.py (completed 2026-03-15)
 - [x] **Phase 13: soda_level Propagation to HA Sensor** — Surface soda_level from ASPResult through coordinator to HA sensor extra_state_attributes (completed 2026-03-16)
@@ -43,6 +43,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 - [x] **Phase 15: Queens and Manhattan Coverage Fix** — Diagnose Queens normalization failure point using Phase 12 logs and fix; rebuild index (completed 2026-03-25)
 - [x] **Phase 16: Queens Coverage Fix — Geocoded Fixtures + L3 Diagnosis** — Regenerate Queens fixtures from real addresses, extend audit with L3 diagnostics, fix normalization gaps, verify ≥50% (completed 2026-03-19)
 - [x] **Phase 17: Manhattan Coverage Fix — Geocoded Fixtures + L3 Diagnosis** — Same approach for Manhattan, target ≥60% (completed 2026-03-19)
+- [ ] **Phase 18: Vendored Signs Sync + Docs Cleanup** — Sync Phase 12 structured Level 4 logging to vendored HA copy; update REQUIREMENTS.md traceability
 
 ## Phase Details
 
@@ -62,11 +63,11 @@ Plans:
 - [ ] 12-01-PLAN.md — Add four structured l4_event INFO log calls to retrieve_signs() Level 4 block (TDD)
 
 ### Phase 13: soda_level Propagation to HA Sensor
-**Goal**: The HA sensor's extra_state_attributes exposes which fallback level (1–4) resolved the parking data
+**Goal**: The HA sensor's extra_state_attributes exposes which fallback level (1-4) resolved the parking data
 **Depends on**: Nothing (independent of Phase 12; touches different files)
 **Requirements**: OBS-01
 **Success Criteria** (what must be TRUE):
-  1. HA sensor's extra_state_attributes contains a soda_level key with an integer value 1–4
+  1. HA sensor's extra_state_attributes contains a soda_level key with an integer value 1-4
   2. soda_level shows 1 or 2 for a location with a direct SODA match at the queried block
   3. soda_level shows 4 for a location that required the graph BFS fallback to find a covering span
   4. soda_level shows 0 when resolution fails before reaching the SODA query stage
@@ -108,7 +109,7 @@ Plans:
 - [x] 15-02-PLAN.md — Apply TPKE/CRES normalization fix, rebuild index, verify coverage thresholds via audit
 
 ### Phase 16: Queens Coverage Fix — Geocoded Fixtures + L3 Diagnosis
-**Goal**: Queens address-geocoded fixture set achieves ≥50% Level 1+2 SODA match rate after regenerating fixtures from real street addresses and fixing all safely fixable normalization gaps
+**Goal**: Queens address-geocoded fixture set achieves >=50% Level 1+2 SODA match rate after regenerating fixtures from real street addresses and fixing all safely fixable normalization gaps
 **Depends on**: Phase 15 (TPKE/CRES normalization code already applied; this phase replaces the bad fixture set and goes deeper on remaining L3 failures)
 **Requirements**: COV-02
 **Success Criteria** (what must be TRUE):
@@ -118,7 +119,7 @@ Plans:
   4. All L3 failures categorized: missing suffix, geometric mismatch, or SODA data gap
   5. All safely fixable L3 failures fixed (suffix table additions and/or `_cross_streets_match()` logic if warranted)
   6. Spatial index rebuilt with any new normalization changes
-  7. Queens fixture set achieves Level 1+2 ≥50% after rebuild
+  7. Queens fixture set achieves Level 1+2 >=50% after rebuild
   8. Brooklyn and Bronx spot-check fixtures show no regression
 **Plans**: 2 plans
 
@@ -127,7 +128,7 @@ Plans:
 - [ ] 16-02-PLAN.md — Run L3 diagnostic audit, fix normalization gaps, rebuild index, human-verify Queens >=50%
 
 ### Phase 17: Manhattan Coverage Fix — Geocoded Fixtures + L3 Diagnosis
-**Goal**: Manhattan address-geocoded fixture set achieves ≥60% Level 1+2 SODA match rate using same approach as Phase 16
+**Goal**: Manhattan address-geocoded fixture set achieves >=60% Level 1+2 SODA match rate using same approach as Phase 16
 **Depends on**: Phase 16 (reuses geocoding script, extended audit script, and any normalization fixes discovered for Queens)
 **Requirements**: COV-04
 **Success Criteria** (what must be TRUE):
@@ -136,13 +137,27 @@ Plans:
   3. Extended audit run against Manhattan fixtures using L3 diagnostic output from Phase 16
   4. Manhattan-specific normalization gaps discovered and fixed
   5. Spatial index rebuilt with Manhattan normalization additions
-  6. Manhattan fixture set achieves Level 1+2 ≥60% after rebuild
+  6. Manhattan fixture set achieves Level 1+2 >=60% after rebuild
   7. Queens, Brooklyn, and Bronx spot-check fixtures show no regression
 **Plans**: 2 plans
 
 Plans:
 - [ ] 17-01-PLAN.md — Populate Manhattan addresses in geocoding script, geocode fixtures, run L3 diagnostic audit
 - [ ] 17-02-PLAN.md — Analyze L3 diagnostics, fix normalization gaps, rebuild index, human-verify Manhattan >=60%
+
+### Phase 18: Vendored Signs Sync + Docs Cleanup
+**Goal**: Close integration gap: structured Level 4 logging works in HA deployment path; REQUIREMENTS.md traceability is accurate
+**Depends on**: Phase 12 (source of structured log entries to sync)
+**Requirements**: OBS-02
+**Gap Closure**: Closes OBS-02 vendored sync gap and Level 4 HA logging flow gap from v2.0-MILESTONE-AUDIT.md
+**Success Criteria** (what must be TRUE):
+  1. `custom_components/asp_parking/gps2asp/signs/__init__.py` Level 4 block matches `src/gps2asp/signs/__init__.py` (structured l4_event= INFO logs present)
+  2. REQUIREMENTS.md traceability table shows OBS-01 as Complete, COV-02 mapped to Phases 15+16, COV-04 mapped to Phases 15+17
+  3. All existing tests pass (no regressions)
+**Plans**: 1 plan
+
+Plans:
+- [ ] 18-01-PLAN.md — Sync Level 4 structured logging to vendored copy + fix REQUIREMENTS.md traceability
 
 ## Progress
 
@@ -163,5 +178,5 @@ Plans:
 | 13. soda_level Propagation | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. graph.json Size Reduction | v2.0 | 2/2 | Complete | 2026-03-17 |
 | 15. Queens and Manhattan Coverage Fix | v2.0 | 2/2 | Complete    | 2026-03-26 |
-| 16. Queens Coverage Fix — Geocoded Fixtures | 2/2 | Complete   | 2026-03-19 | — |
+| 16. Queens Coverage Fix — Geocoded Fixtures | 2/2 | Complete   | Complete    | 2026-03-26 |
 | 17. Manhattan Coverage Fix — Geocoded Fixtures | 2/2 | Complete   | 2026-03-19 | — |
