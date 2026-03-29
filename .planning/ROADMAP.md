@@ -43,7 +43,7 @@ Full details: `.planning/milestones/v1.1-ROADMAP.md`
 - [x] **Phase 15: Queens and Manhattan Coverage Fix** — Diagnose Queens normalization failure point using Phase 12 logs and fix; rebuild index (completed 2026-03-25)
 - [x] **Phase 16: Queens Coverage Fix — Geocoded Fixtures + L3 Diagnosis** — Regenerate Queens fixtures from real addresses, extend audit with L3 diagnostics, fix normalization gaps, verify ≥50% (completed 2026-03-19)
 - [x] **Phase 17: Manhattan Coverage Fix — Geocoded Fixtures + L3 Diagnosis** — Same approach for Manhattan, target ≥60% (completed 2026-03-19)
-- [ ] **Phase 18: Vendored Signs Sync + Docs Cleanup** — Sync Phase 12 structured Level 4 logging to vendored HA copy; update REQUIREMENTS.md traceability
+- [x] **Phase 18: Vendored Signs Sync + Docs Cleanup** — Sync Phase 12 structured Level 4 logging to vendored HA copy; update REQUIREMENTS.md traceability (completed 2026-03-29)
 
 ## Phase Details
 
@@ -157,7 +157,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 18-01-PLAN.md — Sync Level 4 structured logging to vendored copy + fix REQUIREMENTS.md traceability
+- [x] 18-01-PLAN.md — Sync Level 4 structured logging to vendored copy + fix REQUIREMENTS.md traceability
 
 ## Progress
 

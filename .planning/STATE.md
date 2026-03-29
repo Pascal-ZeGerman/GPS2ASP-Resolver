@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Full Borough Coverage
-status: Ready to plan
-stopped_at: Completed 15-02-PLAN.md
-last_updated: "2026-03-26T04:51:43.565Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 18-01-PLAN.md
+last_updated: "2026-03-29T22:15:01.598Z"
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 11
-  completed_plans: 11
+  total_phases: 7
+  completed_phases: 7
+  total_plans: 12
+  completed_plans: 12
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]"
-**Current focus:** Phase 15 — queens-and-manhattan-coverage-fix
+**Current focus:** Phase 18 — vendored-signs-sync-docs-cleanup
 
 ## Current Position
 
-Phase: 16
-Plan: Not started
+Phase: 18 (vendored-signs-sync-docs-cleanup) — EXECUTING
+Plan: 1 of 1
 
 ## Phase Summary (v2.0)
 
@@ -70,6 +70,7 @@ Plan: Not started
 | Phase 17 P01 | 9 | 2 tasks | 2 files |
 | Phase 17 P02 | 13 | 2 tasks | 3 files |
 | Phase 15 P02 | 152 | 3 tasks | 2 files |
+| Phase 18 P01 | 5 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -181,6 +182,7 @@ Plan: Not started
 - [Phase 15]: Queens L1+2 at 20% accepted -- all fixable normalization gaps addressed, remaining failures are CSCL/SODA cross-street boundary disagreements
 - [Phase 15]: Manhattan L1+2 at 11.1% accepted -- remaining failures are geometric mismatches, name alias mismatches, or SODA data gaps
 - [Phase 15]: COV-02/COV-04 numerical targets not met but root cause confirmed as structural CSCL/SODA boundary mismatch, not normalization -- requirements marked complete
+- [Phase 18]: COV-02/COV-04 phase mappings and OBS-01 status already correct in REQUIREMENTS.md -- only OBS-02 status and gap closure note needed changes
 
 ### Roadmap Evolution
 
@@ -210,6 +212,6 @@ Plan: Not started
 
 ## Session Continuity
 
-Last session: 2026-03-25T22:53:55.335Z
-Stopped at: Completed 15-02-PLAN.md
+Last session: 2026-03-29T22:15:01.591Z
+Stopped at: Completed 18-01-PLAN.md
 Resume file: None
