@@ -1,402 +1,420 @@
-# Architecture Research
+# Architecture Patterns: Suspension Handling Integration
 
-**Domain:** GPS-to-ASP-regulation resolver — coverage improvements and observability for v2.0
-**Researched:** 2026-03-13
-**Confidence:** HIGH (all findings are based on direct code inspection of the live codebase)
+**Domain:** ASP suspension handling added to existing GPS2ASP pipeline
+**Researched:** 2026-03-30
+**Milestone:** v3.0 — Suspension Handling
 
-## Standard Architecture
+---
 
-### System Overview
+## Existing Pipeline (Baseline)
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         OFFLINE BUILD (scripts/)                         │
-│                                                                          │
-│  build_index.py                                                          │
-│  ┌─────────────┐  ┌───────────────────┐  ┌───────────────────────────┐  │
-│  │ CSCL SODA   │  │ ASP Signs SODA    │  │ Output files              │  │
-│  │ GeoJSON     │→ │ (broom filter)    │→ │ segments.idx + .dat       │  │
-│  │ ~122K segs  │  │ unique block-face │  │ segments.json             │  │
-│  └─────────────┘  └───────────────────┘  │ graph.json  (7.9 MB)     │  │
-│          │                │              │ build_info.json           │  │
-│          │  BFS propagate │              └──────────────────────────┘  │
-│          └────────────────┘                    ↓ shipped with package  │
-└──────────────────────────────────────────────────────────────────────────┘
-          ↓ (index files loaded lazily at runtime)
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    RUNTIME PIPELINE (src/gps2asp/)                       │
-│                                                                          │
-│  resolve_asp(lat, lon) ── pipeline.py                                    │
-│                                                                          │
-│  ┌──────────┐  ┌──────────────┐  ┌────────────────────────────────────┐ │
-│  │ Stage 1  │  │   Stage 2    │  │           Stage 3                  │ │
-│  │ GPS →    │→ │ Street →     │→ │  Signs → Schedule → ScheduleResult │ │
-│  │ Segment  │  │ SODA Signs   │  │                                    │ │
-│  └──────────┘  └──────────────┘  └────────────────────────────────────┘ │
-│  resolver/     signs/             schedule/                              │
-│  SpatialIndex  retrieve_signs()   compute_schedule()                     │
-│  (R-tree +     L1→L2→L3→L4       parse + merge + next_move             │
-│   segments.json fallback chain   StreetGraph (graph.json, lazy)         │
-│  singleton)    singleton)                                                │
-│                                                                          │
-│  Public API: ASPResult / ASPDebugResult (soda_level field exists here)  │
-└──────────────────────────────────────────────────────────────────────────┘
-          ↓ (called by HA coordinator)
-┌──────────────────────────────────────────────────────────────────────────┐
-│                  HOME ASSISTANT LAYER (custom_components/)               │
-│                                                                          │
-│  ASPParkingCoordinator (event-driven, not DataUpdateCoordinator)         │
-│  - Subscribes to device_tracker state changes                            │
-│  - 50m movement threshold + 5s debounce                                 │
-│  - Calls THREE-STAGE pipeline MANUALLY (tech debt: not resolve_asp())   │
-│  - ASPParkingData: schedule_result, sign_count, confidence_score, etc.  │
-│                                                                          │
-│  Sensors: ASPNextMoveTimeSensor + 6 diagnostic sensors                  │
-│  Attributes: confidence_score, sign_count, parse_failures, last_error   │
-│  MISSING: soda_level in HA sensor attributes (v2.0 target)              │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
-### Component Responsibilities
-
-| Component | File | Responsibility |
-|-----------|------|----------------|
-| `SpatialIndex` | `resolver/spatial_index.py` | Lazy-loaded singleton; R-tree nearest-neighbor for GPS→segment; loads segments.json |
-| `StreetGraph` | `signs/graph.py` | Lazy-loaded singleton; graph.json BFS for Level 4 span scoring; loaded at first Level 4 call |
-| `retrieve_signs()` | `signs/__init__.py` | Four-level fallback chain: L1 exact → L2 variants → L3 broad+filter → L4 BFS span |
-| `normalize_to_soda()` | `signs/normalize.py` | CSCL abbreviation → SODA full-word; used at build time AND runtime |
-| `build_index.py` | `scripts/` | Offline: downloads CSCL + ASP signs, BFS-propagates has_asp flags, writes index files |
-| `ASPParkingCoordinator` | `custom_components/asp_parking/coordinator.py` | HA event-driven orchestrator; currently calls 3-stage pipeline manually (not `resolve_asp()`) |
-| `ASPNextMoveTimeSensor` | `custom_components/asp_parking/sensor.py` | Primary sensor; exposes attributes but lacks `soda_level` |
-
-## Recommended Project Structure
-
-No structural changes needed for v2.0. All work is modifications to existing files.
+The current pipeline is a strict linear chain with no suspension awareness:
 
 ```
-src/gps2asp/
-├── pipeline.py              [MODIFY] soda_level in ASPResult (not just ASPDebugResult)
-├── api_models.py            [MODIFY] add soda_level field to ASPResult
-├── signs/
-│   ├── __init__.py          [MODIFY] structured logging at L4 entry/exit
-│   └── graph.py             [READ-ONLY for v2.0 observability]
-├── resolver/
-│   └── spatial_index.py     [READ-ONLY for v2.0]
-scripts/
-└── build_index.py           [MODIFY] graph.json filter to ASP-reachable segments only
-custom_components/asp_parking/
-├── coordinator.py           [MODIFY] migrate to resolve_asp(); store soda_level
-└── sensor.py                [MODIFY] expose soda_level in extra_state_attributes
+GPS (lat/lon)
+    └─► Stage 1: resolve_segment()   → ResolutionResult
+            └─► Stage 2: retrieve_signs()  → SignRetrievalResult
+                    └─► Stage 3: compute_schedule() → ScheduleResult
+                                                        (ScheduleFound | ASPActiveNow |
+                                                         NoASPSchedule | NoMatchSchedule |
+                                                         AllUnparseable)
+                            └─► ASPResult (public API output)
+                                    └─► ASPParkingCoordinator.data (HA layer)
+                                            └─► ASPNextMoveTimeSensor / ASPActiveNowBinarySensor
 ```
 
-### Structure Rationale
+Key facts about the existing architecture:
 
-- **No new files needed for observability:** All three observability goals (Level 4 hit rate, soda_level in HA, Queens diagnosis) are modifications to existing components along the existing data flow.
-- **graph.json reduction is a build-time change only:** The runtime `StreetGraph.load()` just reads whatever is in graph.json — no runtime code changes needed to benefit from a smaller file.
-- **Queens normalization diagnostic is a logging addition, not a new module:** The failure point lives in existing code paths and needs structured log output to locate it.
+- `resolve_asp()` in `pipeline.py` wires stages 1-3. It is the single public API entry point.
+- `ASPResult` and `ASPDebugResult` in `api_models.py` are the only outputs callers see.
+- `ScheduleFound` and `ASPActiveNow` both have a `suspended: bool = False` field already — a v2 hook deliberately left in place for this milestone.
+- `find_next_window()` in `next_move.py` does a 7-day lookahead without suspension awareness. It will return a window even on a suspended day.
+- The HA coordinator (`coordinator.py`) calls stages 1-3 manually (not `resolve_asp()`) — this is known tech debt noted in PROJECT.md.
+- `ASPParkingData` dataclass in the coordinator holds all state exposed to HA entities.
+- Entity notification flows through `_async_notify_entities()` → `async_write_ha_state` on each entity.
 
-## Architectural Patterns
+---
 
-### Pattern 1: Two-Singleton Lazy Load
+## New Components Required
 
-Both `SpatialIndex` and `StreetGraph` use the same pattern: class-level `_instance`, `get()` classmethod that loads on first call, `reset()` for tests.
+### 1. Suspension Calendar (static, in `gps2asp` package)
 
-**Integration point for observability:** The StreetGraph singleton is already loaded at first Level 4 call. No changes needed to its load path to instrument hit rate — the instrumentation belongs in `retrieve_signs()` where Level 4 is invoked, not in `StreetGraph` itself.
+**Location:** `src/gps2asp/suspension/calendar.py`
+**What it is:** A hardcoded lookup table of all NYC holiday ASP suspension dates for the current year, plus next year.
 
-**Current Level 4 logging (in `signs/__init__.py`):**
+NYC DOT publishes an official annual PDF calendar with ~50 suspension dates per year (holidays + religious observances). This data changes once a year (new calendar published in November/December). It does not require an API call.
+
+**Data source:** Hard-coded as a `frozenset[date]` derived from the official NYC DOT calendar (https://www.nyc.gov/html/dot/downloads/pdf/asp-calendar-2026.pdf). Alternatively, shipped as a static data file (JSON or ICS).
+
+**Interface:**
 ```python
-logger.info("Level 4 matched: on_street=%r (best-covering span, %d unique signs)", ...)
-```
-This is INFO-level but not structured. It does not log the miss case (when Level 4 is entered but returns `NoMatchFound`).
+def is_holiday_suspension(date: date) -> bool:
+    """Return True if the given date is an official NYC holiday ASP suspension."""
 
-### Pattern 2: soda_level Field Already Exists in ASPDebugResult
-
-`ASPDebugResult` (debug=True path) already carries `soda_level: int`. `ASPResult` (debug=False path) does not. The HA coordinator calls the 3-stage pipeline manually (not `resolve_asp()`), so it never produces either result type — it gets `sign_result` directly as a `SignRetrievalResult`.
-
-**What is needed:**
-1. Add `soda_level: int` to `ASPResult` (non-debug path) so non-debug callers can see it.
-2. Migrate HA coordinator to use `resolve_asp(debug=False)` so it receives `ASPResult`.
-3. Store `soda_level` in `ASPParkingData` and surface it in `extra_state_attributes`.
-
-**Data flow for soda_level (after migration):**
-```
-retrieve_signs() returns SignRetrievalSuccess(soda_level=4)
-    │
-    ▼ pipeline.py
-resolve_asp() extracts soda_level, puts in ASPResult
-    │
-    ▼ coordinator.py
-ASPParkingData.soda_level = result.soda_level
-    │
-    ▼ sensor.py
-extra_state_attributes["soda_level"] = data.soda_level
+def get_suspension_reason(date: date) -> str | None:
+    """Return the holiday name if suspended, None otherwise. e.g. 'Eid Al-Fitr'"""
 ```
 
-### Pattern 3: graph.json Covers ALL Adjacency Segments (Current Design)
+**Why static over ICS-fetch:** The calendar is published once a year. An ICS fetch adds network dependency and parse complexity for data that rarely changes. Hard-coding with an annual update cycle is simpler and more reliable. The ICS format is available for automation, but parsing it adds scope.
 
-The current build writes graph.json with ALL segments that have adjacency entries — this is ~all vehicular segments. The comment in `build_index.py` (line 917) says:
+---
+
+### 2. Suspension Poller (dynamic, in `gps2asp` package)
+
+**Location:** `src/gps2asp/suspension/poller.py`
+**What it is:** An async HTTP client that queries the NYC 311 Public API for today's parking status.
+
+**API:** `GET https://api.nyc.gov/public/api/GetCalendar`
+- Requires: API key via `Ocp-Apim-Subscription-Key` header (free registration at api-portal.nyc.gov)
+- Returns: JSON with status per service per date
+- Parking status values (from `nyc311calendar` library source): `IN_EFFECT`, `SUSPENDED`, `NOT_IN_EFFECT`, `NO_INFO`
+
+**IMPORTANT:** `IN_EFFECT` = ASP is active (cleaning will happen). `SUSPENDED` = holiday/emergency suspension. `NOT_IN_EFFECT` = routine non-enforcement (Sundays). `NO_INFO` = unknown.
+
+For this integration only `SUSPENDED` matters — it means ASP is cancelled city-wide on a date that would otherwise be a cleaning day. The consumer must cross-reference with the block's own schedule to determine actual impact.
+
+**Why poll at all when we have the static calendar:** Emergency/weather suspensions (snow emergencies, mayoral declarations) are NOT in the static calendar. They are announced same-day via the 311 API. The static calendar covers planned holidays; the 311 API covers dynamic suspensions. Both sources are needed.
+
+**Polling cadence:** Once daily refresh is sufficient for holiday suspensions. For weather/emergency suspensions, poll more frequently on days where ASP is otherwise in effect (e.g., every 2-4 hours during business hours). The 311 API data at aspnyc.info is "updated every hour."
+
+**Interface:**
 ```python
-for pid, neighbors in adjacency.items():   # ALL adjacency entries
-    pid_str = str(pid)
-    graph_adjacency[pid_str] = sorted(neighbors)
+@dataclass(frozen=True)
+class SuspensionStatus:
+    date: date
+    is_suspended: bool        # True for SUSPENDED; False for IN_EFFECT/NOT_IN_EFFECT
+    is_in_effect: bool        # True only for IN_EFFECT
+    reason: str | None        # "Rosh Hashanah", "Snow Emergency", etc. — from API
+    source: Literal["311_api", "cache", "unknown"]
+
+async def fetch_suspension_status(
+    date: date,
+    api_key: str,
+    session: httpx.AsyncClient,
+) -> SuspensionStatus:
+    """Fetch today's suspension status from NYC 311 API."""
 ```
 
-**Why the graph covers all segments:** Level 4 BFS must traverse intermediate (non-ASP) segments to get from one ASP span endpoint to another. The BFS scores spans by graph distance; interior blocks along the route are non-ASP segments.
+**Error handling:** Network failure should NOT block the schedule pipeline. On failure, return a `SuspensionStatus` with `is_suspended=False`, `source="unknown"` — fail open (don't suppress real cleaning days on network failure).
 
-**The reduction opportunity:** The graph does not need entries for segments that could never be part of a Level 4 query. A segment is relevant to Level 4 if:
-- It is adjacent to at least one ASP segment (can be traversed to reach one), OR
-- It is an ASP segment itself (is a potential query target or span endpoint)
+---
 
-**Concrete approach:**
-1. After building adjacency, compute `asp_pid_set` = all PIDs where `has_asp_left or has_asp_right` in segments metadata.
-2. Expand with 1-hop neighbors: `relevant_pids = asp_pid_set | {n for pid in asp_pid_set for n in adjacency[pid]}`.
-3. Filter graph.json to only `relevant_pids`.
+### 3. Suspension Merger (pure function, in `gps2asp` package)
 
-This preserves full BFS capability for blocks adjacent to ASP streets while dropping purely non-ASP interior areas (parking lots, dead-end industrial segments, etc.).
+**Location:** `src/gps2asp/suspension/merge.py`
+**What it is:** A pure function that takes a `ScheduleResult` and `SuspensionStatus` and returns a new `ScheduleResult` with the `suspended` flag set on affected variants.
 
-**Expected size reduction:** From 7.9 MB toward ≤4 MB target. The exact reduction depends on what fraction of all segments are within 1 hop of an ASP segment. In dense NYC, this will be high in Manhattan/Brooklyn but there are large non-ASP areas (parks, airports, industrial zones) that can be pruned.
-
-### Pattern 4: Queens Normalization — Three Candidate Failure Points
-
-Queens street names have unique characteristics: numbered streets with borough-specific formatting (`"73 AVENUE"` vs `"73RD AVENUE"`), hyphenated addresses (`"147-23 STREET"`), and named streets that do not follow CSCL abbreviation conventions.
-
-**Candidate failure point A: build_index.py `_normalize_street_name()`**
-
-In `_compute_cross_streets()`, the cross street found by `_find_cross_street()` is the raw `full_street_name` from CSCL, which is stored directly into `cross_streets[pid]`. That raw name is later passed to `_check_has_asp()` which calls `_normalize_street_name()`. The `normalize_to_soda()` function handles standard abbreviations but has no Queens-specific ordinal handling (e.g., `"73 AVE"` → `"73 AVENUE"` works, but `"73 RD AVE"` → `"73 RD AVENUE"` not `"73RD AVENUE"`).
-
-If SODA stores Queens cross streets as `"73 ROAD AVENUE"` or with ordinal suffixes, the lookup fails at build time → segment gets `has_asp=False` → Level 4 is never invoked at runtime.
-
-**Candidate failure point B: runtime `retrieve_signs()` name_variants expansion**
-
-`name_variants()` generates at most 2 variants (SODA format + original CSCL). For Queens streets with ordinal conventions (`"QUEENS BLVD"` vs `"QUEENS BOULEVARD"`) this may be insufficient. If SODA stores the name under a third variant not generated by `name_variants()`, Levels 1-3 all miss.
-
-**Candidate failure point C: Level 4 BFS span_distance() cross-street PID lookup**
-
-In `StreetGraph.span_distance()`, it calls `_pids_with_cross_street(block_from)` which scans `segment_cross_streets` for the normalized name. If graph.json was built with CSCL format names and runtime queries use SODA format names (or vice versa), the PID sets come back empty and all BFS distances are `float('inf')`.
-
-The `StreetGraph.load()` normalizes names via `normalize_to_soda()` at load time — but if the names in graph.json are already in raw CSCL format and `normalize_to_soda()` doesn't fully handle Queens ordinals, the normalized forms still won't match SODA query terms.
-
-**Diagnostic approach:** Add structured logging at each candidate point for borocode=4 segments:
+**Interface:**
 ```python
-if seg_data.get("borocode") == "4":
-    logger.debug("Queens L1 attempt: on=%r from=%r to=%r", ...)
-```
-This is a targeted log-and-compare, not a code change.
+def apply_suspension(
+    schedule: ScheduleResult,
+    suspension: SuspensionStatus,
+) -> ScheduleResult:
+    """Apply suspension status to a schedule result.
 
-## Data Flow
-
-### Request Flow (Current — post v1.1)
-
-```
-GPS coordinates (lat, lon)
-    │
-    ▼ pipeline.py: resolve_asp()
-Stage 1: convert(lat, lon) → (x, y) State Plane
-    │
-    ▼ resolver/__init__.py: resolve_segment()
-SpatialIndex.get() [lazy singleton]
-    │   R-tree nearest(x, y, n=5, max=164ft) → [SegmentCandidate, ...]
-    │   Side-of-street via perpendicular projection
-    │
-    ▼ pipeline.py
-Stage 2: retrieve_signs(on_street, from_street, to_street, side)
-    │
-    ├── Level 1: exact SODA query (L1 soda_level=1)
-    ├── Level 2: abbreviation variant combinations (soda_level=2)
-    ├── Level 3: broad on_street+side, client-side cross-street filter (soda_level=3)
-    └── Level 4: [only if Levels 1-3 return ZERO records]
-                 StreetGraph.get() [lazy singleton, loads graph.json]
-                 broad on_street+side query
-                 _find_best_covering_span() via BFS span_distance()
-                 soda_level=4
-    │
-    ▼ pipeline.py
-Stage 3: compute_schedule(sign_result) → ScheduleResult
-    │
-    ▼ pipeline.py
-ASPResult(schedule, resolution_failed, resolution_error)
-   soda_level: NOT in ASPResult today (only in ASPDebugResult)
+    Returns a new ScheduleResult with suspended=True if the next_window
+    or active_window falls on a suspended date.
+    """
 ```
 
-### Level 4 Observability Gap (Current State)
+**Merge rules:**
+- `ScheduleFound` with `next_window` on a suspended date → return new `ScheduleFound(suspended=True)`
+- `ASPActiveNow` on a suspended date → return new `ASPActiveNow(suspended=True)`. This is the critical case: user's car is in an "active" window but ASP is suspended, so they do NOT need to move.
+- `NoASPSchedule`, `NoMatchSchedule`, `AllUnparseable` → pass through unchanged (no cleaning day to suspend)
+- If `suspension.is_suspended=False` → return schedule unchanged (no mutation needed)
 
-```
-retrieve_signs() enters Level 4
-    │
-    ├── CASE A: Level 4 matches → logger.info("Level 4 matched...")
-    │                              soda_level=4 on SignRetrievalSuccess
-    │
-    ├── CASE B: Level 4 entered, broad query returns records,
-    │           _find_best_covering_span() returns None →
-    │           falls through to NoMatchFound()
-    │           NO STRUCTURED LOG emitted for this miss
-    │
-    └── CASE C: Level 4 entered, broad query returns zero records →
-                falls through to NoMatchFound()
-                NO STRUCTURED LOG emitted for this miss
-```
+**Why a separate pure function instead of inside `compute_schedule()`:** `compute_schedule()` currently has no external dependencies — it only processes signs. Suspension adds an external data dependency. Keeping the merger separate preserves the pure nature of the schedule stage and allows suspension to be applied outside the pipeline (e.g., in the HA coordinator after a suspension status update without a full re-resolve).
 
-Cases B and C are the gaps. Hit rate requires counting Case A vs (B + C). Currently only Case A is logged at INFO level. Cases B and C produce a generic `logger.info("No match found...")` that doesn't distinguish "Level 4 was attempted" from "Levels 1-3 failed before Level 4".
+---
 
-### Proposed Observability Data Flow (After v2.0)
+### 4. ha-nyc311 Bridge (optional, HA layer only)
 
-```
-retrieve_signs() enters Level 4
-    │
-    ├── NEW: logger.info("Level 4: entered for on_street=%r side=%r", ...)
-    │                                    [structured: l4_entered=True]
-    │
-    ├── CASE A: match → logger.info("Level 4: matched, span_distance=%d", ...)
-    │                   [structured: l4_result="match"]
-    │
-    ├── CASE B: no covering span → NEW logger.info("Level 4: no covering span found")
-    │                              [structured: l4_result="no_span"]
-    │
-    └── CASE C: no SODA records → NEW logger.info("Level 4: no SODA records")
-                                  [structured: l4_result="no_records"]
+**Location:** `custom_components/asp_parking/suspension_bridge.py`
+**What it is:** Code that reads suspension state from the ha-nyc311 integration's entities instead of calling the 311 API directly. Used when ha-nyc311 is installed alongside asp_parking.
+
+**ha-nyc311 entities (confirmed from source):**
+- `binary_sensor.nyc311_parking_exception_today` — True when parking is suspended today
+- `binary_sensor.nyc311_parking_exception_tomorrow` — True for tomorrow
+- `binary_sensor.nyc311_parking_exception_in_N_days` — for N=2 through 6
+- Attributes: `service_name`, `closure_type` ("Exception" or "Routine"), `date`, `reason`
+
+**Bridge interface:**
+```python
+async def read_nyc311_bridge(
+    hass: HomeAssistant,
+    date: date,
+) -> SuspensionStatus | None:
+    """Read suspension status from ha-nyc311 entities if available.
+
+    Returns None if ha-nyc311 is not installed or entity not found.
+    Falls back to direct 311 API polling when None is returned.
+    """
 ```
 
-These three structured log entries are sufficient to compute hit rate from HA logs without changing the pipeline contract (`SignRetrievalResult` return type unchanged).
+**Why optional:** The bridge requires ha-nyc311 to be installed. Not all users will have it. The integration must work standalone via direct 311 API polling. The bridge is an optimization — avoids a duplicate API call when ha-nyc311 is already polling.
 
-## Scaling Considerations
+**Bridge detection:** Check `hass.states.get("binary_sensor.nyc311_parking_exception_today")` — if `None`, ha-nyc311 is absent, fall back to direct polling. No config required from the user for detection.
 
-| Concern | Current | After v2.0 |
-|---------|---------|------------|
-| graph.json startup | 7.9 MB, loaded lazily on first L4 call | ≤4 MB target with ASP-reachable filter |
-| Level 4 BFS correctness | Unchanged (full graph ensures no missing paths) | Preserved (1-hop neighbor expansion keeps all traversal paths) |
-| Queens coverage | 36.8% (below 50% target) | Diagnostic logging reveals which failure point; fix applied after diagnosis |
-| HA coordinator pipeline | Manual 3-stage call (tech debt) | Migrated to resolve_asp() — single call, cleaner error surface |
+---
 
-## Anti-Patterns
+## Integration Points in the Existing Pipeline
 
-### Anti-Pattern 1: Filtering graph.json to ASP-Only Segments
+### Point A: `pipeline.py` — resolve_asp()
 
-**What it means:** Keeping only segments where `has_asp=True` in graph.json.
+**Change type:** New parameter + new stage
 
-**Why it is wrong:** BFS traversal needs intermediate non-ASP segments as bridges. A block between two ASP spans may not be an ASP segment itself. Removing it breaks BFS connectivity and Level 4 returns `float('inf')` for spans that are actually reachable.
+`resolve_asp()` grows a new optional parameter `suspension_status: SuspensionStatus | None = None`. When provided, `apply_suspension()` is called after `compute_schedule()` before returning.
 
-**Do this instead:** Keep ASP segments PLUS their 1-hop neighbors in graph.json. The 1-hop filter preserves all traversal paths while removing segments that are more than 1 hop from any ASP street (parks, airports, industrial dead-ends).
+```python
+# After Stage 3 (existing)
+schedule = compute_schedule(sign_result)
 
-### Anti-Pattern 2: Instrumenting Level 4 Inside StreetGraph
-
-**What people do:** Add hit-rate counters to `StreetGraph.span_distance()` or `_find_best_covering_span()`.
-
-**Why it is wrong:** StreetGraph is a pure graph utility — it has no knowledge of whether it is being called from Level 4, from a test, or from a future caller. Mixing observability state into the graph breaks the separation between data structure and calling context.
-
-**Do this instead:** All Level 4 observability lives in `retrieve_signs()` (signs/__init__.py), where the Level 4 block is explicitly demarcated with `# Level 4` comments. The entry, match, and miss cases are all visible there.
-
-### Anti-Pattern 3: Adding soda_level as an Exception or Side Channel
-
-**What people do:** Raise a custom exception carrying soda_level when Level 4 matches, or use a module-level counter.
-
-**Why it is wrong:** The pipeline contract is `retrieve_signs()` → `SignRetrievalResult`. `SignRetrievalSuccess` already has `soda_level: int` — it is populated correctly for Levels 1-4. The problem is that `ASPResult` (the public pipeline output) doesn't carry it through to callers. The correct fix is to propagate the existing `soda_level` field through `pipeline.py` into `ASPResult`.
-
-**Do this instead:** `pipeline.py` already extracts `soda_level` for the `ASPDebugResult` path (line 89: `soda_level = sign_result.soda_level if isinstance(sign_result, SignRetrievalSuccess) else 0`). Add `soda_level: int` to `ASPResult` and replicate that extraction for the non-debug path.
-
-### Anti-Pattern 4: Queens-Specific Special Cases in normalize_to_soda()
-
-**What people do:** Add Queens ordinal handling (`"73 AVE"` → `"73RD AVENUE"`) directly into `normalize_to_soda()`.
-
-**Why it is wrong:** `normalize_to_soda()` is shared between build time and runtime. Queens ordinals in SODA are not consistent — SODA stores these as `"73 AVENUE"` (matching what normalize_to_soda already produces), not as `"73RD AVENUE"`. Adding ordinal logic would introduce wrong transformations. The Queens coverage problem is not in the normalization function — it is most likely in the cross-street computation at build time or in missing name variants.
-
-**Do this instead:** Diagnose first via structured logging before changing normalization. The fix may be a new variant in `name_variants()` or a build-time cross-street computation fix, not a change to the core normalizer.
-
-## Integration Points
-
-### New vs Modified Components
-
-| Component | Change Type | What Changes |
-|-----------|-------------|--------------|
-| `src/gps2asp/api_models.py` | **Modify** | Add `soda_level: int = 0` field to `ASPResult` dataclass |
-| `src/gps2asp/pipeline.py` | **Modify** | Populate `soda_level` in `ASPResult` (same extraction already done for `ASPDebugResult`) |
-| `src/gps2asp/signs/__init__.py` | **Modify** | Add structured INFO logs at Level 4 entry + miss cases (Cases B and C above) |
-| `scripts/build_index.py` | **Modify** | Filter graph.json to ASP-reachable segments (ASP PIDs + 1-hop neighbors) |
-| `custom_components/asp_parking/coordinator.py` | **Modify** | Migrate `_async_resolve_pipeline()` from 3-stage manual call to `resolve_asp()`; add `soda_level` to `ASPParkingData` |
-| `custom_components/asp_parking/sensor.py` | **Modify** | Add `soda_level` to `extra_state_attributes` in `ASPNextMoveTimeSensor` |
-
-No new files are needed. All changes are surgical modifications to existing components.
-
-### Dependency Graph for Changes
-
-```
-api_models.py (add soda_level to ASPResult)
-    │
-    ▼ must happen first
-pipeline.py (populate soda_level in non-debug path)
-    │
-    ▼ must happen after pipeline.py
-coordinator.py (use resolve_asp(), read result.soda_level)
-    │
-    ▼ must happen after coordinator.py
-sensor.py (read data.soda_level from coordinator)
+# New Stage 4 (suspension merge)
+if suspension_status is not None:
+    schedule = apply_suspension(schedule, suspension_status)
 ```
 
+This keeps suspension optional — callers that don't provide `suspension_status` get the existing behavior unchanged. The HA coordinator, which passes the suspension status in, handles the suspension lookup.
+
+**Do NOT call the 311 API inside `resolve_asp()`** — that would make every pipeline run dependent on network availability of a second API. The caller (coordinator) owns that concern.
+
+---
+
+### Point B: `api_models.py` — ASPResult
+
+**Change type:** New field
+
+`ASPResult` gets a `suspension_reason: str | None = None` field. When the schedule's `suspended=True`, this propagates the reason to the HA sensor attributes.
+
+```python
+@dataclass(frozen=True)
+class ASPResult:
+    schedule: ScheduleResult | None
+    resolution_failed: bool
+    resolution_error: str | None
+    soda_level: int = 0
+    suspension_reason: str | None = None   # NEW: populated when suspended=True
 ```
-signs/__init__.py (structured Level 4 logging)
-    │ independent of the soda_level propagation chain above
-    │ can be built in parallel
-    ▼
-(observability in HA logs)
+
+---
+
+### Point C: `schedule/models.py` — ScheduleFound and ASPActiveNow
+
+**Change type:** Already has the hook — just needs `apply_suspension()` to set it.
+
+The `suspended: bool = False` field already exists on both `ScheduleFound` and `ASPActiveNow`. Since these are frozen dataclasses, `apply_suspension()` returns a `dataclasses.replace(schedule, suspended=True)` copy. No model changes needed for the flag.
+
+**New field needed:** `suspension_reason: str | None = None` should be added to `ScheduleFound` and `ASPActiveNow` to carry the reason alongside the flag. This allows the HA sensor to show "Suspended: Eid Al-Fitr" in attributes.
+
+---
+
+### Point D: `coordinator.py` — ASPParkingCoordinator
+
+**Change type:** New suspension polling, new data field, modified pipeline call
+
+This is the largest change. The coordinator becomes responsible for:
+
+1. **Suspension state management:** Holds a `SuspensionStatus` that is refreshed on its own schedule, independent of GPS events.
+2. **Bridge detection:** On `async_start()`, detect ha-nyc311 presence and configure the suspension source.
+3. **Suspension-aware pipeline:** Pass `suspension_status` to each pipeline run.
+4. **Re-evaluation trigger:** When suspension status changes, re-apply suspension to the current `schedule_result` without running the full GPS pipeline.
+
+New fields on `ASPParkingData`:
+
+```python
+@dataclass
+class ASPParkingData:
+    # ... existing fields ...
+    suspended: bool = False                  # NEW: is ASP suspended today?
+    suspension_reason: str | None = None     # NEW: "Rosh Hashanah", "Snow Emergency", etc.
+    suspension_source: str = "unknown"       # NEW: "311_api", "ha_nyc311_bridge", "holiday_calendar", "none"
+    last_suspension_check: datetime | None = None  # NEW: when suspension was last checked
 ```
 
+**Suspension refresh schedule:** Separate `async_track_time_interval` callback that runs:
+- Once at startup
+- Every 4 hours during daytime (6am-10pm NYC time) when ASP is currently in effect
+- Once at midnight to pick up the new day's status
+
+This is separate from the GPS-driven pipeline refresh. The suspension poller runs even when the car hasn't moved.
+
+**Re-evaluation on suspension change:** When the suspension poller fires and the status changes (was `suspended=False`, now `True`, or vice versa), the coordinator must re-apply suspension to the current `schedule_result` and notify entities — without re-running the SODA pipeline. This is the key architectural advantage of keeping `apply_suspension()` as a pure function that can be called in isolation.
+
+---
+
+### Point E: `sensor.py` — ASPNextMoveTimeSensor
+
+**Change type:** New state text and new attributes
+
+When `schedule.suspended == True`, the sensor state should communicate this to the user clearly:
+- If `ScheduleFound` with `suspended=True`: state changes from "Mon 8:00 AM" to "Suspended" (or "No restrictions")
+- If `ASPActiveNow` with `suspended=True`: `is_on` on the binary sensor becomes `False` (user does NOT need to move)
+
+New attributes when suspended:
+```python
+attrs["asp_suspended"] = schedule.suspended          # bool
+attrs["suspension_reason"] = schedule.suspension_reason  # str | None
+attrs["suspension_source"] = data.suspension_source  # "311_api" | "ha_nyc311_bridge" | etc.
 ```
-build_index.py (graph.json filter)
-    │ purely offline, no runtime code changes
-    │ can be built in parallel with all runtime changes
-    ▼
-(re-run build_index.py, new graph.json deployed)
+
+**Binary sensor (`binary_sensor.py`):** `ASPActiveNowBinarySensor.is_on` currently returns `isinstance(schedule, ASPActiveNow)`. This must change to `isinstance(schedule, ASPActiveNow) and not schedule.suspended`. An active window during a suspension should NOT trigger the binary sensor.
+
+---
+
+### Point F: `config_flow.py` — Configuration
+
+**Change type:** New optional fields
+
+New optional configuration fields:
+- `CONF_NYC311_API_KEY` — optional; skips 311 API polling if absent (holiday calendar only)
+- `CONF_SUSPENSION_POLL_INTERVAL` — hours between suspension checks (default: 4)
+- `CONF_USE_HA_NYC311_BRIDGE` — bool, auto-detected but user-overridable; true = use ha-nyc311 bridge
+
+The 311 API key is optional because:
+1. Holiday suspensions from the static calendar work without it.
+2. Some users may not want to register for an API key.
+3. The ha-nyc311 bridge path does not need the API key.
+
+---
+
+## Data Flow Summary
+
+### Path 1: GPS movement triggers pipeline (existing path, extended)
+
+```
+GPS update → movement > 50m → debounce 5s
+    → fetch_suspension_status(today)        ← NEW (or read from ha-nyc311 bridge)
+    → resolve_segment(lat, lon)
+    → retrieve_signs(...)
+    → compute_schedule(sign_result)
+    → apply_suspension(schedule, status)    ← NEW
+    → ASPParkingData updated
+    → entities notified
 ```
 
-### External Services
+### Path 2: Suspension status changes (new path, no GPS re-resolve)
 
-| Service | Integration Pattern | Notes |
-|---------|---------------------|-------|
-| NYC Open Data SODA (`nfid-uabd`) | REST GET + SoQL `$where`, paginated JSON | No changes for v2.0; existing client handles L4 broad query |
-| NYC Open Data SODA (`inkn-q76z`) | REST GeoJSON + pagination (build time only) | No changes; build_index.py downloads unchanged |
+```
+suspension_poll_timer fires
+    → fetch_suspension_status(today)
+    → if status changed from last check:
+        → apply_suspension(coordinator.data.schedule_result, new_status)
+        → update coordinator.data.schedule_result
+        → update coordinator.data.suspended + suspension_reason
+        → entities notified
+    → else: no-op
+```
 
-### Internal Boundaries
+### Path 3: Daily midnight reset (new path)
 
-| Boundary | Communication | v2.0 Change |
-|----------|---------------|-------------|
-| `pipeline.py` → `ASPResult` | Frozen dataclass construction | Add `soda_level` field; zero-cost, backward-compat if callers use keyword args |
-| `coordinator.py` → `pipeline.py` | `await resolve_asp(lat, lon)` | Coordinator currently bypasses `resolve_asp()` entirely; migration aligns HA with library public API |
-| `coordinator.py` → `sensor.py` | `coordinator.data` (ASPParkingData dataclass) | Add `soda_level: int = 0` to `ASPParkingData`; sensor reads new field |
-| `retrieve_signs()` → `StreetGraph` | `StreetGraph.get()` singleton call | No change; observability lives in `retrieve_signs()`, not in `StreetGraph` |
+```
+midnight timer fires
+    → fetch_suspension_status(tomorrow = new today)
+    → update coordinator.data with new status
+    → if next_window is now unsuspended (yesterday had suspension, today doesn't):
+        → re-resolve full pipeline with current GPS
+```
 
-## Suggested Build Order
+### Path 4: ha-nyc311 bridge state change (new path, HA-only)
 
-Build order is driven by the dependency chain above. Three workstreams are independent and can be sequenced or run in parallel:
+```
+ha-nyc311 entity state change event
+    → read binary_sensor.nyc311_parking_exception_today state
+    → if changed from last known:
+        → apply suspension (same as Path 2)
+```
 
-**Workstream 1 — soda_level propagation (4 steps, strict order):**
-1. `api_models.py`: Add `soda_level: int = 0` to `ASPResult`
-2. `pipeline.py`: Populate `soda_level` in `ASPResult` construction (copy the existing `ASPDebugResult` extraction logic)
-3. `coordinator.py`: Migrate to `resolve_asp()`, add `soda_level` to `ASPParkingData`, update data extraction
-4. `sensor.py`: Add `soda_level` to `extra_state_attributes`
+This is the most responsive path — ha-nyc311 fires an HA state change event immediately when the 311 API returns a new suspension. The 311 API update cadence from aspnyc.info is "updated every hour."
 
-**Workstream 2 — Level 4 structured logging (1 step, independent):**
-5. `signs/__init__.py`: Add INFO log at Level 4 entry; add INFO logs for miss Cases B and C
+---
 
-**Workstream 3 — graph.json size reduction (1 step, offline only):**
-6. `build_index.py`: Add `relevant_pids` filter before writing graph.json; rebuild index; verify BFS correctness via tests
+## Build Order (Component Dependencies)
 
-**Queens diagnosis (after Workstream 1 + 2 complete):**
-7. Enable DEBUG logging for borocode=4 segments in a test resolve; compare logged CSCL cross-street names against SODA stored names; identify which candidate failure point (A, B, or C) is responsible; apply targeted fix
+```
+Phase A: Static holiday calendar
+    src/gps2asp/suspension/__init__.py
+    src/gps2asp/suspension/calendar.py
+    → No external dependencies. Self-contained. Tests are simple date lookups.
+    → Dependency: none
 
-**Why this order:** Steps 1-4 unblock the HA sensor improvement and close the coordinator tech debt. Step 5 adds the observability needed to measure Level 4 hit rate in production. Step 6 is offline and has no runtime risk. Queens diagnosis must follow Steps 5 because the structured logs are what make the failure point identifiable.
+Phase B: SuspensionStatus model + apply_suspension() merger
+    src/gps2asp/suspension/models.py    (SuspensionStatus dataclass)
+    src/gps2asp/suspension/merge.py     (apply_suspension pure function)
+    schedule/models.py                  (add suspension_reason field to ScheduleFound + ASPActiveNow)
+    → Dependency: Phase A (SuspensionStatus model)
+    → Tests: pure function, no I/O needed
+
+Phase C: pipeline.py + api_models.py wiring
+    pipeline.py                         (add suspension_status param, call apply_suspension)
+    api_models.py                       (add suspension_reason to ASPResult)
+    → Dependency: Phase B (apply_suspension exists)
+    → Tests: resolve_asp() with mock SuspensionStatus
+
+Phase D: Direct 311 API poller
+    src/gps2asp/suspension/poller.py    (async httpx client for NYC 311 API)
+    → Dependency: Phase B (SuspensionStatus model)
+    → External dependency: nyc311calendar OR direct httpx call to api.nyc.gov
+    → Tests: mock httpx responses; live integration test behind skip flag
+
+Phase E: HA coordinator suspension integration
+    coordinator.py                      (suspension polling, new ASPParkingData fields)
+    config_flow.py                      (NYC311_API_KEY, poll interval options)
+    → Dependency: Phase C (pipeline.py change), Phase D (poller)
+
+Phase F: HA sensor/binary_sensor changes
+    sensor.py                           (suspended state text, new attributes)
+    binary_sensor.py                    (suspended check in is_on)
+    → Dependency: Phase E (coordinator exposes suspended data)
+
+Phase G: ha-nyc311 bridge (optional, separate phase)
+    suspension_bridge.py                (read ha-nyc311 entities)
+    coordinator.py                      (bridge detection + state change listener)
+    → Dependency: Phase E (coordinator suspension polling exists as fallback)
+    → Can be deferred if no ha-nyc311 is installed in the user's HA
+```
+
+---
+
+## Component Boundary Summary
+
+| Component | Layer | New or Modified | Dependency |
+|-----------|-------|----------------|------------|
+| `suspension/calendar.py` | `gps2asp` lib | New | None |
+| `suspension/models.py` | `gps2asp` lib | New | None |
+| `suspension/merge.py` | `gps2asp` lib | New | models |
+| `suspension/poller.py` | `gps2asp` lib | New | models, httpx |
+| `schedule/models.py` | `gps2asp` lib | Modified (add `suspension_reason`) | None |
+| `pipeline.py` | `gps2asp` lib | Modified (add stage 4) | merge |
+| `api_models.py` | `gps2asp` lib | Modified (add `suspension_reason`) | models |
+| `coordinator.py` | HA layer | Modified (suspension polling) | poller, bridge |
+| `sensor.py` | HA layer | Modified (new state/attrs) | coordinator |
+| `binary_sensor.py` | HA layer | Modified (suspended check) | coordinator |
+| `config_flow.py` | HA layer | Modified (new options) | const |
+| `suspension_bridge.py` | HA layer | New | hass states |
+
+---
+
+## Key Architectural Decisions
+
+**Suspension is a post-pipeline annotation, not a pipeline input.** The GPS-to-signs pipeline is unchanged. Suspension is applied after `compute_schedule()` returns. This preserves the existing pipeline's testability and keeps the SODA dependency cleanly separate from the 311 dependency.
+
+**Fail open on suspension API failure.** If the 311 API is unreachable, treat suspension as unknown/False. Never suppress a legitimate cleaning window because the suspension check failed — a missed cleaning notice is worse than a false alarm.
+
+**Two suspension data sources are strictly layered.** Static calendar covers holidays (no API key needed, always available). 311 API covers emergency/weather suspensions (API key needed, network-dependent). When both are available, the 311 API is authoritative (it subsumes holidays too). When only the static calendar is available, holiday suspensions still work.
+
+**The merger is a pure function, not a pipeline stage.** `apply_suspension()` takes a `ScheduleResult` and returns a new `ScheduleResult`. This enables re-application when suspension status changes without re-running the expensive SODA query and parse stages.
+
+**ha-nyc311 bridge is an optimization, not a requirement.** The integration is fully functional without ha-nyc311. The bridge eliminates a duplicate API call for users who already have ha-nyc311 installed. It is detected automatically from HA state registry, requiring no user configuration.
+
+**Vendored copy (`custom_components/asp_parking/gps2asp/`) must be kept in sync.** All changes to `src/gps2asp/suspension/` must be mirrored to `custom_components/asp_parking/gps2asp/suspension/`. This vendored sync is an existing constraint (established in v2.0).
+
+---
 
 ## Sources
 
-All findings are based on direct code inspection (confidence: HIGH):
-- `src/gps2asp/pipeline.py` — soda_level extraction exists for debug path, absent from ASPResult
-- `src/gps2asp/api_models.py` — ASPResult vs ASPDebugResult field comparison
-- `src/gps2asp/signs/__init__.py` — Level 4 block, Cases A/B/C logging gap identified
-- `src/gps2asp/signs/graph.py` — StreetGraph singleton, BFS logic, span_distance()
-- `src/gps2asp/signs/normalize.py` — normalize_to_soda() suffix table, Queens ordinal gap
-- `src/gps2asp/resolver/spatial_index.py` — SpatialIndex singleton pattern
-- `custom_components/asp_parking/coordinator.py` — manual 3-stage call confirmed (lines 289-296)
-- `custom_components/asp_parking/sensor.py` — extra_state_attributes missing soda_level confirmed
-- `scripts/build_index.py` — graph.json write loop (lines 921-926), all-adjacency issue confirmed
-
----
-*Architecture research for: GPS2ASP v2.0 — coverage improvements and observability*
-*Researched: 2026-03-13*
+- Existing codebase: `src/gps2asp/pipeline.py`, `api_models.py`, `schedule/models.py`, `schedule/next_move.py`, `coordinator.py`, `sensor.py`, `binary_sensor.py`
+- nyc311calendar library source: https://github.com/elahd/nyc311calendar (`services.py` — parking status enum values `IN_EFFECT`, `SUSPENDED`, `NOT_IN_EFFECT`, `NO_INFO`)
+- ha-nyc311 integration: https://github.com/elahd/ha-nyc311 (entity ID patterns, binary sensor attributes, `binary_sensor.nyc311_parking_exception_today`)
+- NYC 311 Public API: `https://api.nyc.gov/public/api/GetCalendar` — requires free registration at https://api-portal.nyc.gov/
+- NYC DOT ASP Suspension Calendar: https://www.nyc.gov/html/dot/html/motorist/alternate-side-parking.shtml (~50 suspension dates/year, available as ICS and PDF)
+- aspnyc.info (unofficial reference consumer of 311 API): https://www.aspnyc.info/ — confirms hourly 311 API polling cadence and status format

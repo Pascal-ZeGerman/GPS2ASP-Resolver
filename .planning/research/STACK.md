@@ -1,275 +1,247 @@
-# Stack Research
+# Technology Stack
 
-**Domain:** GPS-to-ASP parking regulation resolver — v2.0 coverage and observability additions
-**Researched:** 2026-03-13
-**Confidence:** HIGH
+**Project:** GPS2ASP Resolver — v3.0 Suspension Handling
+**Researched:** 2026-03-31
+**Overall confidence:** HIGH
 
-> **Scope note:** This update covers ONLY the three new capability areas for v2.0:
-> (1) graph.json size reduction, (2) Queens coverage investigation tooling,
-> (3) structured logging/metrics for Level 4 SODA fallback observability.
-> The validated v1.x stack (Python 3.11+, pyproj, shapely, rtree, httpx, numpy) is
-> NOT re-researched here. See the 2026-02-21 STACK.md history for that foundation.
+> **Scope note:** This update covers ONLY the four new capability areas for v3.0:
+> (1) NYC holiday ASP suspension calendar, (2) 311 API for weather/emergency suspensions,
+> (3) suspension/schedule merging, (4) ha-nyc311 bridge in HA.
+> The validated v2.0 stack (Python 3.11+, pyproj, shapely, rtree, httpx, zstandard,
+> Home Assistant custom component, stdlib logging) is NOT re-researched here.
+> See the 2026-03-13 STACK.md history for that foundation.
 
 ---
 
-## Capability 1: graph.json Size Reduction (7.9 MB → ≤4 MB)
+## Capability 1: Holiday ASP Suspension Calendar
 
-### Problem Analysis
+### Data Source Analysis
 
-graph.json is 7.9 MB of JSON containing three keys:
-- `adjacency`: maps every CSCL segment PID → list of adjacent PID ints
-- `segment_streets`: maps every PID → on-street name string
-- `segment_cross_streets`: maps every PID → list of cross-street name strings
+NYC DOT publishes the annual ASP suspension calendar at:
+`https://www.nyc.gov/html/dot/html/motorist/alternate-side-parking.shtml`
 
-The file covers ALL ~62K vehicular segments, but Level 4 only needs segments
-on streets that have ASP signs. The 26,374 ASP segments represent roughly 42%
-of the total. Filtering to ASP-reachable segments is the primary reduction lever.
-Beyond filtering, compression is a secondary lever.
+Two machine-readable formats are available:
+- **ICS file**: `https://www.nyc.gov/html/dot/downloads/ics/asp-calendar-YYYY.ics` (URL
+  pattern inferred from PDF pattern `asp-calendar-YYYY.pdf`; confirmed ICS format offered
+  on the page for import into Outlook/Google/macOS Calendar)
+- **PDF**: `https://www.nyc.gov/html/dot/downloads/pdf/asp-calendar-YYYY.pdf` (not
+  machine-parseable; do not use)
 
-### Recommended Approach: Filter-First, Then Compress
+There is no REST API or JSON feed for this data. The ICS file is updated annually (new
+year = new file). The ICS contains all known holiday suspension dates for the full year.
+Weather/emergency suspensions are NOT in the ICS — those require live polling (see
+Capability 2).
 
-**Step 1 — Filter graph.json to ASP-relevant segments only (build-time)**
+**Verdict: Download the annual ICS file once per year (or on startup if missing) and
+parse it with `icalendar`. Store the parsed dates as a frozen set in memory.**
 
-During `build_index.py`, mark only segments with `has_asp_left=True` or
-`has_asp_right=True` (already in segments.json). Include those segments plus
-their immediate neighbors (one BFS hop) to preserve graph connectivity for
-Level 4 traversal. This alone targets ~50-55% size reduction before compression.
-
-No new library needed. Pure Python dict/set operations in the existing build script.
-
-**Step 2 — Compress with zstandard at load time (optional, further reduction)**
-
-If filtering alone does not reach ≤4 MB, apply zstd compression to graph.json.gz
-at build time and decompress transparently in `StreetGraph.load()`.
-
-### Supporting Libraries for Compression
+### ICS Parsing Library
 
 | Library | Version | Purpose | Why |
 |---------|---------|---------|-----|
-| zstandard | 0.25.0 | Compress graph.json at build time; decompress at load time | Best compression ratio vs speed tradeoff. 30-40% size reduction on JSON. Self-contained wheels — no external C library install needed. `python-zstandard` package name on PyPI. Python >=3.9 compatible. NOT needed if filtering alone achieves ≤4 MB target |
+| icalendar | >=6.1.0 | Parse NYC DOT ICS calendar file | Actively maintained (v7.x in development, v6.x stable as of late 2025); RFC 5545 compliant; pure Python; no aiohttp dependency; works with httpx for download. The `python-icalendar` package on PyPI. Simpler API than ics.py for the use case of iterating VEVENT components. |
 
 **Do NOT use:**
-- `gzip` / `zlib` (stdlib): Lower compression ratio than zstd at same speed
-- `bz2` (stdlib): Better ratio but slower decompression — adds latency on HA startup
-- `msgpack`: Binary serialization is an alternative encoding, but (1) msgpack +
-  compression is not meaningfully smaller than JSON + compression for string-heavy
-  data like street names, and (2) it adds a dependency with no load-time benefit
-  since decompression dominates
+- `ics` (ics.py): Less maintained, more complex API for simple date extraction
+- `ical`: Newer package, less established, no significant advantage here
+- `recurring-ical-events`: Overkill — ASP suspension dates are one-off events, not
+  recurring rules
 
-**orjson as faster JSON loader (optional, not required):**
+### Integration with Existing Stack
 
-If zstd is not used and raw JSON parse time on HA startup becomes a concern,
-`orjson` (3.11.7) parses JSON roughly 2x faster than stdlib `json`. However:
-- The current load path is already in `asyncio.to_thread()` so it never blocks HA
-- orjson is a compiled Rust extension (binary wheel); adds ~2 MB to HA install footprint
-- **Verdict: Do not add orjson unless profiling shows graph.json parse as a bottleneck**
+The ICS download uses the existing `httpx.AsyncClient` already in `signs/client.py`.
+The parsed suspension dates are a `frozenset[date]` — a simple stdlib type, no new
+model needed. A new `gps2asp/suspension/` subpackage is the right home.
 
-### Compression Sizing Estimate
-
-| Approach | Estimated Size | New Dependency |
-|----------|---------------|----------------|
-| Current (all segments, plain JSON) | 7.9 MB | — |
-| Filter ASP-relevant + 1-hop neighbors | ~3.5–4.5 MB | None |
-| Filter + zstd level 3 compression | ~1.0–1.5 MB | zstandard 0.25.0 |
-
-**Recommendation: Implement filtering first. Add zstd only if filtered size > 4 MB.**
-
-The filtering change is in `build_index.py` (build-time) and `graph.py` (load-time
-path stays the same). No change to `StreetGraph` class interface.
+**No new HTTP library needed.** httpx already handles async downloads.
 
 ---
 
-## Capability 2: Queens Coverage Investigation
+## Capability 2: Weather/Emergency Suspension Polling (NYC 311 API)
 
-### Problem Analysis
+### Data Source Analysis
 
-Queens is at 36.8% coverage vs 58.2% Manhattan and 74.1% Brooklyn. The root
-cause is almost certainly street name normalization mismatches between CSCL and
-SODA formats specific to Queens naming conventions — NOT a data gap in the SODA
-dataset itself.
+Real-time ASP suspension status (snow days, emergency declarations) comes from the
+**NYC 311 Public API** at `api-portal.nyc.gov`. This API requires a free developer
+account and API key (subscribed to the "NYC 311 Public Developers" product).
 
-Queens-specific naming issues known to cause mismatches:
+The API endpoint returns a calendar of service statuses including `Alternate Side
+Parking` suspension state for any requested date range. The `nyc311calendar` Python
+library wraps this API.
 
-1. **Numbered avenue variants**: Queens uses "108 AVENUE", "108 AVE", "108TH
-   AVENUE", "108TH AVE" interchangeably. The current `normalize_to_soda()`
-   handles `AVE → AVENUE` suffix but does NOT handle the ordinal suffix variant
-   (`108 AVENUE` vs `108TH AVENUE`). CSCL uses `108 AVE`; SODA may use `108
-   AVENUE` or `108TH AVENUE`.
+**Alternative considered: `The-NYC-ASP-API` (github.com/erickouassi)** — A third-party
+proxy with no-auth endpoints like `/v1/today`. Verdict: REJECT. The author explicitly
+disclaims continued existence. Third-party proxy adds an unreliable middle layer. Use
+the official API directly.
 
-2. **Numbered street ordinal variants**: `108 ST` → `108 STREET` (handled) vs
-   `108TH STREET` (not handled). Queens numbered streets consistently use ordinal
-   form in SODA data.
+**Another alternative: 311 Open Inquiry API** (`api.cityofnewyork.us/311/v1/municipalservices`)
+— An older endpoint identified in NYC Open Data community discussions that returns JSON
+without OAuth. Status unknown as of 2026. REJECT as primary; document as fallback
+emergency option only.
 
-3. **Named avenues with directional qualifiers**: `HILLSIDE AVE` → `HILLSIDE
-   AVENUE` (handled) but `UNION TPKE` (Turnpike) is not in `_SUFFIX_EXPANSIONS`.
+### NYC 311 API Wrapper
 
-4. **Multiple carriageways**: Queens Boulevard, Woodhaven Boulevard, and similar
-   divided highways have separate centerlines per carriageway in CSCL. The BFS
-   graph may not connect across the median, causing Level 4 to fail for mid-span
-   blocks on these roads.
+| Library | Version | Purpose | Why |
+|---------|---------|---------|-----|
+| nyc311calendar | 0.4.1 | Async fetch of ASP suspension status from NYC 311 Public API | Written specifically for this use case; used by ha-nyc311; supports Week Ahead and Quarter Ahead calendar types; returns typed Python dataclasses. Alpha-quality (author's own label) and last released Dec 2022. |
 
-### Investigation Tooling Needed
+**Critical dependency issue with `nyc311calendar`:** It requires **aiohttp**, not
+httpx. This conflicts with the project's existing choice of httpx as the sole HTTP
+client. Adding aiohttp to the HA component footprint adds ~1 MB of compiled wheels
+and creates two HTTP clients in the same process.
 
-No new library is needed for the investigation itself. The work is:
+**Resolution: Do NOT use `nyc311calendar` as a library dependency.** Instead, call
+the NYC 311 Public API directly with httpx. The API is a standard HTTPS JSON endpoint;
+`nyc311calendar`'s source code (github.com/elahd/nyc311calendar) can be read to
+extract the exact endpoint URL and response field names without taking a dependency
+on the package itself.
 
-1. **Coverage audit script** (`scripts/audit_queens_coverage.py`):
-   - Query all Queens segments from segments.json (borocode=4)
-   - For each segment without has_asp_left/right, attempt Level 1-4 sign retrieval
-     against live SODA API
-   - Log the outcome (which level matched, or NoMatchFound) and the exact street
-     names submitted to SODA
-   - Output CSV for pattern analysis
+This approach:
+- Maintains a single HTTP client (httpx) in the codebase
+- Avoids aiohttp as a second HTTP framework
+- Keeps the HA component footprint small
+- The API is simple enough (one endpoint, one response schema) that a wrapper is
+  not needed
 
-2. **Normalization additions** in `normalize.py`:
-   - Add ordinal number suffix handling: `"108 AVE"` → `"108TH AVENUE"` variant
-   - Add `TPKE → TURNPIKE`, `EXPY → EXPRESSWAY` (already in), `PKWY → PARKWAY`
-     (already in), `HWY → HIGHWAY` (already in)
-   - `name_variants()` should return the ordinal form as an additional variant
-     so Level 2 tries it
+**Verdict: Implement a thin `NYC311SuspensionClient` in `gps2asp/suspension/` using
+httpx directly. Model the response schema from nyc311calendar's open source code.**
 
-3. **BFS connectivity for divided highways** in `build_index.py`:
-   - Investigate whether `physicalid` adjacency correctly links parallel
-     carriageways (it should via shared node coordinates, but verify for Queens
-     Boulevard specifically)
+### API Key Handling
 
-**No new library is required for Queens investigation.** The work is diagnostic
-(audit script using existing stack) followed by normalization table expansion.
-
-### Supporting Libraries — Queens Coverage
-
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| pandas | Already available via geopandas in build deps | Aggregate audit CSV results by pattern | Only in `scripts/` (build-time), not in runtime package |
-
-Do NOT add pandas as a runtime dependency. It is already available in the `[build]`
-extra via geopandas. The audit script runs offline.
+The NYC 311 API key must be stored in the HA config entry (config flow). Add
+`CONF_NYC311_API_KEY` as an optional config entry field. When absent, the suspension
+feature degrades gracefully to holiday-calendar-only mode (SUSP-01 still works,
+SUSP-02 disabled).
 
 ---
 
-## Capability 3: Structured Logging / Level 4 Observability
+## Capability 3: Suspension/Schedule Merging
 
-### Problem Analysis
+### Architecture
 
-Current logging uses Python stdlib `logging` with free-form `logger.info()`/
-`logger.debug()` calls. There is no machine-readable way to extract:
-- Which SODA fallback level was used per resolve call
-- How often Level 4 fires (indicating mid-span blocks being resolved)
-- The graph BFS hop distances involved in Level 4 span selection
-- Borough-level breakdown of level distributions
+The existing `schedule/models.py` already has a `suspended: bool = False` hook on
+`ScheduleFound` and `ASPActiveNow`. The merge logic needs to:
 
-The HA sensor already exposes `soda_level` in `ASPDebugResult`, but this is only
-visible when `debug=True`. Normal production resolves silently succeed/fail.
+1. Check suspension state (holiday or 311 API) against the `next_window.start_datetime`
+2. If suspended: set `suspended=True` on the result; set `next_window=None` on
+   `ScheduleFound` (no move needed); transform `ASPActiveNow` → `ScheduleFound(suspended=True)`
 
-### Recommended Approach: stdlib logging with structured extras
+Because `ScheduleFound` and `ASPActiveNow` are frozen dataclasses, mutation requires
+`dataclasses.replace()`. This is already the pattern in the codebase.
 
-**Do NOT add structlog.** Home Assistant custom components must interoperate with
-HA's logging infrastructure, which is built entirely on Python stdlib `logging`.
-HA users configure log levels via `configuration.yaml` using logger names like
-`custom_components.asp_parking`. Adding structlog as a dependency introduces:
-- A 200 KB+ wheel to HA's install footprint
-- A separate configuration surface (structlog processors) that bypasses HA's
-  logger configuration UI
-- Import-order coupling that is fragile in HA's custom component loading model
+**No new library needed.** Pure Python logic using `dataclasses.replace()` and
+`datetime.date` comparison. The suspension check is a `date in suspension_dates` set
+lookup — O(1).
 
-**Use stdlib `logging` with structured `extra={}` dicts instead.**
+### New Model
 
-Python's stdlib `logging.getLogger(__name__).info(msg, extra={...})` passes
-key-value pairs into `LogRecord.__dict__`. Combined with a custom `Formatter`
-or HA's existing JSON log formatter, these fields become queryable. This is the
-pattern all HA core integrations use.
-
-### Implementation Pattern
-
-**In `signs/__init__.py` — add structured log at each level match:**
+Add a `SuspensionState` frozen dataclass to `gps2asp/suspension/models.py`:
 
 ```python
-logger.info(
-    "SODA match",
-    extra={
-        "soda_level": 4,
-        "on_street": on_street,
-        "borough": _infer_borough(on_street),
-        "bfs_distance": best_distance,
-        "event": "soda_level_match",
-    }
-)
+@dataclass(frozen=True)
+class SuspensionState:
+    suspended: bool
+    reason: str | None          # "New Year's Day", "Snow emergency", etc.
+    source: Literal["holiday_calendar", "nyc311_api", "unknown"]
+    as_of: datetime
 ```
 
-**In `signs/graph.py` — log BFS outcomes:**
-
-```python
-logger.debug(
-    "BFS span score",
-    extra={
-        "event": "bfs_span_scored",
-        "span_from": span_from,
-        "span_to": span_to,
-        "distance": dist,
-    }
-)
-```
-
-**In `pipeline.py` — log resolve outcome:**
-
-```python
-logger.info(
-    "resolve_asp complete",
-    extra={
-        "event": "resolve_complete",
-        "soda_level": soda_level,
-        "resolution_failed": False,
-        "borocode": resolution.borocode,
-    }
-)
-```
-
-### soda_level in HA Sensor Attributes
-
-The `soda_level` is already in `ASPDebugResult.soda_level` but not exposed in
-the HA sensor attributes for production resolves. The fix is to:
-1. Add `soda_level: int` to `ASPResult` (the non-debug result type)
-2. Populate it from `sign_result.soda_level` in `pipeline.py`
-3. Expose it as a sensor state attribute in `sensor.py`
-
-This requires no new library — it is a field addition to an existing frozen
-dataclass.
-
-### Supporting Libraries — Observability
-
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| None required | — | stdlib logging + extra= dicts covers all needs | — |
-
-**Do NOT add:**
-- `structlog`: Incompatible with HA logging model (see above)
-- `prometheus_client`: Overkill for a single-user local HA integration; no
-  Prometheus scraping infrastructure in home HA setups
-- `opentelemetry`: Same reason — designed for distributed systems, not home automation
+This is a stdlib-only model. No new dependency.
 
 ---
 
-## Installation Changes for v2.0
+## Capability 4: ha-nyc311 Bridge in Home Assistant
 
-### Runtime dependencies (pyproject.toml and manifest.json)
+### ha-nyc311 Integration Analysis
 
-**No new runtime dependencies required** for Queens coverage improvement or
-observability. Both use existing stdlib (`logging`) and existing data structures.
+**ha-nyc311** (github.com/elahd/ha-nyc311) is a Home Assistant custom component that
+exposes NYC 311 calendar data as HA entities:
 
-**Conditional new dependency** (only if filtering alone does not reach ≤4 MB):
+- `binary_sensor.nyc311_parking_exception_today` — `on` when ASP is suspended today
+- `binary_sensor.nyc311_parking_exception_tomorrow` — `on` when ASP is suspended tomorrow
+- Through `binary_sensor.nyc311_parking_exception_in_6_days`
+- `sensor.next_parking_exception` — date of next suspension
+- Calendar entity for all services
+
+Latest version: **v0.1.5** (February 2023). The integration is functional but not
+actively developed. It uses `nyc311calendar` (aiohttp) internally.
+
+### Bridge Pattern
+
+The ASP Parking integration should optionally read from ha-nyc311's entities rather
+than polling the 311 API itself. This avoids duplicate API calls when both integrations
+are installed.
+
+**Implementation approach:** In `coordinator.py`, use the existing HA helper
+`async_track_state_change_event` to watch `binary_sensor.nyc311_parking_exception_today`.
+When that sensor changes state, invalidate the suspension cache and re-run the
+schedule computation with the new suspension state.
+
+This is the correct HA pattern: read another integration's entity state rather than
+tight coupling to its internals. No new library is needed. The existing coordinator
+already uses `async_track_state_change_event` for the device_tracker.
+
+**Config flow addition:** Add an optional `CONF_NYC311_ENTITY` field (EntitySelector
+filtered to `binary_sensor` domain). When configured, use the ha-nyc311 entity as the
+suspension source instead of direct 311 API polling. When absent, fall back to direct
+API polling (if API key configured) or holiday-calendar-only.
+
+**Priority chain for suspension state:**
+1. ha-nyc311 entity state (if `CONF_NYC311_ENTITY` configured)
+2. Direct 311 API poll (if `CONF_NYC311_API_KEY` configured)
+3. Holiday calendar only (always available, no external dependency)
+
+This design makes all three modes independently useful and gracefully degrades.
+
+### HA Helpers Used (all existing, no new imports)
+
+| Helper | Source | Purpose |
+|--------|--------|---------|
+| `async_track_state_change_event` | `homeassistant.helpers.event` | Watch nyc311 entity state |
+| `async_track_time_interval` | `homeassistant.helpers.event` | Poll 311 API on schedule |
+| `selector.EntitySelector` | `homeassistant.helpers.selector` | Config flow entity picker |
+
+---
+
+## Summary of Stack Additions for v3.0
+
+### New Runtime Dependencies
+
+| Library | Version | Purpose | Where Used |
+|---------|---------|---------|------------|
+| icalendar | >=6.1.0 | Parse NYC DOT annual ASP suspension ICS file | `gps2asp/suspension/calendar.py` |
+
+**That is the only new library dependency.** Everything else uses the existing stack.
+
+### No New Dependencies For
+
+| Capability | Why No New Dependency |
+|------------|----------------------|
+| 311 API client | httpx already present; thin wrapper over JSON endpoint |
+| Suspension/schedule merge | `dataclasses.replace()` + stdlib `datetime.date` |
+| ha-nyc311 bridge | `async_track_state_change_event` already in HA helpers |
+| Holiday calendar download | httpx already present |
+| Suspension state model | stdlib frozen dataclass |
+
+### pyproject.toml Change
 
 ```toml
-# pyproject.toml — add to dependencies only if compression needed
-"zstandard>=0.23.0",
+# Add to [project] dependencies:
+"icalendar>=6.1.0",
 ```
+
+### manifest.json Change
 
 ```json
-// manifest.json — add to requirements only if compression needed
-"zstandard>=0.23.0"
+"requirements": [
+    "pyproj>=3.7.0",
+    "rtree>=1.4.0",
+    "shapely>=2.1.0",
+    "httpx>=0.28.0",
+    "zstandard>=0.21.0",
+    "icalendar>=6.1.0"
+]
 ```
-
-### Build-time dependencies (pyproject.toml `[build]` extra only)
-
-No change needed. geopandas already available for the audit script.
 
 ---
 
@@ -277,42 +249,44 @@ No change needed. geopandas already available for the audit script.
 
 | Category | Recommended | Alternative | Why Not |
 |----------|-------------|-------------|---------|
-| Graph compression | zstandard | gzip/zlib | Lower ratio at same decompression speed; no advantage |
-| Graph compression | zstandard | msgpack binary | String-heavy data compresses similarly either way; adds encoding migration risk |
-| Graph size reduction | Filter ASP-relevant segments | Reduce stored fields per segment | Fields (street name, cross streets) are load-time normalized; can't be removed without changing BFS logic |
-| Observability | stdlib logging + extra= | structlog | Incompatible with HA logging model; unnecessary dependency weight |
-| Observability | stdlib logging + extra= | prometheus_client | Requires Prometheus infrastructure; no value for single-user home setup |
-| Queens normalization | Extend name_variants() | NYC Geoclient API | Geoclient API requires developer account registration; adds network dependency to the build path; overkill when the normalization gap is a known pattern |
-| soda_level exposure | Add to ASPResult dataclass | Separate metrics endpoint | HA sensor attributes are the natural home for resolution metadata; no separate endpoint needed |
+| ICS parsing | icalendar | ics.py | Less actively maintained; more complex API for simple VEVENT iteration |
+| ICS parsing | icalendar | stdlib only (manual parse) | ICS format has enough edge cases (timezone, encoding) to warrant a proper parser |
+| 311 API wrapper | httpx (direct) | nyc311calendar | Requires aiohttp; last released Dec 2022; alpha quality; adds a second HTTP client framework |
+| 311 API wrapper | httpx (direct) | The-NYC-ASP-API (third-party proxy) | No auth, but author disclaims stability; unreliable external dependency |
+| ha-nyc311 bridge | HA state machine bridge (entity read) | Import ha-nyc311 as a Python library | Custom components cannot import from each other's Python modules; HA entity state is the correct IPC mechanism |
+| aiohttp for 311 | Rejected | aiohttp | Project already uses httpx; adding a second async HTTP framework is wasteful and creates version conflict risk in HA's shared Python environment |
 
 ## What NOT to Add
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| structlog | Bypasses HA logging infrastructure; incompatible with logger configuration UI | stdlib `logging` with `extra={}` dicts |
-| orjson | 2x JSON parse speedup not needed; graph.json load is already in `asyncio.to_thread()`; adds ~2 MB compiled wheel | stdlib `json` (keep current) |
-| msgpack | String-heavy graph.json does not benefit from binary encoding after compression; adds format migration cost | JSON + zstandard if compression needed |
-| pandas (runtime) | Already available in `[build]` extras via geopandas; should not be a runtime dependency | pandas in scripts/ only via build extras |
-| geopandas (runtime) | Same reason; build-time only | geopandas in `[build]` extras only |
+| `nyc311calendar` | aiohttp dependency conflicts with httpx; alpha quality; last release 2022 | Direct httpx call to NYC 311 API |
+| `aiohttp` | Second HTTP framework; HA already ships aiohttp but custom components shouldn't declare it as a pip requirement when httpx covers all needs | httpx (existing) |
+| `ics` (ics.py) | Less maintained than `icalendar`; no advantage for simple holiday date extraction | `icalendar` |
+| `python-dateutil` | Not needed; ICS VEVENT DTSTART values for NYC DOT calendar are plain dates (no recurring rules, no complex timezone handling) | stdlib `datetime.date` |
+| `recurring-ical-events` | Overkill; ASP suspension dates are non-recurring VEVENT entries | `icalendar` with direct DTSTART extraction |
+
+---
 
 ## Version Compatibility
 
-| Package | Compatible With | Notes |
-|---------|-----------------|-------|
-| zstandard 0.25.0 | Python >=3.9 | No conflict with Python 3.11+ requirement |
-| zstandard 0.25.0 | Home Assistant 2025.x | Not a HA core dependency; safe to add as custom component requirement |
-| orjson 3.11.7 | Python 3.10–3.15 | If ever needed; NOT recommended for this project |
+| Package | Version | Python Req | HA Compat | Notes |
+|---------|---------|------------|-----------|-------|
+| icalendar | >=6.1.0 | >=3.8 | Safe to add | Pure Python; no compiled extension; no conflict with HA's existing packages |
+
+---
 
 ## Sources
 
-- [zstandard on PyPI](https://pypi.org/project/zstandard/) — Version 0.25.0, Sep 2025, Python >=3.9, prebuilt wheels (HIGH confidence)
-- [python-zstandard documentation](https://python-zstandard.readthedocs.io/en/latest/) — API docs, compression levels, file-like object API (HIGH confidence)
-- [orjson on PyPI](https://pypi.org/project/orjson/) — Version 3.11.7, Feb 2026, 10x faster than stdlib json (HIGH confidence)
-- [structlog documentation](https://www.structlog.org/en/stable/logging-best-practices.html) — Best practices, stdlib integration pattern (HIGH confidence — verified NOT appropriate for HA custom components)
-- [Home Assistant Logger integration docs](https://www.home-assistant.io/integrations/logger/) — How HA manages logger namespaces and log levels for custom components (HIGH confidence)
-- [NYC Queens address format](https://streeteasy.com/blog/queens-addresses-hyphenated-confusing-street-names/) — Queens street naming conventions and ordinal suffix usage (MEDIUM confidence — secondary source for normalization rationale)
-- [msgpack vs JSON compression benchmark](https://www.peterbe.com/plog/msgpack-vs-json-with-gzip) — Compressed JSON size comparable to compressed msgpack for string-heavy data (MEDIUM confidence)
+- [NYC DOT ASP Suspension Calendar page](https://www.nyc.gov/html/dot/html/motorist/alternate-side-parking.shtml) — Confirmed ICS file available for download; no REST API (HIGH confidence, primary source)
+- [nyc311calendar on PyPI](https://pypi.org/project/nyc311calendar/) — Version 0.4.1, Dec 2022, aiohttp dependency confirmed (HIGH confidence)
+- [ha-nyc311 GitHub](https://github.com/elahd/ha-nyc311) — v0.1.5 Feb 2023; entity naming pattern `binary_sensor.nyc311_parking_exception_today`; ASP suspension sensor confirmed (HIGH confidence)
+- [nyc311calendar GitHub](https://github.com/elahd/nyc311calendar) — aiohttp dependency, NYC 311 Public API endpoint, alpha release warning (HIGH confidence)
+- [icalendar on PyPI](https://pypi.org/project/icalendar/) — v7.0.3/6.x stable, actively maintained, RFC 5545 compliant (HIGH confidence)
+- [HA Developer Docs: Listening for Events](https://developers.home-assistant.io/docs/integration_listen_events/) — `async_track_state_change_event` is the recommended pattern for cross-integration state reading (HIGH confidence, official docs)
+- [NYC Open Data community issue on 311 API endpoint](https://github.com/CityOfNewYork/DOT-Data-Feeds/issues/1) — `api.cityofnewyork.us/311/v1/municipalservices` endpoint confirmed as older alternative (MEDIUM confidence — community discussion, not official docs)
+- [NYC API Portal](https://api-portal.nyc.gov/) — Free API key required for NYC 311 Public API; subscribe to "NYC 311 Public Developers" product (HIGH confidence)
 
 ---
-*Stack research for: GPS2ASP Resolver v2.0 — coverage and observability additions*
-*Researched: 2026-03-13*
+*Stack research for: GPS2ASP Resolver v3.0 — Suspension Handling*
+*Researched: 2026-03-31*

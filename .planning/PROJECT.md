@@ -8,23 +8,13 @@ A Python tool and Home Assistant custom integration that resolves a car's GPS co
 
 Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]" — so they never get a ticket.
 
-## Current Milestone: v2.0 Full Borough Coverage
-
-**Goal:** Push all boroughs to target ASP coverage — close the Manhattan gap, lift Queens from 36.8%, add Level 4 observability, and shrink graph.json startup cost.
-
-**Target features:**
-- Manhattan coverage ≥60% via improved BFS span resolution
-- Queens coverage ≥50% via borough-specific normalization audit
-- Level 4 observability (structured logs + soda_level in HA sensor attributes)
-- graph.json reduced from 7.9 MB to ≤4 MB (filter ASP-relevant segments only)
-
 ## Current State
 
-**Shipped:** v1.1 Bug Fixes (2026-03-07) | **Active:** v1.2 Coverage & Performance
-**Code:** 7,585 lines Python, 37 files, 273 tests
-**Stack:** Python 3.11+, pyproj, shapely, rtree, httpx, Home Assistant custom component
+**Shipped:** v2.0 Full Borough Coverage (2026-03-30)
+**Code:** 15,339 lines Python, 72 files
+**Stack:** Python 3.11+, pyproj, shapely, rtree, httpx, zstandard, Home Assistant custom component
 
-The full pipeline is operational with a clean public API: `resolve_asp(lat, lon)` → `ASPResult`. The spatial index covers 26,374 ASP segments (+44% from v1.0) with BFS graph propagation covering 62,455 interior mid-span blocks. ASP coverage: Manhattan 58.2%, Brooklyn 74.1%, Bronx 52.4%, Queens 36.8%.
+The full pipeline is operational with a clean public API: `resolve_asp(lat, lon)` → `ASPResult`. The spatial index covers 26,374 ASP segments with BFS graph propagation covering 62,455 interior mid-span blocks. graph.json compressed with zstandard for HA startup efficiency. Level 4 structured logging (`l4_event=`) enables failure diagnosis from HA logs. `soda_level` attribute in HA sensor shows which fallback level (1-4) resolved the data. Coverage: Manhattan 58.2%, Brooklyn 74.1%, Bronx 52.4%, Queens 36.8%. Remaining coverage gaps confirmed as structural CSCL/SODA cross-street boundary mismatches — not fixable via normalization.
 
 ## Requirements
 
@@ -48,10 +38,12 @@ The full pipeline is operational with a clean public API: `resolve_asp(lat, lon)
 - ✓ COV-01: BFS graph propagation for mid-span ASP coverage (Manhattan ≥50%, Brooklyn ≥50%) — v1.1
 - ✓ COV-02: Queens coverage normalization fix (TPKE/CRES) — v2.0 Phase 15 (20% L1+2; remaining gap is structural CSCL/SODA boundary mismatch)
 - ✓ COV-04: Manhattan coverage normalization fix (AVE A prefix) — v2.0 Phase 15+17 (11.1% L1+2; remaining gap is geometric/alias mismatches)
+- ✓ OBS-01: soda_level in HA sensor extra_state_attributes — v2.0 Phase 13
+- ✓ OBS-02: Structured Level 4 logging (l4_event= INFO entries) — v2.0 Phase 12+18 (vendored sync)
+- ✓ PERF-01: graph.json ≤4 MB at build time (ASP-reachable filter) — v2.0 Phase 14
 
 ### Active
 
-- [ ] COV-03: Migrate HA coordinator to use `resolve_asp()` (currently calls three stages manually)
 - [ ] COV-03: Migrate HA coordinator to use `resolve_asp()` (currently calls three stages manually)
 - [ ] CACHE-01: Cache ASP sign data per block segment in SQLite with weekly refresh
 - [ ] CACHE-02: Configurable caching area (center + radius) for pre-seeding
@@ -77,17 +69,18 @@ The full pipeline is operational with a clean public API: `resolve_asp(lat, lon)
 
 - **Data source**: NYC Open Data `nfid-uabd` via SODA API. ASP signs identifiable by `"SANITATION BROOM SYMBOL"` in `sign_description`.
 - **Coordinate systems**: GPS WGS84 → NY State Plane (EPSG:2263) via pyproj. R-tree spatial index with 26,374 ASP vehicular segments.
-- **Street name normalization**: CSCL format (abbreviated) to SODA format (expanded) with three-level fallback + directional prefix/suffix expansion.
-- **Coverage**: Manhattan 58.2%, Brooklyn 74.1%, Bronx 52.4%, Queens 36.8% (BFS graph propagation active, graph.json 7.9 MB).
+- **Street name normalization**: CSCL format (abbreviated) to SODA format (expanded) with three-level fallback + directional prefix/suffix expansion + lettered avenue prefix expansion (AVE A → AVENUE A).
+- **Coverage**: Manhattan 58.2%, Brooklyn 74.1%, Bronx 52.4%, Queens 36.8% (BFS graph propagation active, graph.json.zst compressed).
+- **Observability**: Structured `l4_event=` logs for Level 4 diagnosis; `soda_level` (1-4) in HA sensor attributes.
 - **Primary area**: Prospect Heights, Brooklyn and surrounding neighborhoods. Works for all NYC.
 - **Integration**: VW CarNet / WeConnect HA integration provides `device_tracker` entity with `latitude`/`longitude` attributes.
-- **Known tech debt**: HA coordinator uses manual three-stage pipeline (not `resolve_asp()`), SODA app_token not in config flow, Queens 36.8% coverage below target.
+- **Known tech debt**: HA coordinator uses manual three-stage pipeline (not `resolve_asp()`), SODA app_token not in config flow, name alias table missing (ADAM CLAYTON POWELL JR vs ADAM C POWELL).
 
 ## Constraints
 
 - **Runtime**: Python 3.11+ — native HA integration language
 - **Platform**: Home Assistant custom component with HACS support
-- **Data freshness**: ASP signs rarely change (~yearly). Live SODA query per resolve (caching deferred to v2).
+- **Data freshness**: ASP signs rarely change (~yearly). Live SODA query per resolve (caching deferred to next milestone).
 - **Network**: SODA API is free, no auth required (optional app_token for rate limits)
 - **Accuracy**: GPS accuracy (~3-5m) sufficient for street-side determination with confidence scoring
 
@@ -110,6 +103,12 @@ The full pipeline is operational with a clean public API: `resolve_asp(lat, lon)
 | BFS graph propagation for mid-span coverage (v1.1) | SODA spans cover multiple CSCL blocks; interior blocks were missing has_asp flags | ✓ Good — near-doubles Manhattan coverage |
 | SODA voided sign filter IS NULL (v1.1) | record_type='Current' was a no-op (all records have that type) | ✓ Good — fixes false negatives |
 | graph.json covers all segments (not ASP-only) (v1.1) | Level 4 must navigate between any adjacent blocks to find covering span | ✓ Good — correct for BFS traversal |
+| Structured l4_event= logging (v2.0) | grep-friendly structured fields over freeform log messages | ✓ Good — enables HA log diagnosis |
+| soda_level as integer 1-4 (v2.0) | Expose fallback level in HA sensor for user observability | ✓ Good — clean ergonomics |
+| zstandard compression for graph.json (v2.0) | 2-hop BFS filter + zstd reduces file size for HA startup | ✓ Good — streaming decompression with .json fallback |
+| Geocoded fixtures from real addresses (v2.0) | GeoSearch v2 API for accurate GPS coordinates vs random offsets | ✓ Good — reliable test data |
+| Accept coverage gaps as structural (v2.0) | CSCL/SODA cross-street boundary mismatches unfixable via normalization | ✓ Good — stops diminishing-returns work |
+| Name alias table deferred (v2.0) | ADAM CLAYTON POWELL JR vs ADAM C POWELL requires new architecture | — Deferred (future milestone) |
 
 ---
-*Last updated: 2026-03-25 after Phase 15 completion*
+*Last updated: 2026-03-30 after v2.0 milestone completion*
