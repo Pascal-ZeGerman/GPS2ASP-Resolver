@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from gps2asp.suspension import HolidayCalendar, SuspensionInfo, _extract_reason, _parse_ics, FALLBACK_2026
@@ -91,7 +92,7 @@ async def test_load_fetches_ics(ics_bytes: bytes) -> None:
 async def test_load_fallback_on_failure() -> None:
     """load() uses FALLBACK_2026 dict when httpx fetch fails."""
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(side_effect=Exception("Network error"))
+    mock_client.get = AsyncMock(side_effect=httpx.TransportError("Network error"))
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
