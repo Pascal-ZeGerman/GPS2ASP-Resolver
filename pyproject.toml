@@ -14,6 +14,7 @@ dependencies = [
     "numpy",
     "httpx>=0.28.0",
     "zstandard>=0.21.0",
+    "icalendar>=6.1.0",
 ]
 
 [project.optional-dependencies]

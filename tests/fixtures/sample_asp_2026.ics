@@ -1,0 +1,39 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//NYC DOT//Test Fixture//EN
+BEGIN:VEVENT
+CLASS:PUBLIC
+DTSTART;VALUE=DATE:20260101
+DTEND;VALUE=DATE:20260102
+SUMMARY;LANGUAGE=en-us:Alternate Side Parking Suspended
+DESCRIPTION:Alternate Side Parking suspended for New Year's Day. Parking meters will not be in effect.
+END:VEVENT
+BEGIN:VEVENT
+CLASS:PUBLIC
+DTSTART;VALUE=DATE:20260119
+DTEND;VALUE=DATE:20260120
+SUMMARY;LANGUAGE=en-us:Alternate Side Parking Suspended
+DESCRIPTION:Alternate Side Parking suspended for Martin Luther King Jr.'s Birthday. Parking meters will not be in effect.
+END:VEVENT
+BEGIN:VEVENT
+CLASS:PUBLIC
+DTSTART;VALUE=DATE:20260525
+DTEND;VALUE=DATE:20260526
+SUMMARY;LANGUAGE=en-us:Alternate Side Parking Suspended
+DESCRIPTION:Alternate Side Parking suspended for Memorial Day. Parking meters will not be in effect.
+END:VEVENT
+BEGIN:VEVENT
+CLASS:PUBLIC
+DTSTART;VALUE=DATE:20260704
+DTEND;VALUE=DATE:20260705
+SUMMARY;LANGUAGE=en-us:Alternate Side Parking Suspended
+DESCRIPTION:Alternate Side Parking suspended for Independence Day. Parking meters will not be in effect.
+END:VEVENT
+BEGIN:VEVENT
+CLASS:PUBLIC
+DTSTART;VALUE=DATE:20261225
+DTEND;VALUE=DATE:20261226
+SUMMARY;LANGUAGE=en-us:Alternate Side Parking Suspended
+DESCRIPTION:Alternate Side Parking suspended for Christmas Day. Parking meters will not be in effect.
+END:VEVENT
+END:VCALENDAR
