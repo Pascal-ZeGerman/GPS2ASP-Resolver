@@ -227,4 +227,6 @@ class HolidayCalendar:
         )
 
 
-__all__ = ["HolidayCalendar", "SuspensionInfo"]
+from .merge import apply_suspension
+
+__all__ = ["HolidayCalendar", "SuspensionInfo", "apply_suspension"]
