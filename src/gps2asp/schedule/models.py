@@ -132,7 +132,14 @@ class ScheduleFound:
         source_signs: Original sign description texts.
         summary: Human-readable schedule summary.
         parse_failures: Signs that failed to parse (raw + reason).
-        suspended: v2 hook for suspension layer. Always False in v1.
+        suspended: v3 suspension layer flag. Set to True when ASP is suspended.
+        suspension_reason: Human-readable reason for suspension (e.g. "MLK Day").
+            None when not suspended.
+        resolution_reason: Machine-readable resolution state. One of:
+            'active' (ASP in effect), 'suspended_holiday' (holiday suspension),
+            'suspended_emergency' (emergency/weather suspension),
+            'no_asp_on_block', 'no_data_for_block', 'unknown'. None when
+            not yet annotated by apply_suspension().
     """
 
     status: Literal["schedule_found"]
@@ -145,8 +152,17 @@ class ScheduleFound:
     source_signs: list[str]
     summary: str
     parse_failures: list[ParseFailure]
-    # v2 hook: suspension layer will set this to True when ASP is suspended
+    # v3 suspension merge fields
     suspended: bool = False
+    suspension_reason: str | None = None
+    resolution_reason: Literal[
+        'active',
+        'suspended_holiday',
+        'suspended_emergency',
+        'no_asp_on_block',
+        'no_data_for_block',
+        'unknown',
+    ] | None = None
 
 
 @dataclass(frozen=True)
@@ -162,7 +178,14 @@ class ASPActiveNow:
         side_of_street: Compass direction side (N, S, E, W).
         source_signs: Original sign description texts.
         summary: Human-readable schedule summary.
-        suspended: v2 hook for suspension layer. Always False in v1.
+        suspended: v3 suspension layer flag. Set to True when ASP is suspended.
+        suspension_reason: Human-readable reason for suspension (e.g. "MLK Day").
+            None when not suspended.
+        resolution_reason: Machine-readable resolution state. One of:
+            'active' (ASP in effect), 'suspended_holiday' (holiday suspension),
+            'suspended_emergency' (emergency/weather suspension),
+            'no_asp_on_block', 'no_data_for_block', 'unknown'. None when
+            not yet annotated by apply_suspension().
     """
 
     status: Literal["asp_active_now"]
@@ -173,8 +196,17 @@ class ASPActiveNow:
     side_of_street: str
     source_signs: list[str]
     summary: str
-    # v2 hook: suspension layer will set this to True when ASP is suspended
+    # v3 suspension merge fields
     suspended: bool = False
+    suspension_reason: str | None = None
+    resolution_reason: Literal[
+        'active',
+        'suspended_holiday',
+        'suspended_emergency',
+        'no_asp_on_block',
+        'no_data_for_block',
+        'unknown',
+    ] | None = None
 
 
 @dataclass(frozen=True)
