@@ -54,7 +54,7 @@ Full details: `.planning/milestones/v2.0-ROADMAP.md`
 ### v3.0 Suspension Handling (Phases 19-23) — IN PROGRESS
 
 - [x] **Phase 19: Suspension Package Foundation** - SuspensionStatus model + NYC holiday calendar; zero network dependencies (completed 2026-03-31)
-- [ ] **Phase 20: Suspension Merge Layer and Pipeline Wiring** - Pure apply_suspension() function + optional suspension parameter on resolve_asp()
+- [x] **Phase 20: Suspension Merge Layer and Pipeline Wiring** - Pure apply_suspension() function + optional suspension parameter on resolve_asp() (completed 2026-04-02)
 - [ ] **Phase 21: Direct 311 API Poller** - httpx-based fetch_suspension_status() for weather/emergency suspensions; fail-open
 - [ ] **Phase 22: HA Coordinator and Sensor Integration** - Wire suspension state into coordinator, sensor attributes, and binary sensor
 - [ ] **Phase 23: ha-nyc311 Bridge** - Optional auto-detection of ha-nyc311 entities; eliminates duplicate API polling
@@ -88,7 +88,7 @@ Plans:
 
 Plans:
 - [x] 20-01-PLAN.md — Suspension merge layer: schema changes (SuspensionInfo.source, ScheduleFound/ASPActiveNow fields) + apply_suspension() TDD
-- [ ] 20-02-PLAN.md — Pipeline wiring: Stage 4 in resolve_asp() + vendored copy sync
+- [x] 20-02-PLAN.md — Pipeline wiring: Stage 4 in resolve_asp() + vendored copy sync
 
 ### Phase 21: Direct 311 API Poller
 **Goal**: Users receive same-day weather and emergency suspension status via the NYC 311 API, with graceful degradation if the API is unreachable
@@ -134,7 +134,7 @@ Plans:
 | 5-11 | v1.1 | 12/12 | Complete | 2026-03-07 |
 | 12-18 | v2.0 | 12/12 | Complete | 2026-03-30 |
 | 19. Suspension Package Foundation | v3.0 | 1/1 | Complete    | 2026-03-31 |
-| 20. Suspension Merge Layer and Pipeline Wiring | v3.0 | 1/2 | In Progress|  |
+| 20. Suspension Merge Layer and Pipeline Wiring | v3.0 | 2/2 | Complete   | 2026-04-02 |
 | 21. Direct 311 API Poller | v3.0 | 0/? | Not started | - |
 | 22. HA Coordinator and Sensor Integration | v3.0 | 0/? | Not started | - |
 | 23. ha-nyc311 Bridge | v3.0 | 0/? | Not started | - |
