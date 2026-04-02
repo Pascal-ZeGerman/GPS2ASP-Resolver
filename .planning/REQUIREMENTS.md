@@ -1,33 +1,40 @@
 # Requirements: GPS2ASP Resolver
 
-**Defined:** 2026-03-13
-**Core Value:** Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]"
+**Defined:** 2026-03-30
+**Core Value:** Tell the user exactly when they need to move their car for ASP — or that they don't need to move because ASP is suspended.
 
-## v2.0 Requirements
+## v3.0 Requirements
 
-Requirements for the v2.0 Full Borough Coverage milestone.
+Requirements for suspension handling. Each maps to roadmap phases.
 
-### Coverage
+### Suspension Calendar
 
-- [x] **COV-02**: User gets ASP result for Queens locations at ≥50% success rate (runtime Level 1/2 SODA query success, verified by GPS spot-check fixture set)
-- [x] **COV-04**: User gets ASP result for Manhattan locations at ≥60% success rate (verified after index rebuild; expected side effect of Queens normalization fix)
+- [x] **SUSP-01**: User can see when ASP is suspended for NYC holidays (~43 annual dates) — holiday calendar loaded from official NYC DOT ICS data, distinguishing legal holidays (all rules suspended) from cleaning-only suspensions
 
-### Observability
+### Emergency Polling
 
-- [x] **OBS-01**: HA sensor `extra_state_attributes` includes `soda_level` integer (1–4) indicating which API fallback level resolved the parking data
-- [x] **OBS-02**: Level 4 fallback emits structured INFO log entries at entry, match (Case A), and both miss cases (Case B: no covering span; Case C: no SODA records)
+- [ ] **SUSP-02**: User receives same-day weather/emergency ASP suspension status via NYC 311 API polling — 60-minute default interval, fail-open on API errors (schedule shown, not suppressed)
 
-### Performance
+### Schedule Merge
 
-- [x] **PERF-01**: `graph.json` file size is ≤4 MB at build time (ASP-reachable segment filter preserving full BFS traversal correctness)
+- [x] **SUSP-03**: User sees a single authoritative answer combining schedule and suspension — "move at X" when active, "suspended, no move needed" when suspended, with `suspension_reason` attribute explaining why
 
-## v2.x Requirements
+### HA Integration Bridge
 
-Deferred from v2.0. Tracked but not in current roadmap.
+- [ ] **SUSP-04**: User with ha-nyc311 installed gets suspension status bridged automatically — no duplicate API calls, auto-detected via HA state machine, graceful fallback to direct 311 polling if not installed
+
+## Future Requirements
+
+Deferred to future milestone. Tracked but not in current roadmap.
+
+### Notifications
+
+- **NOTIF-01**: HA actionable notification with configurable lead time
+- **NOTIF-02**: Automation-ready structured output
 
 ### Coordinator Refactor
 
-- **COV-03**: Migrate HA coordinator to use `resolve_asp()` instead of manually calling three pipeline stages (tech debt; soda_level achievable without migration)
+- **COV-03**: Migrate HA coordinator to use `resolve_asp()` (currently calls three stages manually)
 
 ### Caching
 
@@ -35,31 +42,14 @@ Deferred from v2.0. Tracked but not in current roadmap.
 - **CACHE-02**: Configurable caching area (center + radius) for pre-seeding
 - **CACHE-03**: Fall back to live SODA API on cache miss
 
-## v3+ Requirements
-
-Separate milestones — different data sources and problem scope.
-
-### Suspension Handling
-
-- **SUSP-01**: NYC holiday ASP suspension calendar
-- **SUSP-02**: Weather/emergency suspension polling via 311 API
-- **SUSP-03**: Merge suspension status with schedule for single authoritative answer
-- **SUSP-04**: Bridge with ha-nyc311 integration for suspension binary sensors
-
-### Notifications
-
-- **NOTIF-01**: HA actionable notification with configurable lead time
-- **NOTIF-02**: Automation-ready structured output
-
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| COV-03 coordinator migration | soda_level achievable without it; migration risks behavioral regressions if rushed |
-| BFS tuning as Queens fix | Normalization audit replaces this approach; BFS max_depth already at 30 (validated) |
-| zstandard compression (default) | Only add if ASP segment filtering alone exceeds 4 MB; avoid dependency unless needed |
-| Per-borough normalize_to_soda() branching | Global normalization function; borough-specific flags add complexity; fix table gaps globally |
-| Staten Island coverage | SODA data gap confirmed in v1.1; no actionable fix from code side |
+| nyc311calendar library as dependency | aiohttp conflicts with httpx; alpha quality with breaking changes expected |
+| Meter suspension handling | ASP-only scope; meters have different rules |
+| Suspension prediction/forecasting | Official announcements are the authoritative data source |
+| Multi-day suspension look-ahead | v3.0 covers today/tomorrow only; weekly view deferred |
 
 ## Traceability
 
@@ -67,16 +57,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| OBS-02 | Phase 12, Phase 18 (gap closure) | Complete |
-| OBS-01 | Phase 13 | Complete |
-| PERF-01 | Phase 14 | Complete |
-| COV-02 | Phase 15, Phase 16 | Complete |
-| COV-04 | Phase 15, Phase 17 | Complete |
+| SUSP-01 | Phase 19 | Complete |
+| SUSP-02 | Phase 21 | Pending |
+| SUSP-03 | Phase 20 (library), Phase 22 (HA) | Complete |
+| SUSP-04 | Phase 23 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 5 total
-- Mapped to phases: 5
-- Unmapped: 0 ✓
+- v3.0 requirements: 4 total
+- Mapped to phases: 4
+- Unmapped: 0
+
 ---
-*Requirements defined: 2026-03-13*
-*Last updated: 2026-03-29 after Phase 18 vendored sync complete*
+*Requirements defined: 2026-03-30*
+*Last updated: 2026-03-31 after v3.0 roadmap creation*

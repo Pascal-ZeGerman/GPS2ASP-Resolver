@@ -1,39 +1,40 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: Full Borough Coverage
-status: v2.0 milestone complete
-stopped_at: Completed 18-01-PLAN.md
-last_updated: "2026-03-30T19:45:56.408Z"
+milestone: v3.0
+milestone_name: Suspension Handling
+status: Ready to execute
+stopped_at: Completed 20-01-PLAN.md
+last_updated: "2026-04-02T16:13:10.284Z"
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 12
-  completed_plans: 12
+  total_phases: 5
+  completed_phases: 1
+  total_plans: 3
+  completed_plans: 2
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-13)
+See: .planning/PROJECT.md (updated 2026-03-30)
 
-**Core value:** Tell the user exactly when they need to move their car for ASP — "next time to move is [datetime]"
-**Current focus:** Phase 18 — vendored-signs-sync-docs-cleanup
+**Core value:** Tell the user exactly when they need to move their car for ASP — or that they don't need to move because ASP is suspended.
+**Current focus:** Phase 20 — suspension-merge-layer-and-pipeline-wiring
 
 ## Current Position
 
-Phase: 18
-Plan: Not started
+Phase: 20 (suspension-merge-layer-and-pipeline-wiring) — EXECUTING
+Plan: 2 of 2
 
-## Phase Summary (v2.0)
+## Phase Summary (v3.0)
 
 | Phase | Goal | Requirements | Status |
 |-------|------|--------------|--------|
-| 12. Structured Level 4 Logging | Level 4 behavior visible in HA logs | OBS-02 | Not started |
-| 13. soda_level Propagation | soda_level in HA sensor attributes | OBS-01 | Complete (2/2 plans) |
-| 14. graph.json Size Reduction | graph.json ≤4 MB at build time | PERF-01 | Complete (2/2 plans) |
-| 15. Queens and Manhattan Coverage Fix | Queens ≥50%, Manhattan ≥60% | COV-02, COV-04 | In progress (1/2 plans) |
+| 19. Suspension Package Foundation | Users see holiday suspensions with no network call | SUSP-01 | Not started |
+| 20. Suspension Merge Layer and Pipeline Wiring | Single authoritative answer combining schedule + suspension | SUSP-03 (library) | Not started |
+| 21. Direct 311 API Poller | Weather/emergency suspension via 311 API; fail-open | SUSP-02 | Not started |
+| 22. HA Coordinator and Sensor Integration | Live suspension status in HA sensor and binary sensor | SUSP-03 (HA) | Not started |
+| 23. ha-nyc311 Bridge | Auto-detect ha-nyc311; no duplicate API calls | SUSP-04 | Not started |
 
 ## Performance Metrics
 
@@ -71,10 +72,33 @@ Plan: Not started
 | Phase 17 P02 | 13 | 2 tasks | 3 files |
 | Phase 15 P02 | 152 | 3 tasks | 2 files |
 | Phase 18 P01 | 5 | 2 tasks | 2 files |
+| Phase 19 P01 | 7 | 3 tasks | 6 files |
+| Phase 20-suspension-merge-layer-and-pipeline-wiring P01 | 15 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
-### Key Decisions (v2.0 Roadmap)
+### Key Decisions (v3.0 Roadmap)
+
+- SUSP-03 split across Phase 20 (pure library: apply_suspension(), merge rules, schema changes) and Phase 22 (HA layer: coordinator, sensor, binary_sensor) — merge layer must be stable before HA wiring
+- Phase 21 (311 poller) depends on Phase 19 (SuspensionStatus model) but not on Phase 20 (merge layer) — can be planned in parallel with Phase 20 if desired; Phase 22 needs both
+- Phase 23 (ha-nyc311 bridge) is optional optimization — adds no correctness, only eliminates duplicate API polling; can be deferred to v3.1 without user-visible loss
+- nyc311calendar PyPI package must NOT be added — aiohttp conflict + alpha quality; call 311 API directly via existing httpx client
+- SuspensionStatus must use typed enum/Literal source field, never a raw bool — prevents NOT_IN_EFFECT conflation with SUSPENDED (research Pitfall 2)
+- Lazy merge in sensor native_value property, not coordinator — prevents race condition between GPS events and suspension poll (research Pitfall 3)
+- Date derivation must always use datetime.now(NYC_TZ).date() — never date.today() which returns UTC on HA servers (research Pitfall 4)
+- Vendored copy sync (custom_components/asp_parking/gps2asp/suspension/) must happen alongside Phases 19-21; do not defer
+- suspended: bool = False hooks already present on ScheduleFound and ASPActiveNow from v2.0 — confirmed by research
+
+### Key Architecture Decisions (from research)
+
+- Suspension is a post-pipeline annotation (Stage 4), not a replacement for any pipeline stage
+- apply_suspension() is a pure function: ScheduleFound/ASPActiveNow + SuspensionStatus -> ScheduleResult
+- Coordinator holds schedule_result and suspension_state as separate fields — merged lazily at sensor read time
+- Three new coordinator data flow paths: suspension timer → re-apply to cached schedule; midnight reset → fetch new day; ha-nyc311 state change → immediate re-apply
+- resolution_reason attribute distinguishes all six meaningful states: suspended_holiday, suspended_emergency, no_asp_on_block, no_data_for_block, active, unknown
+- 311 API endpoint: https://api.nyc.gov/public/api/GetCalendar; auth header: Ocp-Apim-Subscription-Key; four status strings: IN_EFFECT, NOT_IN_EFFECT, SUSPENDED, NO_INFORMATION
+
+### Key Decisions (v2.0 Roadmap — retained for context)
 
 - Phase 12 before Phase 15: structured logs are the diagnostic tool for identifying Queens failure point
 - Phase 13 and Phase 12 are independent (different files); can be planned in parallel if desired
@@ -84,134 +108,22 @@ Plan: Not started
 - zstandard compression is conditional: add only if ASP + 1-hop neighbor filter alone exceeds 4 MB
 - Coverage target is runtime Level 1/2 success rate (GPS spot-check fixtures), not build_info.json segment counts
 
-### Pending Todos (from v1.1)
+### Pending Todos (from v1.1 and v2.0)
 
-- Add env config for caching area range (v2.x CACHE-02)
-- Parse non-ASP parking restrictions in future phase (v3+)
-- Add HA diagnostics endpoint to asp_parking integration (v2.x)
-- Schedule monthly spatial index rebuild in HA integration
-- ~~Write scripts/audit_queens_coverage.py to drive Phase 15 diagnosis~~ (done in 15-01)
-
-### Completed in Phase 5
-
-- Fixed ScheduleFound.next_window type mismatch (BUG-02) — widened to CleaningWindow | None
-- Fixed venv pip wrapper shebangs stale after project directory rename (BUG-01)
-
-### Completed in Phase 6
-
-- Fixed PROSPECT PL case: 9.2ft from centerline on 30ft street now returns confidence=0.6133 (>= 0.6)
-- Replaced absolute 10ft near-centerline guard with width-relative threshold (parking_lane_fraction * width / 2)
-- Added _NYC_DEFAULT_WIDTHS dict for rw_type fallback when CSCL streetwidth is missing
-- Added resolve_effective_width() public helper in confidence.py
-- Added parking_lane_fraction=0.33 parameter to resolve(), resolve_segment(), and compute_confidence()
-- Added street_width_ft field to ResolutionDebugInfo (post-fallback effective width)
-- Enriched AmbiguousResolutionError messages with street_width, perp_dist, endpoint_dist
-- Fixed NaN streetwidth in build_index.py (now stores 0.0 to trigger rw_type fallback)
-
-### Completed in Phase 7
-
-- Added soda_level: int = 1 field to SignRetrievalSuccess (all three return sites set explicitly)
-- Created src/gps2asp/api_models.py with ASPResult (3 fields) and ASPDebugResult (13 fields)
-- Wrote 8 failing async tests in tests/test_resolve_asp.py (TDD RED — Plan 07-01)
-- Implemented resolve_asp() with @overload stubs wiring all three pipeline stages (Plan 07-02)
-- AmbiguousResolutionError caught internally; OutsideNYCError/NoSegmentFoundError propagate
-- Created examples/run_pipeline.py CLI live demo (PROSPECT PL default coordinates)
-- All 8 resolve_asp tests pass GREEN; full suite 221 passed
-
-### Decisions Made
-
-- _classify_ambiguity() retains 10ft absolute heuristic for debug log labels only (not confidence algorithm)
-- _NYC_DEFAULT_WIDTHS is a code constant, not runtime-configurable (per user decision)
-- Fallback width is logged at DEBUG level only, not surfaced in error messages
-- soda_level: int = 1 default on SignRetrievalSuccess preserves backwards compatibility
-- Test mocking targets gps2asp.* namespace for Plan 07-02's implementation
-- ASPDebugResult has exactly 13 fields per CONTEXT.md — parking_lane_fraction not exposed
-- resolve_segment(x, y, ...) used instead of resolve(lat, lon) to avoid double coordinate conversion
-- soda_level=0 in debug result when sign_result is not SignRetrievalSuccess
-- [Phase 08]: resolve_asp() moved to pipeline.py; __init__.py is a 22-line thin re-export
-- [Phase 08]: ASPDebugResult gains from_resolution() and from_error() classmethods
-- [Phase 08]: Build tools moved from src/gps2asp/build/ to scripts/ at project root
-- [Phase 08-02]: compute_confidence() accepts effective_width_ft (pre-resolved by caller, no rw_type param)
-- [Phase 08-02]: _try_query() accepts optional prefetched_records for Level 3 broad-query+client-filter pattern
-- [Phase 08-02]: resolve_segment() params renamed input_lat/input_lon (removed underscore prefix)
-- [Phase 08-03]: Per-file named constants for magic numbers (not shared constants.py) — keeps modules independently testable and self-contained
-- [Phase 08-03]: _NEAR_INTERSECTION_THRESHOLD_FT duplicated in resolver/__init__.py and confidence.py with comment noting they must match — acceptable for two-file duplication
-- [Phase 08-03]: Double normalization in _cross_streets_match() retained as-is — clarified by comments, no behavior change needed
-- [Phase 09-01]: _normalize_street_name() delegates to normalize_to_soda() — eliminates duplication and ensures build-time parity with runtime sign queries
-- [Phase 09-01]: Dead-end sentinel changed from "DEAD END" to "" (empty string) — SODA API uses empty strings for missing cross streets
-- [Phase 09-01]: SODA filter changed to sign_design_voided_on_date IS NULL — record_type='Current' was a no-op (all records have that type)
-- [Quick-4]: normalize_to_soda() directional prefix expansion widened from digit-only to any continuation — safe because startswith('abbrev + space') guard already prevents false positives
-- [Quick-4]: Directional suffix expansion added as final step so W END AVE -> WEST END AVENUE (not WEST END AVE)
-- [Quick-4]: Internal whitespace collapsed to single space in normalize_to_soda() to handle CSCL/SODA spacing inconsistencies
-- [Quick-4]: Remaining Manhattan coverage gap (29.5% vs 40% target) is due to multi-block SODA spans vs single-block CSCL granularity — deferred to Phase 11
-- [Phase 09-rebuild-the-spatial-index]: Remaining Manhattan coverage gap (29.5% vs 40% target) deferred to Phase 11 — multi-block SODA spans vs single-block CSCL granularity
-- [Phase 09-rebuild-the-spatial-index]: Staten Island 0.0% coverage is a SODA data gap — deferred to Phase 11 triage
-- [Phase 11-01]: _compute_cross_streets() accepts optional node_lookup to avoid double computation when caller also needs it for graph construction
-- [Phase 11-01]: graph.json written for all segments with adjacency (not filtered to ASP-only) — Level 4 can navigate between any adjacent blocks
-- [Phase 11-01]: BFS discards traversal if end_pids never reached — prevents false-positive has_asp flags (Pitfall 4)
-- [Phase 11-01]: max_depth=30 for BFS prevents runaway on long avenues; propagation_stats added to build_info.json for observability
-- [Phase Phase 11]: span_distance BFS returns 0 for adjacent spans sharing an endpoint cross street (correct behavior -- those segments cover the block)
-- [Phase Phase 11]: Level 4 only fires when any_soda_results is False (no records from Levels 1-3) -- not when records exist but have no broom signs
-- [Phase 11-03]: Manhattan 58.2% accepted as close enough to 60-80% target (was 29.5% — near-double improvement)
-- [Phase 11-03]: Brooklyn 74.1% accepted above 50-65% ceiling — user approved, no action required
-- [Phase 11-03]: 6 pre-existing socket-blocked integration tests not counted as regressions from this phase
-- [Phase 12-01]: l4_entry fires before on_variants loop (once per Level 4 activation, not once per variant)
-- [Phase 12-01]: l4_match replaces old unstructured 'Level 4 matched' log — no duplicate logs
-- [Phase 12-01]: l4_no_records omits span_candidates to distinguish empty-SODA case (C) from unreachable-span case (B)
-- [Phase 12-01]: Tests use _CapturingHandler (custom logging.Handler) instead of caplog fixture for async test compatibility
-- [Quick-260316-cvs]: _format_move_time() uses %-I:%M %p strftime (no-leading-zero 12h, Linux) with 12h urgency threshold
-- [Quick-260316-cvs]: ISO datetime attributes (next_window_start/end) deliberately unchanged — raw ISO retained for programmatic/automation use
-- [Quick-260316-cvs]: urgency key absent when next_window is None — avoids misleading urgency with no concrete move datetime
-- [Phase 13-01]: TestSodaLevelAttribute tests pass immediately (test-local mirror, not production code) — TDD contract verified by Plan 02 integration
-- [Phase 13-01]: TestASPResultSodaLevel tests intentionally RED (AttributeError on ASPResult.soda_level) — Plan 02 makes them GREEN
-- [Phase 13]: NoMatchFound test fixture corrected: removed invalid kwargs that NoMatchFound does not accept
-- [Phase 13]: Generic except Exception in coordinator retains last soda_level (same pattern as sign_count)
-- [Phase 14-01]: Filter function defined as reference impl in test file since scripts/ is not importable; identical copy in build_index.py
-- [Phase 14-01]: 2-hop BFS from ASP seeds: hop0=seeds, hop1=neighbors of seeds, hop2=neighbors of hop1; compact JSON separators before zstd compression
-- [Phase 14]: zstandard stream_reader with TextIOWrapper for memory-efficient decompression of graph.json.zst
-- [Phase 15-01]: Coverage fixtures use 'description' key (not 'name') since they are spot-check locations without expected_on_street/side
-- [Phase 15-01]: Audit script catches all exceptions including OutsideNYCError/NoSegmentFoundError and records as errors with soda_level=0
-- [Phase 16]: GeoSearch v2 API used for geocoding (v1 returns HTTP 410 Gone)
-- [Phase 16]: No new suffix expansions needed -- all Queens L3+ failures are geometric mismatches or SODA data gaps
-- [Phase 16]: Queens Level 1+2 at 20% (5/25) -- COV-02 target (50%) not met; root cause is CSCL/SODA cross-street boundary disagreements, not abbreviation gaps
-- [Phase 16]: Queens L1+2 at 20% (5/25) approved -- all fixable normalization gaps addressed, remaining failures are CSCL/SODA cross-street boundary disagreements
-- [Phase 17]: [Phase 17-01]: Manhattan L1+2 baseline at 5.6% (1/18) with geocoded fixtures -- 3 fixable normalization patterns identified for Plan 02
-- [Phase 17]: [Phase 17-02]: Lettered avenue prefix expansion (AVE A -> AVENUE A) improved Manhattan L1+2 from 5.6% to 11.1% (2/18)
-- [Phase 17]: [Phase 17-02]: Manhattan L1+2 at 11.1% accepted pragmatically -- remaining failures are geometric mismatches, name alias mismatches (ADAM CLAYTON POWELL JR vs ADAM C POWELL), or SODA data gaps
-- [Phase 17]: [Phase 17-02]: Name alias table deferred as architectural scope -- not a suffix expansion fix
-- [Phase 15]: Queens L1+2 at 20% accepted -- all fixable normalization gaps addressed, remaining failures are CSCL/SODA cross-street boundary disagreements
-- [Phase 15]: Manhattan L1+2 at 11.1% accepted -- remaining failures are geometric mismatches, name alias mismatches, or SODA data gaps
-- [Phase 15]: COV-02/COV-04 numerical targets not met but root cause confirmed as structural CSCL/SODA boundary mismatch, not normalization -- requirements marked complete
-- [Phase 18]: COV-02/COV-04 phase mappings and OBS-01 status already correct in REQUIREMENTS.md -- only OBS-02 status and gap closure note needed changes
-
-### Roadmap Evolution
-
-- Phase 5 added: Bug Fixes and Tech Debt (surfaced 2026-02-27 E2E test)
-- Phase 6 added: Improve Confidence Scoring for NYC Street Widths (confidence=0.0 on 9.2ft centerline offset)
-- Phase 7 added: Pipeline Stabilization — importable function with debug flag
-- Phase 8 added: Refactor architecture and streamline pipeline
-- Phase 9 added: Rebuild the spatial index
-- Phase 10 added: Update documentation
-- Phase 11 added: Improve ASP coverage through mid-span coverage
-- Phases 12-15 added: v2.0 Full Borough Coverage roadmap (2026-03-13)
-
-### Quick Tasks Completed
-
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 1 | Fix gps2asp module not installed so pipeline script runs | 2026-02-28 | f835dc5 | [1-fix-gps2asp-module-not-installed-so-pipe](./quick/1-fix-gps2asp-module-not-installed-so-pipe/) |
-| 2 | Lower confidence threshold default from 0.60 to 0.33 for testing | 2026-02-28 | 8d655c0 | [2-lower-confidence-threshold-default-to-0-](./quick/2-lower-confidence-threshold-default-to-0-/) |
-| 3 | Fix five code review issues: CLAUDE.md stale, missing future-import, wrong comments, dead fields | 2026-03-01 | 77f3ba4 | [3-fix-5-code-review-issues-claude-md-stale](./quick/3-fix-5-code-review-issues-claude-md-stale/) |
-| 4 | Fix named directional normalization: expand W BROADWAY/CENTRAL PARK W, collapse whitespace, rebuild index | 2026-03-01 | 094a9f5 | [4-fix-named-directional-normalization-in-n](./quick/4-fix-named-directional-normalization-in-n/) |
-| 260316-cvs | Format datetime string in HA sensor: human-friendly native_value + urgency attribute | 2026-03-16 | 88f580d | [260316-cvs-format-datetime-string-in-ha-sensor-for-](./quick/260316-cvs-format-datetime-string-in-ha-sensor-for-/) |
+- Add env config for caching area range (v2.x CACHE-02) — deferred
+- Parse non-ASP parking restrictions in future phase (v3+) — deferred
+- Add HA diagnostics endpoint to asp_parking integration (v2.x) — deferred
+- Schedule monthly spatial index rebuild in HA integration — deferred
+- COV-03: Migrate HA coordinator to use resolve_asp() — deferred past v3.0
 
 ### Blockers/Concerns
 
-- nyc311calendar is alpha -- relevant for v2 suspension handling
-- Queens failure point identity unknown — will be diagnosed in Phase 15 using Phase 12 logs
+- 311 API response field names: exact JSON keys should be confirmed by reading nyc311calendar services.py before Phase 21 implementation (10-minute code read; not blocking roadmap)
+- NYC DOT ICS URL exact path: inferred from PDF URL pattern; not validated by live download; hardcoded-dates fallback available
+- NYC 311 API rate limits: not published; 60-minute default is a conservative assumption consistent with aspnyc.info's confirmed operation
 
 ## Session Continuity
 
-Last session: 2026-03-29T22:15:01.591Z
-Stopped at: Completed 18-01-PLAN.md
+Last session: 2026-04-02T16:13:10.278Z
+Stopped at: Completed 20-01-PLAN.md
 Resume file: None
