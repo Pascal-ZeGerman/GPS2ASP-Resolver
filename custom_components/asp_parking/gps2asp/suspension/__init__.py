@@ -12,6 +12,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -30,6 +31,7 @@ class SuspensionInfo:
 
     is_suspended: bool
     reason: str | None
+    source: Literal['holiday', 'emergency', 'none'] = 'none'
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +223,10 @@ class HolidayCalendar:
         return SuspensionInfo(
             is_suspended=reason is not None,
             reason=reason,
+            source='holiday' if reason is not None else 'none',
         )
 
 
-__all__ = ["HolidayCalendar", "SuspensionInfo"]
+from .merge import apply_suspension
+
+__all__ = ["HolidayCalendar", "SuspensionInfo", "apply_suspension"]
