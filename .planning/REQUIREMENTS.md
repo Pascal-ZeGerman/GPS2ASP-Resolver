@@ -13,7 +13,7 @@ Requirements for suspension handling. Each maps to roadmap phases.
 
 ### Emergency Polling
 
-- [ ] **SUSP-02**: User receives same-day weather/emergency ASP suspension status via NYC 311 API polling — 60-minute default interval, fail-open on API errors (schedule shown, not suppressed)
+- [x] **SUSP-02**: User receives same-day weather/emergency ASP suspension status via NYC 311 API polling — 60-minute default interval, fail-open on API errors (schedule shown, not suppressed)
 
 ### Schedule Merge
 
@@ -58,7 +58,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | SUSP-01 | Phase 19 | Complete |
-| SUSP-02 | Phase 21 | Pending |
+| SUSP-02 | Phase 21 | Complete |
 | SUSP-03 | Phase 20 (library), Phase 22 (HA) | Complete |
 | SUSP-04 | Phase 23 | Pending |
 

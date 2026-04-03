@@ -102,7 +102,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 21-01-PLAN.md — NYC311Client TDD: tests/test_poller.py (RED) + src/gps2asp/suspension/poller.py (GREEN)
+- [x] 21-01-PLAN.md — NYC311Client TDD: tests/test_poller.py (RED) + src/gps2asp/suspension/poller.py (GREEN)
 - [ ] 21-02-PLAN.md — Export wiring + vendored sync: suspension/__init__.py + custom_components copy
 
 ### Phase 22: HA Coordinator and Sensor Integration
@@ -139,6 +139,6 @@ Plans:
 | 12-18 | v2.0 | 12/12 | Complete | 2026-03-30 |
 | 19. Suspension Package Foundation | v3.0 | 1/1 | Complete    | 2026-03-31 |
 | 20. Suspension Merge Layer and Pipeline Wiring | v3.0 | 2/2 | Complete    | 2026-04-02 |
-| 21. Direct 311 API Poller | v3.0 | 0/2 | Not started | - |
+| 21. Direct 311 API Poller | v3.0 | 1/2 | In Progress|  |
 | 22. HA Coordinator and Sensor Integration | v3.0 | 0/? | Not started | - |
 | 23. ha-nyc311 Bridge | v3.0 | 0/? | Not started | - |

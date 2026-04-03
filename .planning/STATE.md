@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Suspension Handling
-status: Ready to plan
-stopped_at: Completed 20-02-PLAN.md
-last_updated: "2026-04-02T16:29:42.528Z"
+status: Ready to execute
+stopped_at: Completed 21-01-PLAN.md
+last_updated: "2026-04-03T20:27:56.374Z"
 progress:
   total_phases: 5
   completed_phases: 2
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 5
+  completed_plans: 4
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-30)
 
 **Core value:** Tell the user exactly when they need to move their car for ASP — or that they don't need to move because ASP is suspended.
-**Current focus:** Phase 20 — suspension-merge-layer-and-pipeline-wiring
+**Current focus:** Phase 21 — direct-311-api-poller
 
 ## Current Position
 
-Phase: 21
-Plan: Not started
+Phase: 21 (direct-311-api-poller) — EXECUTING
+Plan: 2 of 2
 
 ## Phase Summary (v3.0)
 
@@ -75,6 +75,7 @@ Plan: Not started
 | Phase 19 P01 | 7 | 3 tasks | 6 files |
 | Phase 20-suspension-merge-layer-and-pipeline-wiring P01 | 15 | 2 tasks | 4 files |
 | Phase 20 P02 | 10 | 2 tasks | 4 files |
+| Phase 21 P01 | 4 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -125,6 +126,6 @@ Plan: Not started
 
 ## Session Continuity
 
-Last session: 2026-04-02T16:22:27.147Z
-Stopped at: Completed 20-02-PLAN.md
+Last session: 2026-04-03T20:27:56.360Z
+Stopped at: Completed 21-01-PLAN.md
 Resume file: None
