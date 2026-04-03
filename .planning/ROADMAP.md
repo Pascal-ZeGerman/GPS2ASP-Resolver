@@ -99,7 +99,11 @@ Plans:
   2. User's sensor continues showing the schedule (not suppressed) when the 311 API returns a network error — system fails open
   3. User who omits the API key from config still gets holiday-calendar suspensions; only weather/emergency polling is skipped
   4. User who provides an invalid API key sees a config error surfaced, not a silent fail-open
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 21-01-PLAN.md — NYC311Client TDD: tests/test_poller.py (RED) + src/gps2asp/suspension/poller.py (GREEN)
+- [ ] 21-02-PLAN.md — Export wiring + vendored sync: suspension/__init__.py + custom_components copy
 
 ### Phase 22: HA Coordinator and Sensor Integration
 **Goal**: Users see suspension status as a live HA sensor attribute — "Suspended" state text, suspension_reason, and is_on=False during active suspensions
@@ -134,7 +138,7 @@ Plans:
 | 5-11 | v1.1 | 12/12 | Complete | 2026-03-07 |
 | 12-18 | v2.0 | 12/12 | Complete | 2026-03-30 |
 | 19. Suspension Package Foundation | v3.0 | 1/1 | Complete    | 2026-03-31 |
-| 20. Suspension Merge Layer and Pipeline Wiring | v3.0 | 2/2 | Complete   | 2026-04-02 |
-| 21. Direct 311 API Poller | v3.0 | 0/? | Not started | - |
+| 20. Suspension Merge Layer and Pipeline Wiring | v3.0 | 2/2 | Complete    | 2026-04-02 |
+| 21. Direct 311 API Poller | v3.0 | 0/2 | Not started | - |
 | 22. HA Coordinator and Sensor Integration | v3.0 | 0/? | Not started | - |
 | 23. ha-nyc311 Bridge | v3.0 | 0/? | Not started | - |
