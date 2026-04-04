@@ -21,3 +21,7 @@ DEFAULT_STALE_TIMEOUT = 8  # hours before marking sensor unavailable
 
 # Internal tuning
 GPS_DEBOUNCE_COOLDOWN = 5.0  # seconds (debounce rapid GPS jitter)
+
+# Suspension
+CONF_NYC311_API_KEY = "nyc311_api_key"
+DEFAULT_SUSPENSION_INTERVAL = 60  # minutes between suspension polls

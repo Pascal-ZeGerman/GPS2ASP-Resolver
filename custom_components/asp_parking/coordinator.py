@@ -31,6 +31,8 @@ from homeassistant.helpers.location import has_location
 from homeassistant.util import dt as dt_util
 from homeassistant.util import location as location_util
 
+from zoneinfo import ZoneInfo
+
 from .gps2asp.resolver import resolve
 from .gps2asp.resolver.exceptions import (
     AmbiguousResolutionError,
@@ -45,15 +47,19 @@ from .gps2asp.schedule.models import (
 )
 from .gps2asp.signs import retrieve_signs
 from .gps2asp.signs.models import SignRetrievalSuccess
+from .gps2asp.suspension import HolidayCalendar, NYC311Client, SuspensionInfo
+from .gps2asp.suspension.poller import NYC311AuthError
 
 from .const import (
     CONF_DEVICE_TRACKER,
     CONF_MOVEMENT_THRESHOLD,
+    CONF_NYC311_API_KEY,
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
     DEFAULT_MOVEMENT_THRESHOLD,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STALE_TIMEOUT,
+    DEFAULT_SUSPENSION_INTERVAL,
     DOMAIN,
     GPS_DEBOUNCE_COOLDOWN,
 )
@@ -62,6 +68,8 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
 
 logger = logging.getLogger(__name__)
+
+NYC_TZ = ZoneInfo("America/New_York")
 
 
 @dataclass
@@ -99,6 +107,9 @@ class ASPParkingData:
     sign_count: int = 0
     parse_failures: int = 0
     soda_level: int = 0  # which SODA fallback level matched (1–4); 0 if not resolved
+    suspension_state: SuspensionInfo = field(
+        default_factory=lambda: SuspensionInfo(is_suspended=False, reason=None, source='none')
+    )
 
 
 class ASPParkingCoordinator:
@@ -120,6 +131,10 @@ class ASPParkingCoordinator:
         self.hass = hass
         self.entry = entry
         self.data = ASPParkingData()
+
+        # Suspension state
+        self._holiday_calendar: HolidayCalendar | None = None
+        self._nyc311_client: NYC311Client | None = None
 
         # Cleanup callables for event subscriptions
         self._listeners: list[CALLBACK_TYPE] = []
@@ -193,6 +208,27 @@ class ASPParkingCoordinator:
             timedelta(hours=self.refresh_interval),
         )
         self._listeners.append(unsub_interval)
+
+        # --- Suspension startup ---
+        self._holiday_calendar = HolidayCalendar()
+        await self._holiday_calendar.load()
+
+        today = datetime.now(NYC_TZ).date()
+        holiday_info = self._holiday_calendar.is_suspended(today)
+        if holiday_info.is_suspended:
+            self.data.suspension_state = holiday_info
+
+        api_key = self.entry.options.get(CONF_NYC311_API_KEY)
+        if api_key:
+            self._nyc311_client = NYC311Client(api_key=api_key)
+            self.hass.async_create_task(self._async_initial_311_fetch())
+
+        unsub_suspension = async_track_time_interval(
+            self.hass,
+            self._async_suspension_poll,
+            timedelta(minutes=DEFAULT_SUSPENSION_INTERVAL),
+        )
+        self._listeners.append(unsub_suspension)
 
         logger.info(
             "ASP Parking coordinator started: tracking %s, "
@@ -366,6 +402,43 @@ class ASPParkingCoordinator:
                 "Pipeline error at (%.4f, %.4f): %s", lat, lon, err
             )
 
+        self._async_notify_entities()
+
+    # ------------------------------------------------------------------
+    # Suspension polling
+    # ------------------------------------------------------------------
+
+    async def _async_initial_311_fetch(self) -> None:
+        """Startup 311 API fetch. Fail open on any error."""
+        try:
+            info = await self._nyc311_client.fetch_status()
+            if info.is_suspended:
+                self.data.suspension_state = info
+                self._async_notify_entities()
+        except NYC311AuthError:
+            logger.warning("NYC 311 API auth error during startup, failing open")
+        except Exception:  # noqa: BLE001
+            logger.warning("NYC 311 startup fetch failed, failing open")
+
+    @callback
+    def _async_suspension_poll(self, now: datetime) -> None:
+        """Periodic suspension status check."""
+        self.hass.async_create_task(self._async_update_suspension())
+
+    async def _async_update_suspension(self) -> None:
+        """Fetch suspension status from all sources and update data."""
+        today = datetime.now(NYC_TZ).date()
+
+        info = self._holiday_calendar.is_suspended(today)
+
+        if not info.is_suspended and self._nyc311_client is not None:
+            try:
+                info = await self._nyc311_client.fetch_status()
+            except Exception:  # noqa: BLE001
+                logger.warning("311 suspension poll failed, failing open")
+                info = SuspensionInfo(is_suspended=False, reason=None, source='none')
+
+        self.data.suspension_state = info
         self._async_notify_entities()
 
     # ------------------------------------------------------------------

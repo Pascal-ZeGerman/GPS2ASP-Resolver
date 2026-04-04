@@ -32,6 +32,7 @@ from .gps2asp.schedule.models import (
     NoMatchSchedule,
     ScheduleFound,
 )
+from .gps2asp.suspension import apply_suspension
 
 from .const import CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT, DOMAIN
 from .coordinator import ASPParkingCoordinator
@@ -124,7 +125,12 @@ class ASPNextMoveTimeSensor(SensorEntity):
         if data.schedule_result is None:
             return None
 
-        schedule = data.schedule_result
+        # Lazy merge suspension at read time
+        schedule = apply_suspension(data.schedule_result, data.suspension_state)
+
+        # Suspension branch (before normal schedule branches)
+        if isinstance(schedule, (ScheduleFound, ASPActiveNow)) and schedule.suspended:
+            return "Suspended"
 
         if isinstance(schedule, ScheduleFound):
             if schedule.next_window is None:
@@ -177,6 +183,10 @@ class ASPNextMoveTimeSensor(SensorEntity):
         data = self._coordinator.data
         attrs: dict[str, str | float | int | list | None] = {}
         schedule = data.schedule_result
+
+        # Lazy merge suspension at read time
+        if schedule is not None:
+            schedule = apply_suspension(schedule, data.suspension_state)
 
         # --- Schedule group ---
         if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
@@ -240,6 +250,11 @@ class ASPNextMoveTimeSensor(SensorEntity):
             attrs["current_window_end"] = (
                 schedule.active_window.end_datetime.isoformat()
             )
+
+        # --- Suspension group ---
+        if isinstance(schedule, (ScheduleFound, ASPActiveNow)) and schedule.suspended:
+            attrs["suspension_reason"] = schedule.suspension_reason
+            attrs["resolution_reason"] = schedule.resolution_reason
 
         # --- Metadata group ---
         attrs["last_resolved"] = (

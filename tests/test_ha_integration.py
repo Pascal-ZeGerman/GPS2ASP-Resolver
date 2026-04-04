@@ -48,6 +48,7 @@ from gps2asp.schedule.models import (
     TimeWindow,
     WeeklySchedule,
 )
+from gps2asp.suspension import SuspensionInfo, apply_suspension
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +73,9 @@ class ASPParkingData:
     sign_count: int = 0
     parse_failures: int = 0
     soda_level: int = 0  # mirrors coordinator.py ASPParkingData
+    suspension_state: SuspensionInfo = field(
+        default_factory=lambda: SuspensionInfo(is_suspended=False, reason=None, source='none')
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +92,13 @@ def sensor_native_value(data: ASPParkingData) -> str | None:
     if data.schedule_result is None:
         return None
 
-    schedule = data.schedule_result
+    # Lazy merge suspension at read time
+    schedule = apply_suspension(data.schedule_result, data.suspension_state)
+
+    # Suspension branch (before normal schedule branches)
+    if isinstance(schedule, (ScheduleFound, ASPActiveNow)) and schedule.suspended:
+        return "Suspended"
+
     if isinstance(schedule, ScheduleFound):
         if schedule.next_window is None:
             return None  # find_next_window returned None (no windows in schedule)
@@ -106,7 +116,11 @@ def sensor_native_value(data: ASPParkingData) -> str | None:
 
 def binary_sensor_is_on(data: ASPParkingData) -> bool:
     """Replicate ASPActiveNowBinarySensor.is_on logic."""
-    return isinstance(data.schedule_result, ASPActiveNow)
+    schedule = data.schedule_result
+    if not isinstance(schedule, ASPActiveNow):
+        return False
+    merged = apply_suspension(schedule, data.suspension_state)
+    return isinstance(merged, ASPActiveNow) and not merged.suspended
 
 
 def sensor_available(data: ASPParkingData, stale_timeout_hours: int = 8) -> bool:
@@ -121,6 +135,10 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
     """Replicate ASPNextMoveTimeSensor.extra_state_attributes logic."""
     attrs: dict = {}
     schedule = data.schedule_result
+
+    # Lazy merge suspension at read time
+    if schedule is not None:
+        schedule = apply_suspension(schedule, data.suspension_state)
 
     if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
         if isinstance(schedule, ScheduleFound):
@@ -171,6 +189,10 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
         attrs["current_window_end"] = (
             schedule.active_window.end_datetime.isoformat()
         )
+
+    if isinstance(schedule, (ScheduleFound, ASPActiveNow)) and schedule.suspended:
+        attrs["suspension_reason"] = schedule.suspension_reason
+        attrs["resolution_reason"] = schedule.resolution_reason
 
     attrs["last_resolved"] = (
         data.last_resolved.isoformat() if data.last_resolved else None
@@ -862,3 +884,108 @@ class TestSodaLevelAttribute:
         data = ASPParkingData(schedule_result=_make_schedule_found(), soda_level=4)
         attrs = sensor_extra_attributes(data)
         assert attrs["soda_level"] == 4
+
+
+# ===========================================================================
+# Group 8: Suspension sensor state (SC1)
+# ===========================================================================
+
+@pytest.mark.ha_integration
+class TestSuspensionSensorState:
+    """Test sensor native_value returns 'Suspended' when suspension is active."""
+
+    def test_suspended_holiday(self) -> None:
+        """SC1: ScheduleFound + holiday suspension -> 'Suspended'."""
+        data = ASPParkingData(
+            schedule_result=_make_schedule_found(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Martin Luther King Jr.'s Birthday", source='holiday'
+            ),
+        )
+        assert sensor_native_value(data) == "Suspended"
+
+    def test_suspended_emergency(self) -> None:
+        """Emergency suspension -> 'Suspended'."""
+        data = ASPParkingData(
+            schedule_result=_make_schedule_found(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Snow Day", source='emergency'
+            ),
+        )
+        assert sensor_native_value(data) == "Suspended"
+
+    def test_not_suspended_normal_schedule(self) -> None:
+        """No suspension -> normal move time (not 'Suspended')."""
+        data = ASPParkingData(schedule_result=_make_schedule_found())
+        state = sensor_native_value(data)
+        assert state is not None
+        assert state != "Suspended"
+
+    def test_suspension_attrs_present(self) -> None:
+        """SC1: suspension_reason and resolution_reason in attrs when suspended."""
+        data = ASPParkingData(
+            schedule_result=_make_schedule_found(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Memorial Day", source='holiday'
+            ),
+        )
+        attrs = sensor_extra_attributes(data)
+        assert attrs["suspension_reason"] == "Memorial Day"
+        assert attrs["resolution_reason"] == "suspended_holiday"
+
+    def test_suspension_attrs_absent_when_not_suspended(self) -> None:
+        """No suspension_reason/resolution_reason when not suspended."""
+        data = ASPParkingData(schedule_result=_make_schedule_found())
+        attrs = sensor_extra_attributes(data)
+        assert "suspension_reason" not in attrs
+        assert "resolution_reason" not in attrs
+
+    def test_existing_schedule_attrs_retained_when_suspended(self) -> None:
+        """Per D-05: existing schedule attrs retained during suspension."""
+        data = ASPParkingData(
+            schedule_result=_make_schedule_found(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Christmas Day", source='holiday'
+            ),
+        )
+        attrs = sensor_extra_attributes(data)
+        # Suspension attrs present
+        assert "suspension_reason" in attrs
+        # Existing schedule attrs also present
+        assert "cleaning_days" in attrs
+        assert "schedule_summary" in attrs
+        assert "street_name" in attrs
+
+
+# ===========================================================================
+# Group 9: Suspension binary sensor (SC2)
+# ===========================================================================
+
+@pytest.mark.ha_integration
+class TestSuspensionBinarySensor:
+    """Test binary sensor is_on returns False during suspended active windows."""
+
+    def test_is_on_false_when_suspended(self) -> None:
+        """SC2: ASPActiveNow + suspended -> is_on=False."""
+        data = ASPParkingData(
+            schedule_result=_make_asp_active_now(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Snow Day", source='emergency'
+            ),
+        )
+        assert binary_sensor_is_on(data) is False
+
+    def test_is_on_true_when_not_suspended(self) -> None:
+        """ASPActiveNow without suspension -> is_on=True."""
+        data = ASPParkingData(schedule_result=_make_asp_active_now())
+        assert binary_sensor_is_on(data) is True
+
+    def test_is_on_false_when_no_active_window(self) -> None:
+        """ScheduleFound (not active) + suspended -> is_on=False."""
+        data = ASPParkingData(
+            schedule_result=_make_schedule_found(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Memorial Day", source='holiday'
+            ),
+        )
+        assert binary_sensor_is_on(data) is False

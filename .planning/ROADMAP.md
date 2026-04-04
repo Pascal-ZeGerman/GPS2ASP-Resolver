@@ -55,7 +55,7 @@ Full details: `.planning/milestones/v2.0-ROADMAP.md`
 
 - [x] **Phase 19: Suspension Package Foundation** - SuspensionStatus model + NYC holiday calendar; zero network dependencies (completed 2026-03-31)
 - [x] **Phase 20: Suspension Merge Layer and Pipeline Wiring** - Pure apply_suspension() function + optional suspension parameter on resolve_asp() (completed 2026-04-02)
-- [ ] **Phase 21: Direct 311 API Poller** - httpx-based fetch_suspension_status() for weather/emergency suspensions; fail-open
+- [x] **Phase 21: Direct 311 API Poller** - httpx-based fetch_suspension_status() for weather/emergency suspensions; fail-open (completed 2026-04-03)
 - [ ] **Phase 22: HA Coordinator and Sensor Integration** - Wire suspension state into coordinator, sensor attributes, and binary sensor
 - [ ] **Phase 23: ha-nyc311 Bridge** - Optional auto-detection of ha-nyc311 entities; eliminates duplicate API polling
 
@@ -103,7 +103,7 @@ Plans:
 
 Plans:
 - [x] 21-01-PLAN.md — NYC311Client TDD: tests/test_poller.py (RED) + src/gps2asp/suspension/poller.py (GREEN)
-- [ ] 21-02-PLAN.md — Export wiring + vendored sync: suspension/__init__.py + custom_components copy
+- [x] 21-02-PLAN.md — Export wiring + vendored sync: suspension/__init__.py + custom_components copy
 
 ### Phase 22: HA Coordinator and Sensor Integration
 **Goal**: Users see suspension status as a live HA sensor attribute — "Suspended" state text, suspension_reason, and is_on=False during active suspensions
@@ -115,8 +115,11 @@ Plans:
   3. User sees suspension status update independently of GPS movement — a suspension poll firing at :00 updates the sensor without requiring the car to move
   4. User who restarts Home Assistant sees correct suspension status immediately on first entity read, not only after the next poll interval
   5. User can add the optional NYC311 API key via the config flow without needing to delete and re-add the integration
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 2 plans
+
+Plans:
+- [ ] 22-01-PLAN.md — Core suspension wiring: coordinator suspension_state + timer + startup, sensor "Suspended" branch, binary sensor guard
+- [ ] 22-02-PLAN.md — Config flow api_keys step + VERSION bump + options flow API key + migration + translations
 
 ### Phase 23: ha-nyc311 Bridge
 **Goal**: Users who have ha-nyc311 installed get suspension status bridged automatically with no duplicate API calls and no manual configuration
@@ -139,6 +142,6 @@ Plans:
 | 12-18 | v2.0 | 12/12 | Complete | 2026-03-30 |
 | 19. Suspension Package Foundation | v3.0 | 1/1 | Complete    | 2026-03-31 |
 | 20. Suspension Merge Layer and Pipeline Wiring | v3.0 | 2/2 | Complete    | 2026-04-02 |
-| 21. Direct 311 API Poller | v3.0 | 1/2 | In Progress|  |
-| 22. HA Coordinator and Sensor Integration | v3.0 | 0/? | Not started | - |
+| 21. Direct 311 API Poller | v3.0 | 2/2 | Complete    | 2026-04-03 |
+| 22. HA Coordinator and Sensor Integration | v3.0 | 0/2 | Not started | - |
 | 23. ha-nyc311 Bridge | v3.0 | 0/? | Not started | - |
