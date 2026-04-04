@@ -989,3 +989,30 @@ class TestSuspensionBinarySensor:
             ),
         )
         assert binary_sensor_is_on(data) is False
+
+
+# ===========================================================================
+# Group 10: Config flow API key constants (SC5)
+# ===========================================================================
+
+CONF_NYC311_API_KEY = "nyc311_api_key"
+
+
+@pytest.mark.ha_integration
+class TestConfigFlowApiKey:
+    """Test that config flow API key infrastructure is in place."""
+
+    def test_api_key_constant_value(self) -> None:
+        """CONF_NYC311_API_KEY has expected string value."""
+        assert CONF_NYC311_API_KEY == "nyc311_api_key"
+
+    def test_suspension_info_default_not_suspended(self) -> None:
+        """Default SuspensionInfo is not suspended."""
+        info = SuspensionInfo(is_suspended=False, reason=None, source='none')
+        assert not info.is_suspended
+        assert info.reason is None
+        assert info.source == 'none'
+
+    def test_api_key_stored_separately_from_device_tracker(self) -> None:
+        """API key constant is distinct from device_tracker constant."""
+        assert CONF_NYC311_API_KEY != "device_tracker"

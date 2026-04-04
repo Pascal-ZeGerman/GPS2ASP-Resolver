@@ -18,6 +18,17 @@ from .coordinator import ASPParkingCoordinator
 logger = logging.getLogger(__name__)
 
 
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate config entry from version 1 to 2.
+
+    No data shape change needed -- NYC311 API key defaults to not-configured.
+    """
+    if config_entry.version == 1:
+        hass.config_entries.async_update_entry(config_entry, version=2)
+        logger.info("Migrated ASP Parking config entry from v1 to v2")
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up ASP Parking from a config entry.
 
