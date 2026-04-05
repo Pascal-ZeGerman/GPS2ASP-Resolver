@@ -54,9 +54,12 @@ from .const import (
     CONF_DEVICE_TRACKER,
     CONF_MOVEMENT_THRESHOLD,
     CONF_NYC311_API_KEY,
+    CONF_NYC311_ENTITY,
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
     DEFAULT_MOVEMENT_THRESHOLD,
+    DEFAULT_NYC311_BRIDGE_ENTITY,
+    DEFAULT_NYC311_ENTITY,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STALE_TIMEOUT,
     DEFAULT_SUSPENSION_INTERVAL,
@@ -135,6 +138,7 @@ class ASPParkingCoordinator:
         # Suspension state
         self._holiday_calendar: HolidayCalendar | None = None
         self._nyc311_client: NYC311Client | None = None
+        self._nyc311_bridge_entity: str | None = None  # ha-nyc311 entity ID if bridge active
 
         # Cleanup callables for event subscriptions
         self._listeners: list[CALLBACK_TYPE] = []
@@ -230,6 +234,40 @@ class ASPParkingCoordinator:
         )
         self._listeners.append(unsub_suspension)
 
+        # --- ha-nyc311 bridge detection (D-01, D-02, D-03, D-10) ---
+        nyc311_entity_override = self.entry.options.get(
+            CONF_NYC311_ENTITY, DEFAULT_NYC311_ENTITY
+        )
+        if nyc311_entity_override:
+            # D-02: User specified a custom entity ID
+            bridge_entity_id = nyc311_entity_override
+        else:
+            # D-01: Auto-detect default ha-nyc311 entity
+            bridge_entity_id = DEFAULT_NYC311_BRIDGE_ENTITY
+
+        bridge_state = self.hass.states.get(bridge_entity_id)
+        if bridge_state is not None:
+            self._nyc311_bridge_entity = bridge_entity_id
+
+            # D-04: Subscribe to state changes
+            unsub_bridge = async_track_state_change_event(
+                self.hass,
+                [bridge_entity_id],
+                self._async_on_nyc311_state_change,
+            )
+            self._listeners.append(unsub_bridge)
+
+            # D-10: Read current state immediately at startup
+            self.data.suspension_state = self._bridge_state_to_info(
+                bridge_state.state, bridge_state.attributes
+            )
+
+            # D-11: Log bridge active
+            logger.debug(
+                "ha-nyc311 bridge active on %s -- direct 311 polling suppressed",
+                bridge_entity_id,
+            )
+
         logger.info(
             "ASP Parking coordinator started: tracking %s, "
             "movement threshold %.0fm, refresh every %dh",
@@ -245,6 +283,52 @@ class ASPParkingCoordinator:
         self._listeners.clear()
         await self._debouncer.async_cancel()
         logger.info("ASP Parking coordinator stopped")
+
+    # ------------------------------------------------------------------
+    # ha-nyc311 bridge helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _bridge_state_to_info(
+        state: str, attributes: dict | None = None
+    ) -> SuspensionInfo:
+        """Convert ha-nyc311 entity state to SuspensionInfo (D-06).
+
+        Maps:
+          "on"  -> suspended, reason from attributes
+          "off" -> not suspended
+          "unavailable"/"unknown" -> fail open (not suspended), source='none'
+        """
+        if state == "on":
+            reason = (attributes or {}).get("reason")
+            return SuspensionInfo(
+                is_suspended=True, reason=reason, source="ha_nyc311"
+            )
+        if state == "off":
+            return SuspensionInfo(
+                is_suspended=False, reason=None, source="ha_nyc311"
+            )
+        # "unavailable", "unknown", or any other state: fail open
+        logger.warning(
+            "ha-nyc311 entity state is '%s' -- failing open (no suspension assumed)",
+            state,
+        )
+        return SuspensionInfo(is_suspended=False, reason=None, source="none")
+
+    @callback
+    def _async_on_nyc311_state_change(self, event: Event) -> None:
+        """Handle ha-nyc311 entity state changes (D-05).
+
+        Converts ha-nyc311 state to SuspensionInfo and immediately
+        notifies all entities -- no waiting for the 60-minute poll.
+        """
+        new_state = event.data.get("new_state")
+        if new_state is None:
+            return
+        self.data.suspension_state = self._bridge_state_to_info(
+            new_state.state, new_state.attributes
+        )
+        self._async_notify_entities()
 
     # ------------------------------------------------------------------
     # Entity callback management
@@ -410,6 +494,8 @@ class ASPParkingCoordinator:
 
     async def _async_initial_311_fetch(self) -> None:
         """Startup 311 API fetch. Fail open on any error."""
+        if self._nyc311_bridge_entity is not None:
+            return  # Bridge active, no need for direct 311 API fetch
         try:
             info = await self._nyc311_client.fetch_status()
             if info.is_suspended:
@@ -426,7 +512,25 @@ class ASPParkingCoordinator:
         self.hass.async_create_task(self._async_update_suspension())
 
     async def _async_update_suspension(self) -> None:
-        """Fetch suspension status from all sources and update data."""
+        """Fetch suspension status from all sources and update data.
+
+        When ha-nyc311 bridge is active and healthy, uses bridge state
+        directly (D-09). Falls back to holiday calendar + 311 API when
+        bridge is absent or unavailable.
+        """
+        # D-09: Bridge short-circuit
+        if self._nyc311_bridge_entity is not None:
+            bridge_state = self.hass.states.get(self._nyc311_bridge_entity)
+            if bridge_state is not None and bridge_state.state in ("on", "off"):
+                # Bridge healthy: re-apply its state, skip holiday calendar + 311 API
+                self.data.suspension_state = self._bridge_state_to_info(
+                    bridge_state.state, bridge_state.attributes
+                )
+                self._async_notify_entities()
+                return
+            # Bridge unavailable/unknown: fall through to direct sources
+
+        # D-07/D-08: No bridge or bridge unavailable -- use holiday calendar + 311 API
         today = datetime.now(NYC_TZ).date()
 
         info = self._holiday_calendar.is_suspended(today)
