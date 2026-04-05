@@ -21,9 +21,11 @@ from .const import (
     CONF_DEVICE_TRACKER,
     CONF_MOVEMENT_THRESHOLD,
     CONF_NYC311_API_KEY,
+    CONF_NYC311_ENTITY,
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
     DEFAULT_MOVEMENT_THRESHOLD,
+    DEFAULT_NYC311_ENTITY,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STALE_TIMEOUT,
     DOMAIN,
@@ -232,6 +234,7 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             cleaned, errors = _validate_settings(user_input)
+            nyc311_entity = user_input.get(CONF_NYC311_ENTITY, "").strip()
             api_key = user_input.get(CONF_NYC311_API_KEY, "").strip() or None
             if api_key:
                 try:
@@ -243,6 +246,8 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     pass  # Network error during validation -- accept key anyway
             if not errors:
                 options = {**cleaned}
+                if nyc311_entity:
+                    options[CONF_NYC311_ENTITY] = nyc311_entity
                 if api_key:
                     options[CONF_NYC311_API_KEY] = api_key
                 elif CONF_NYC311_API_KEY in self.config_entry.options and api_key == "":
@@ -263,6 +268,16 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT
                 ),
             ).extend({
+                vol.Optional(
+                    CONF_NYC311_ENTITY,
+                    default=self.config_entry.options.get(
+                        CONF_NYC311_ENTITY, DEFAULT_NYC311_ENTITY
+                    ),
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="binary_sensor",
+                    )
+                ),
                 vol.Optional(
                     CONF_NYC311_API_KEY,
                     default=self.config_entry.options.get(CONF_NYC311_API_KEY, ""),

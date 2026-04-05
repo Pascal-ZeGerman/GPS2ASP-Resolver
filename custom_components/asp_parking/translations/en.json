@@ -52,12 +52,14 @@
           "movement_threshold": "Movement threshold",
           "refresh_interval": "Refresh interval",
           "stale_timeout": "GPS stale timeout",
+          "nyc311_entity": "ha-nyc311 suspension entity",
           "nyc311_api_key": "NYC 311 API key"
         },
         "data_description": {
           "movement_threshold": "Min distance the car must move before re-running the schedule lookup. 50 m filters GPS drift without missing real moves.",
           "refresh_interval": "Re-check schedule even without movement so upcoming windows stay current. 8 h balances freshness with API calls.",
           "stale_timeout": "Mark sensor unavailable after this long without a GPS update. Match your tracker's reporting frequency.",
+          "nyc311_entity": "Leave empty for auto-detection. Only set this if you renamed the ha-nyc311 binary sensor.",
           "nyc311_api_key": "Get a free key at api-portal.nyc.gov. Leave blank to disable 311 polling."
         }
       }
