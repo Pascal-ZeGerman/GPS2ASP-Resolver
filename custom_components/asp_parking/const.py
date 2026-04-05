@@ -25,3 +25,6 @@ GPS_DEBOUNCE_COOLDOWN = 5.0  # seconds (debounce rapid GPS jitter)
 # Suspension
 CONF_NYC311_API_KEY = "nyc311_api_key"
 DEFAULT_SUSPENSION_INTERVAL = 60  # minutes between suspension polls
+CONF_NYC311_ENTITY = "nyc311_entity"
+DEFAULT_NYC311_ENTITY = ""
+DEFAULT_NYC311_BRIDGE_ENTITY = "binary_sensor.nyc311_parking_exception_today"

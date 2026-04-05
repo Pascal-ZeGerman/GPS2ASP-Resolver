@@ -31,7 +31,7 @@ class SuspensionInfo:
 
     is_suspended: bool
     reason: str | None
-    source: Literal['holiday', 'emergency', 'none'] = 'none'
+    source: Literal['holiday', 'emergency', 'ha_nyc311', 'none'] = 'none'
 
 
 # ---------------------------------------------------------------------------

@@ -130,8 +130,11 @@ Plans:
   2. User with ha-nyc311 installed sees no redundant direct 311 API calls in the logs — the bridge takes priority
   3. User without ha-nyc311 installed sees no configuration change required — system silently falls back to direct 311 polling
   4. User who renames the ha-nyc311 entity can specify the custom entity name in config flow and the bridge still works
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 2 plans
+
+Plans:
+- [ ] 23-01-PLAN.md — Bridge detection + subscription + poll-skip in coordinator, const additions, SuspensionInfo source update
+- [ ] 23-02-PLAN.md — Options flow EntitySelector for custom ha-nyc311 entity ID + translations
 
 ## Progress
 
@@ -144,4 +147,4 @@ Plans:
 | 20. Suspension Merge Layer and Pipeline Wiring | v3.0 | 2/2 | Complete    | 2026-04-02 |
 | 21. Direct 311 API Poller | v3.0 | 2/2 | Complete    | 2026-04-03 |
 | 22. HA Coordinator and Sensor Integration | v3.0 | 0/2 | Not started | - |
-| 23. ha-nyc311 Bridge | v3.0 | 0/? | Not started | - |
+| 23. ha-nyc311 Bridge | v3.0 | 0/2 | Not started | - |
