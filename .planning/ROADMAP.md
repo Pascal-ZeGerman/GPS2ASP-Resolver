@@ -57,7 +57,7 @@ Full details: `.planning/milestones/v2.0-ROADMAP.md`
 - [x] **Phase 20: Suspension Merge Layer and Pipeline Wiring** - Pure apply_suspension() function + optional suspension parameter on resolve_asp() (completed 2026-04-02)
 - [x] **Phase 21: Direct 311 API Poller** - httpx-based fetch_suspension_status() for weather/emergency suspensions; fail-open (completed 2026-04-03)
 - [ ] **Phase 22: HA Coordinator and Sensor Integration** - Wire suspension state into coordinator, sensor attributes, and binary sensor
-- [ ] **Phase 23: ha-nyc311 Bridge** - Optional auto-detection of ha-nyc311 entities; eliminates duplicate API polling
+- [x] **Phase 23: ha-nyc311 Bridge** - Optional auto-detection of ha-nyc311 entities; eliminates duplicate API polling (completed 2026-04-05)
 
 ## Phase Details
 
@@ -133,8 +133,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 23-01-PLAN.md — Bridge detection + subscription + poll-skip in coordinator, const additions, SuspensionInfo source update
-- [ ] 23-02-PLAN.md — Options flow EntitySelector for custom ha-nyc311 entity ID + translations
+- [x] 23-01-PLAN.md — Bridge detection + subscription + poll-skip in coordinator, const additions, SuspensionInfo source update
+- [x] 23-02-PLAN.md — Options flow EntitySelector for custom ha-nyc311 entity ID + translations
 
 ## Progress
 
@@ -147,4 +147,4 @@ Plans:
 | 20. Suspension Merge Layer and Pipeline Wiring | v3.0 | 2/2 | Complete    | 2026-04-02 |
 | 21. Direct 311 API Poller | v3.0 | 2/2 | Complete    | 2026-04-03 |
 | 22. HA Coordinator and Sensor Integration | v3.0 | 0/2 | Not started | - |
-| 23. ha-nyc311 Bridge | v3.0 | 0/2 | Not started | - |
+| 23. ha-nyc311 Bridge | v3.0 | 2/2 | Complete   | 2026-04-05 |
