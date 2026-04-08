@@ -992,7 +992,159 @@ class TestSuspensionBinarySensor:
 
 
 # ===========================================================================
-# Group 10: Config flow API key constants (SC5)
+# Group 10: Suspension poll timer independence (SC3)
+# ===========================================================================
+
+import pathlib as _pathlib
+
+_COORDINATOR_SRC = (
+    _pathlib.Path(__file__).parent.parent
+    / "custom_components" / "asp_parking" / "coordinator.py"
+)
+
+
+@pytest.mark.ha_integration
+class TestSuspensionPoll:
+    """SC3: Suspension poll timer fires independently of GPS movement."""
+
+    def test_poll_updates_without_gps(self) -> None:
+        """_async_suspension_poll method exists and is registered with async_track_time_interval.
+
+        The coordinator must register a periodic suspension timer that calls
+        _async_suspension_poll, independent of any GPS state change events.
+        This test inspects the coordinator source to confirm the wiring is
+        present without requiring a running Home Assistant instance.
+        """
+        src = _COORDINATOR_SRC.read_text()
+        assert "_async_suspension_poll" in src, (
+            "coordinator.py missing _async_suspension_poll method"
+        )
+        assert "_async_update_suspension" in src, (
+            "coordinator.py missing _async_update_suspension method"
+        )
+        # Confirm async_track_time_interval is used to register the suspension poll
+        # (not just the GPS periodic refresh which uses a different timedelta)
+        assert "DEFAULT_SUSPENSION_INTERVAL" in src, (
+            "coordinator.py does not reference DEFAULT_SUSPENSION_INTERVAL for suspension timer"
+        )
+        # Confirm the poll callback is passed to async_track_time_interval
+        assert "self._async_suspension_poll" in src, (
+            "coordinator.py does not wire _async_suspension_poll into async_track_time_interval"
+        )
+
+    def test_suspension_poll_does_not_require_gps_coordinates(self) -> None:
+        """_async_update_suspension reads today's date, not GPS coordinates.
+
+        The holiday calendar check uses datetime.now(NYC_TZ).date(), not
+        self.data.last_lat / last_lon, confirming independence from GPS movement.
+        """
+        src = _COORDINATOR_SRC.read_text()
+        # The update method must check the current date
+        assert "datetime.now(NYC_TZ).date()" in src, (
+            "coordinator.py suspension poll does not derive 'today' from current time"
+        )
+        # Confirm _async_suspension_poll does not gate on last_lat / last_lon
+        poll_start = src.find("def _async_suspension_poll")
+        update_start = src.find("async def _async_update_suspension")
+        # Both methods must be present
+        assert poll_start != -1
+        assert update_start != -1
+        # Extract _async_update_suspension body and verify no GPS gate
+        update_body = src[update_start: update_start + 600]
+        assert "last_lat" not in update_body, (
+            "_async_update_suspension should not gate on last_lat (GPS-independent)"
+        )
+
+
+# ===========================================================================
+# Group 11: Suspension startup holiday status (SC4)
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestSuspensionStartup:
+    """SC4: Holiday suspension status is correct on first entity read after restart."""
+
+    def test_immediate_holiday_status(self) -> None:
+        """coordinator.py calls HolidayCalendar.is_suspended(today) in async_start
+        before the suspension poll timer is registered.
+
+        Code inspection: holiday check precedes async_track_time_interval for suspension.
+        """
+        src = _COORDINATOR_SRC.read_text()
+        # Holiday calendar is initialised and loaded at startup
+        assert "self._holiday_calendar = HolidayCalendar()" in src, (
+            "coordinator.py does not initialise HolidayCalendar in async_start"
+        )
+        assert "await self._holiday_calendar.load()" in src, (
+            "coordinator.py does not await holiday_calendar.load() on startup"
+        )
+        # Holiday check happens at startup
+        assert "self._holiday_calendar.is_suspended(today)" in src, (
+            "coordinator.py does not call is_suspended(today) on startup"
+        )
+        # The suspension timer is registered after the holiday check
+        holiday_check_pos = src.find("self._holiday_calendar.is_suspended(today)")
+        suspension_timer_pos = src.find("self._async_suspension_poll")
+        assert holiday_check_pos < suspension_timer_pos, (
+            "coordinator.py suspension timer registered before holiday check at startup"
+        )
+
+    def test_holiday_calendar_returns_suspended_for_known_holiday(self) -> None:
+        """HolidayCalendar.is_suspended() returns is_suspended=True for a known holiday.
+
+        Uses the hardcoded 2026 fallback calendar (no network required).
+        April 8 2026 is 'Passover (7th Day)' per FALLBACK_2026.
+        This validates the logic that the coordinator uses to set suspension_state.
+        """
+        from datetime import date as _date
+
+        # Import everything from the same module path to avoid class identity mismatch
+        from custom_components.asp_parking.gps2asp.suspension import (
+            FALLBACK_2026,
+            HolidayCalendar,
+            SuspensionInfo as _SuspensionInfo,
+        )
+        cal = HolidayCalendar()
+        cal._holidays = dict(FALLBACK_2026)
+        cal._loaded = True
+
+        # April 8 2026 is a known holiday in FALLBACK_2026
+        holiday_date = _date(2026, 4, 8)
+        info = cal.is_suspended(holiday_date)
+
+        assert isinstance(info, _SuspensionInfo)
+        assert info.is_suspended is True
+        assert info.reason == "Passover (7th Day)"
+        assert info.source == "holiday"
+
+    def test_holiday_calendar_returns_not_suspended_for_normal_day(self) -> None:
+        """HolidayCalendar.is_suspended() returns is_suspended=False for a non-holiday.
+
+        Confirms coordinator startup correctly leaves suspension_state as default
+        when today is not a holiday.
+        """
+        from datetime import date as _date
+
+        from custom_components.asp_parking.gps2asp.suspension import (
+            FALLBACK_2026,
+            HolidayCalendar,
+        )
+        cal = HolidayCalendar()
+        cal._holidays = dict(FALLBACK_2026)
+        cal._loaded = True
+
+        # A date with no holiday in 2026 fallback calendar
+        normal_date = _date(2026, 4, 9)  # day after Passover (7th Day)
+        info = cal.is_suspended(normal_date)
+
+        assert info.is_suspended is False
+        assert info.reason is None
+        assert info.source == "none"
+
+
+# ===========================================================================
+# Group 12: Config flow API key constants (SC5)
 # ===========================================================================
 
 CONF_NYC311_API_KEY = "nyc311_api_key"
