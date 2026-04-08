@@ -370,3 +370,24 @@ async def test_empty_days() -> None:
         result = await client.fetch_status()
 
     assert result == SuspensionInfo(is_suspended=False, reason=None, source="none")
+
+
+# ---------------------------------------------------------------------------
+# GAP 2: SUSP-02 — canonical import paths for NYC311Client and NYC311AuthError
+# ---------------------------------------------------------------------------
+
+
+def test_nyc311client_canonical_import() -> None:
+    """NYC311Client is importable via the canonical path gps2asp.suspension."""
+    from gps2asp.suspension import NYC311Client as _NYC311Client  # noqa: PLC0415
+    assert isinstance(_NYC311Client, type), (
+        "NYC311Client imported from gps2asp.suspension must be a class"
+    )
+
+
+def test_nyc311autherror_importable() -> None:
+    """NYC311AuthError is importable from gps2asp.suspension.poller."""
+    from gps2asp.suspension.poller import NYC311AuthError as _NYC311AuthError  # noqa: PLC0415
+    assert isinstance(_NYC311AuthError, type), (
+        "NYC311AuthError imported from gps2asp.suspension.poller must be a class"
+    )

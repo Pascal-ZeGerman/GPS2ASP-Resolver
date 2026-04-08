@@ -31,6 +31,7 @@ from gps2asp.schedule.models import (
     TimeWindow,
     WeeklySchedule,
 )
+from gps2asp.suspension import SuspensionInfo
 
 
 # ---------------------------------------------------------------------------
@@ -363,3 +364,59 @@ class TestASPResultSodaLevel:
         assert isinstance(result, ASPResult)
         # This assertion is RED until Plan 02 adds soda_level to ASPResult
         assert result.soda_level == 0
+
+
+# ---------------------------------------------------------------------------
+# GAP 1: SUSP-03 — suspension_status wires Stage 4 into resolve_asp()
+# ---------------------------------------------------------------------------
+
+
+async def test_resolve_asp_suspension_status_wires_stage4() -> None:
+    """resolve_asp() with suspension_status passes SuspensionInfo through Stage 4.
+
+    When suspension_status=SuspensionInfo(is_suspended=True, reason='MLK Day',
+    source='holiday') is passed, the returned ASPResult.schedule must have
+    suspended=True and resolution_reason='suspended_holiday'.
+    """
+    resolution = _make_resolution_result()
+    signs = _make_sign_success(soda_level=1)
+    schedule = _make_schedule_found()
+
+    suspension = SuspensionInfo(is_suspended=True, reason="MLK Day", source="holiday")
+
+    with (
+        patch("gps2asp.pipeline.convert", return_value=(987654.0, 178432.0)),
+        patch("gps2asp.pipeline.resolve_segment", new_callable=AsyncMock, return_value=resolution),
+        patch("gps2asp.pipeline.retrieve_signs", new_callable=AsyncMock, return_value=signs),
+        patch("gps2asp.pipeline.compute_schedule", return_value=schedule),
+    ):
+        result = await resolve_asp(40.677629, -73.968527, suspension_status=suspension)
+
+    assert isinstance(result, ASPResult)
+    assert result.schedule is not None
+    assert result.schedule.suspended is True
+    assert result.schedule.resolution_reason == "suspended_holiday"
+
+
+async def test_resolve_asp_suspension_status_none_is_noop() -> None:
+    """resolve_asp() with suspension_status=None (default) leaves schedule unchanged.
+
+    Backwards compatibility: None means Stage 4 is a no-op.
+    The returned schedule must have suspended=False (no annotation applied).
+    """
+    resolution = _make_resolution_result()
+    signs = _make_sign_success(soda_level=1)
+    schedule = _make_schedule_found()
+
+    with (
+        patch("gps2asp.pipeline.convert", return_value=(987654.0, 178432.0)),
+        patch("gps2asp.pipeline.resolve_segment", new_callable=AsyncMock, return_value=resolution),
+        patch("gps2asp.pipeline.retrieve_signs", new_callable=AsyncMock, return_value=signs),
+        patch("gps2asp.pipeline.compute_schedule", return_value=schedule),
+    ):
+        result = await resolve_asp(40.677629, -73.968527)
+
+    assert isinstance(result, ASPResult)
+    assert result.schedule is not None
+    assert result.schedule.suspended is False
+    assert result.schedule.resolution_reason is None
