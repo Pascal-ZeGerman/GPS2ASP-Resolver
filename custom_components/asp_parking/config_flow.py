@@ -250,7 +250,7 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     options[CONF_NYC311_ENTITY] = nyc311_entity
                 if api_key:
                     options[CONF_NYC311_API_KEY] = api_key
-                elif CONF_NYC311_API_KEY in self.config_entry.options and api_key == "":
+                elif CONF_NYC311_API_KEY in self.config_entry.options and api_key is None:
                     # User cleared the key -- remove it
                     options.pop(CONF_NYC311_API_KEY, None)
                 return self.async_create_entry(title="", data=options)
