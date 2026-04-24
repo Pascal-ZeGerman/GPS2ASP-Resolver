@@ -219,6 +219,10 @@ class HolidayCalendar:
 
     def is_suspended(self, check_date: date) -> SuspensionInfo:
         """Check if ASP is suspended on the given date."""
+        if not self._loaded:
+            logger.warning(
+                "HolidayCalendar.is_suspended() called before load() -- returning not suspended"
+            )
         reason = self._holidays.get(check_date)
         return SuspensionInfo(
             is_suspended=reason is not None,
