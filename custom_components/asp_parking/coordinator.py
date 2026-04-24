@@ -552,13 +552,15 @@ class ASPParkingCoordinator:
     async def async_force_resolve(self) -> None:
         """Manually trigger a pipeline resolve for the resolve_now service.
 
-        Uses the last known GPS coordinates. If no GPS coordinates have
-        been received yet, logs an info message and returns.
+        Bypasses the debouncer so the resolve runs immediately, regardless of
+        any in-progress debounce cooldown. Uses the last known GPS coordinates.
+        If no GPS coordinates have been received yet, logs an info message and
+        returns.
         """
         if self.data.last_lat is not None and self.data.last_lon is not None:
             self._pending_lat = self.data.last_lat
             self._pending_lon = self.data.last_lon
-            await self._debouncer.async_call()
+            await self._async_resolve_pipeline()  # bypass debouncer for force path
         else:
             logger.info("Cannot force resolve: no GPS coordinates available yet")
 
