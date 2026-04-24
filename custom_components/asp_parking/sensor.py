@@ -94,7 +94,7 @@ class ASPNextMoveTimeSensor(SensorEntity):
     def _format_move_time(self, dt: datetime) -> str:
         """Return human-friendly move time string, with urgency prefix if <12h away."""
         local_dt = dt_util.as_local(dt)
-        seconds_until = (dt - dt_util.now()).total_seconds()
+        seconds_until = (dt_util.as_utc(dt) - dt_util.utcnow()).total_seconds()
         time_str = local_dt.strftime("%-I:%M %p")  # e.g. "8:00 AM" (no leading zero)
         if seconds_until < 12 * 3600:
             return f"\u26a0 Today {time_str}"
@@ -226,7 +226,7 @@ class ASPNextMoveTimeSensor(SensorEntity):
             elif isinstance(schedule, ASPActiveNow):
                 _move_dt = schedule.active_window.end_datetime
             if _move_dt is not None:
-                seconds_until = (_move_dt - dt_util.now()).total_seconds()
+                seconds_until = (dt_util.as_utc(_move_dt) - dt_util.utcnow()).total_seconds()
                 attrs["urgency"] = "high" if seconds_until < 12 * 3600 else "normal"
 
             # --- Location group ---
