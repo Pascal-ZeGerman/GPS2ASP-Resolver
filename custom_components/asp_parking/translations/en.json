@@ -53,14 +53,34 @@
           "refresh_interval": "Refresh interval",
           "stale_timeout": "GPS stale timeout",
           "nyc311_entity": "ha-nyc311 suspension entity",
-          "nyc311_api_key": "NYC 311 API key"
+          "nyc311_api_key": "NYC 311 API key",
+          "notify_service": "Push notification service"
         },
         "data_description": {
           "movement_threshold": "Min distance the car must move before re-running the schedule lookup. 50 m filters GPS drift without missing real moves.",
           "refresh_interval": "Re-check schedule even without movement so upcoming windows stay current. 8 h balances freshness with API calls.",
           "stale_timeout": "Mark sensor unavailable after this long without a GPS update. Match your tracker's reporting frequency.",
           "nyc311_entity": "Leave empty for auto-detection. Only set this if you renamed the ha-nyc311 binary sensor.",
-          "nyc311_api_key": "Get a free key at api-portal.nyc.gov. Leave blank to disable 311 polling."
+          "nyc311_api_key": "Get a free key at api-portal.nyc.gov. Leave blank to disable 311 polling.",
+          "notify_service": "HA notify service name, e.g. mobile_app_pascal_iphone. Leave empty to disable push notifications."
+        }
+      },
+      "debug": {
+        "title": "Debug Overrides",
+        "description": "Debug overrides -- for testing only. Leave blank/disabled for normal operation.",
+        "data": {
+          "debug_enabled": "Debug mode",
+          "debug_lat": "Override latitude",
+          "debug_lon": "Override longitude",
+          "debug_datetime": "Override current date/time",
+          "suppress_notifications": "Suppress push notifications"
+        },
+        "data_description": {
+          "debug_enabled": "Master toggle. When off, all override fields are ignored even if set.",
+          "debug_lat": "Fake GPS latitude for testing. Both lat and lon must be set together.",
+          "debug_lon": "Fake GPS longitude for testing. Both lat and lon must be set together.",
+          "debug_datetime": "Replace the current date/time for schedule and suspension checks.",
+          "suppress_notifications": "Prevent push notifications while debug mode is active."
         }
       }
     },
@@ -93,6 +113,9 @@
       },
       "resolution_status": {
         "name": "Resolution Status"
+      },
+      "debug_mode": {
+        "name": "Debug Mode"
       }
     },
     "binary_sensor": {
