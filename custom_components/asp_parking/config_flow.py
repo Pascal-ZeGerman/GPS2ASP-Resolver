@@ -18,16 +18,28 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_DEBUG_DATETIME,
+    CONF_DEBUG_ENABLED,
+    CONF_DEBUG_LAT,
+    CONF_DEBUG_LON,
     CONF_DEVICE_TRACKER,
     CONF_MOVEMENT_THRESHOLD,
+    CONF_NOTIFY_SERVICE,
     CONF_NYC311_API_KEY,
     CONF_NYC311_ENTITY,
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
+    CONF_SUPPRESS_NOTIFICATIONS,
+    DEFAULT_DEBUG_DATETIME,
+    DEFAULT_DEBUG_ENABLED,
+    DEFAULT_DEBUG_LAT,
+    DEFAULT_DEBUG_LON,
     DEFAULT_MOVEMENT_THRESHOLD,
+    DEFAULT_NOTIFY_SERVICE,
     DEFAULT_NYC311_ENTITY,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STALE_TIMEOUT,
+    DEFAULT_SUPPRESS_NOTIFICATIONS,
     DOMAIN,
 )
 from .gps2asp.suspension import NYC311Client
@@ -226,6 +238,10 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
     self.config_entry is injected by HA's OptionsFlow base class.
     """
 
+    def __init__(self) -> None:
+        """Initialize the options flow."""
+        self._options: dict = {}
+
     async def async_step_init(
         self, user_input: dict | None = None
     ) -> config_entries.ConfigFlowResult:
@@ -253,7 +269,12 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 elif CONF_NYC311_API_KEY in self.config_entry.options and api_key is None:
                     # User cleared the key -- remove it
                     options.pop(CONF_NYC311_API_KEY, None)
-                return self.async_create_entry(title="", data=options)
+                # Carry notify_service forward to debug step
+                notify_svc = user_input.get(CONF_NOTIFY_SERVICE, "").strip()
+                if notify_svc:
+                    options[CONF_NOTIFY_SERVICE] = notify_svc
+                self._options = options
+                return await self.async_step_debug()
 
         return self.async_show_form(
             step_id="init",
@@ -286,6 +307,94 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                         type=selector.TextSelectorType.PASSWORD,
                     )
                 ),
+                vol.Optional(
+                    CONF_NOTIFY_SERVICE,
+                    default=self.config_entry.options.get(
+                        CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
+                    ),
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(
+                        type=selector.TextSelectorType.TEXT,
+                    )
+                ),
+            }),
+            errors=errors,
+        )
+
+    async def async_step_debug(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Debug overrides step -- for testing only."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            options = {**getattr(self, "_options", {})}
+            options[CONF_DEBUG_ENABLED] = user_input.get(
+                CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED
+            )
+            # Store lat/lon only if provided (NumberSelector may return 0.0 not None for empty)
+            debug_lat = user_input.get(CONF_DEBUG_LAT)
+            debug_lon = user_input.get(CONF_DEBUG_LON)
+            if debug_lat is not None:
+                options[CONF_DEBUG_LAT] = float(debug_lat)
+            if debug_lon is not None:
+                options[CONF_DEBUG_LON] = float(debug_lon)
+            # Store datetime string if provided
+            debug_dt = user_input.get(CONF_DEBUG_DATETIME)
+            if debug_dt:
+                options[CONF_DEBUG_DATETIME] = debug_dt
+            options[CONF_SUPPRESS_NOTIFICATIONS] = user_input.get(
+                CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
+            )
+            return self.async_create_entry(title="", data=options)
+
+        return self.async_show_form(
+            step_id="debug",
+            data_schema=vol.Schema({
+                vol.Optional(
+                    CONF_DEBUG_ENABLED,
+                    default=self.config_entry.options.get(
+                        CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED
+                    ),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_DEBUG_LAT,
+                    default=self.config_entry.options.get(
+                        CONF_DEBUG_LAT, DEFAULT_DEBUG_LAT
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=-90,
+                        max=90,
+                        step=0.000001,
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_DEBUG_LON,
+                    default=self.config_entry.options.get(
+                        CONF_DEBUG_LON, DEFAULT_DEBUG_LON
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=-180,
+                        max=180,
+                        step=0.000001,
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_DEBUG_DATETIME,
+                    default=self.config_entry.options.get(
+                        CONF_DEBUG_DATETIME, DEFAULT_DEBUG_DATETIME
+                    ),
+                ): selector.DateTimeSelector(),
+                vol.Optional(
+                    CONF_SUPPRESS_NOTIFICATIONS,
+                    default=self.config_entry.options.get(
+                        CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
+                    ),
+                ): selector.BooleanSelector(),
             }),
             errors=errors,
         )
