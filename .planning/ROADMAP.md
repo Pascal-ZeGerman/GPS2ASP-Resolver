@@ -148,14 +148,14 @@ Plans:
   4. User receives a push notification via configured notify service 2 hours before the next ASP window
   5. User does NOT receive duplicate notifications for the same cleaning window
   6. User with suppress_notifications enabled and debug mode on does NOT receive push notifications
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 **Wave 1**
 - [x] 24-01-PLAN.md — Constants, options flow debug step, notify service field, translations
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 24-02-PLAN.md — Coordinator debug injection + notification logic, ASPDebugModeSensor entity
+- [x] 24-02-PLAN.md — Coordinator debug injection + notification logic, ASPDebugModeSensor entity
 
 ## Progress
 
@@ -169,4 +169,4 @@ Plans:
 | 21. Direct 311 API Poller | v3.0 | 2/2 | Complete    | 2026-04-03 |
 | 22. HA Coordinator and Sensor Integration | v3.0 | 0/2 | Not started | - |
 | 23. ha-nyc311 Bridge | v3.0 | 2/2 | Complete   | 2026-04-05 |
-| 24. HA Debug Interface | v3.0+ | 1/2 | In Progress|  |
+| 24. HA Debug Interface | v3.0+ | 2/2 | Complete   | 2026-04-26 |
