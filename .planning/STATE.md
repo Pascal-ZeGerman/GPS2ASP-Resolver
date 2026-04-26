@@ -126,6 +126,12 @@ Plan: 1 of 2
 - NYC DOT ICS URL exact path: inferred from PDF URL pattern; not validated by live download; hardcoded-dates fallback available
 - NYC 311 API rate limits: not published; 60-minute default is a conservative assumption consistent with aspnyc.info's confirmed operation
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260424-urm | Make the repo HACS ready so it can be added as a custom repo | 2026-04-25 | 21d1525 | [260424-urm-make-the-repo-hacs-ready-so-it-can-be-ad](./quick/260424-urm-make-the-repo-hacs-ready-so-it-can-be-ad/) |
+
 ## Session Continuity
 
 Last session: 2026-04-04T19:02:50.677Z

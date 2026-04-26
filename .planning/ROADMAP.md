@@ -136,6 +136,24 @@ Plans:
 - [x] 23-01-PLAN.md — Bridge detection + subscription + poll-skip in coordinator, const additions, SuspensionInfo source update
 - [x] 23-02-PLAN.md — Options flow EntitySelector for custom ha-nyc311 entity ID + translations
 
+### Phase 24: HA debug interface: modify car location, date/time, and notification suppression toggle
+
+**Goal:** Users can override GPS location and current datetime for testing via a debug options flow step, see debug mode status in a diagnostic sensor, and receive push notifications 2 hours before ASP windows with a suppression toggle
+**Requirements**: DEBUG-01, NOTIF-01
+**Depends on:** Phase 23
+**Success Criteria** (what must be TRUE):
+  1. User can enable debug mode and set fake GPS coordinates + datetime in the options flow debug step
+  2. User sees the coordinator use debug overrides instead of real GPS/datetime when debug mode is active
+  3. User sees a Debug Mode diagnostic sensor showing active/inactive with override values as attributes
+  4. User receives a push notification via configured notify service 2 hours before the next ASP window
+  5. User does NOT receive duplicate notifications for the same cleaning window
+  6. User with suppress_notifications enabled and debug mode on does NOT receive push notifications
+**Plans:** 2 plans
+
+Plans:
+- [ ] 24-01-PLAN.md — Constants, options flow debug step, notify service field, translations
+- [ ] 24-02-PLAN.md — Coordinator debug injection + notification logic, ASPDebugModeSensor entity
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -148,3 +166,4 @@ Plans:
 | 21. Direct 311 API Poller | v3.0 | 2/2 | Complete    | 2026-04-03 |
 | 22. HA Coordinator and Sensor Integration | v3.0 | 0/2 | Not started | - |
 | 23. ha-nyc311 Bridge | v3.0 | 2/2 | Complete   | 2026-04-05 |
+| 24. HA Debug Interface | v3.0+ | 0/2 | Not started | - |
