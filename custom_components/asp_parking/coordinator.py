@@ -42,6 +42,7 @@ from .gps2asp.resolver.exceptions import (
 from .gps2asp.schedule import compute_schedule
 from .gps2asp.schedule.models import (
     AllUnparseable,
+    CleaningWindow,
     ScheduleFound,
     ScheduleResult,
 )
@@ -51,17 +52,29 @@ from .gps2asp.suspension import HolidayCalendar, NYC311Client, SuspensionInfo
 from .gps2asp.suspension.poller import NYC311AuthError
 
 from .const import (
+    CONF_DEBUG_DATETIME,
+    CONF_DEBUG_ENABLED,
+    CONF_DEBUG_LAT,
+    CONF_DEBUG_LON,
     CONF_DEVICE_TRACKER,
     CONF_MOVEMENT_THRESHOLD,
+    CONF_NOTIFY_SERVICE,
     CONF_NYC311_API_KEY,
     CONF_NYC311_ENTITY,
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
+    CONF_SUPPRESS_NOTIFICATIONS,
+    DEFAULT_DEBUG_DATETIME,
+    DEFAULT_DEBUG_ENABLED,
+    DEFAULT_DEBUG_LAT,
+    DEFAULT_DEBUG_LON,
     DEFAULT_MOVEMENT_THRESHOLD,
+    DEFAULT_NOTIFY_SERVICE,
     DEFAULT_NYC311_BRIDGE_ENTITY,
     DEFAULT_NYC311_ENTITY,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STALE_TIMEOUT,
+    DEFAULT_SUPPRESS_NOTIFICATIONS,
     DEFAULT_SUSPENSION_INTERVAL,
     DOMAIN,
     GPS_DEBOUNCE_COOLDOWN,
@@ -113,6 +126,7 @@ class ASPParkingData:
     suspension_state: SuspensionInfo = field(
         default_factory=lambda: SuspensionInfo(is_suspended=False, reason=None, source='none')
     )
+    last_notified_window: CleaningWindow | None = None
 
 
 class ASPParkingCoordinator:
@@ -149,6 +163,14 @@ class ASPParkingCoordinator:
         # Pending coordinates for debounced pipeline execution
         self._pending_lat: float | None = None
         self._pending_lon: float | None = None
+
+        # Debug overrides (Phase 24)
+        self._debug_enabled: bool = False
+        self._debug_lat: float | None = None
+        self._debug_lon: float | None = None
+        self._debug_datetime: datetime | None = None
+        self._suppress_notifications: bool = False
+        self._notify_service: str = ""
 
         # Debouncer: coalesce rapid GPS updates into a single pipeline run
         self._debouncer = Debouncer(
@@ -187,6 +209,16 @@ class ASPParkingCoordinator:
         """Return the stale GPS timeout in hours."""
         return self.entry.options.get(CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT)
 
+    def _get_now(self) -> datetime:
+        """Return debug datetime override when active, otherwise real now.
+
+        Per D-08: replaces datetime.now(NYC_TZ) for ALL time-sensitive
+        coordinator operations when debug mode is active.
+        """
+        if self._debug_enabled and self._debug_datetime is not None:
+            return self._debug_datetime
+        return datetime.now(NYC_TZ)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -217,7 +249,7 @@ class ASPParkingCoordinator:
         self._holiday_calendar = HolidayCalendar()
         await self._holiday_calendar.load()
 
-        today = datetime.now(NYC_TZ).date()
+        today = self._get_now().date()
         holiday_info = self._holiday_calendar.is_suspended(today)
         if holiday_info.is_suspended:
             self.data.suspension_state = holiday_info
@@ -275,6 +307,37 @@ class ASPParkingCoordinator:
             self.movement_threshold,
             self.refresh_interval,
         )
+
+        # --- Debug overrides (Phase 24) ---
+        self._debug_enabled = self.entry.options.get(
+            CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED
+        )
+        self._debug_lat = self.entry.options.get(CONF_DEBUG_LAT, DEFAULT_DEBUG_LAT)
+        self._debug_lon = self.entry.options.get(CONF_DEBUG_LON, DEFAULT_DEBUG_LON)
+        raw_dt = self.entry.options.get(CONF_DEBUG_DATETIME, DEFAULT_DEBUG_DATETIME)
+        if raw_dt and isinstance(raw_dt, str):
+            try:
+                self._debug_datetime = datetime.fromisoformat(raw_dt).replace(
+                    tzinfo=NYC_TZ
+                )
+            except (ValueError, TypeError):
+                self._debug_datetime = None
+        elif isinstance(raw_dt, datetime):
+            self._debug_datetime = raw_dt if raw_dt.tzinfo else raw_dt.replace(tzinfo=NYC_TZ)
+        self._suppress_notifications = self.entry.options.get(
+            CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
+        )
+        self._notify_service = self.entry.options.get(
+            CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
+        )
+        if self._debug_enabled:
+            logger.warning(
+                "ASP Parking: DEBUG MODE is active -- overrides in effect "
+                "(lat=%s, lon=%s, datetime=%s)",
+                self._debug_lat,
+                self._debug_lon,
+                self._debug_datetime,
+            )
 
     async def async_stop(self) -> None:
         """Stop all listeners and cancel the debouncer."""
@@ -403,6 +466,12 @@ class ASPParkingCoordinator:
         """
         lat = self._pending_lat
         lon = self._pending_lon
+
+        # Debug coordinate override (D-06)
+        if self._debug_enabled and self._debug_lat is not None and self._debug_lon is not None:
+            lat = self._debug_lat
+            lon = self._debug_lon
+
         if lat is None or lon is None:
             return
 
@@ -450,6 +519,9 @@ class ASPParkingCoordinator:
             # Clear error state on success
             self.data.last_error = None
             self.data.last_error_time = None
+
+            # --- Notification (Phase 24, D-12/D-14/D-15/D-16) ---
+            await self._async_maybe_send_notification(schedule)
 
             logger.info(
                 "Pipeline resolved: %s (%s side), %d signs, schedule=%s",
@@ -531,7 +603,7 @@ class ASPParkingCoordinator:
             # Bridge unavailable/unknown: fall through to direct sources
 
         # D-07/D-08: No bridge or bridge unavailable -- use holiday calendar + 311 API
-        today = datetime.now(NYC_TZ).date()
+        today = self._get_now().date()
 
         info = self._holiday_calendar.is_suspended(today)
 
@@ -544,6 +616,55 @@ class ASPParkingCoordinator:
 
         self.data.suspension_state = info
         self._async_notify_entities()
+
+    async def _async_maybe_send_notification(
+        self, schedule: ScheduleResult
+    ) -> None:
+        """Send push notification if next ASP window is within 2 hours.
+
+        Guards:
+        - CONF_NOTIFY_SERVICE must be configured (D-15)
+        - Notification suppressed when debug_enabled AND suppress_notifications (D-15)
+        - Only fires once per unique CleaningWindow (D-14)
+        """
+        if not self._notify_service:
+            return
+        if self._debug_enabled and self._suppress_notifications:
+            return
+        if not isinstance(schedule, ScheduleFound):
+            return
+        if schedule.next_window is None:
+            return
+
+        window = schedule.next_window
+        now_utc = dt_util.utcnow()
+        window_start_utc = dt_util.as_utc(window.start_datetime)
+        seconds_until = (window_start_utc - now_utc).total_seconds()
+
+        if not (0 < seconds_until <= 2 * 3600):
+            return
+        if window == self.data.last_notified_window:
+            return
+
+        # Format the notification message
+        time_str = window.start_datetime.strftime("%-I:%M %p")
+        street = schedule.on_street if hasattr(schedule, 'on_street') else "your street"
+        message = (
+            f"ASP parking cleaning starts at {time_str} on {street}. "
+            f"Move your car before then."
+        )
+
+        try:
+            await self.hass.services.async_call(
+                "notify",
+                self._notify_service,
+                {"message": message, "title": "ASP Parking"},
+                blocking=False,
+            )
+            self.data.last_notified_window = window
+            logger.info("ASP notification sent for window at %s", time_str)
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to send ASP notification via %s", self._notify_service)
 
     # ------------------------------------------------------------------
     # Manual and periodic triggers
@@ -578,5 +699,10 @@ class ASPParkingCoordinator:
             self._pending_lat = self.data.last_lat
             self._pending_lon = self.data.last_lon
             self.hass.async_create_task(self._debouncer.async_call())
+            # Recheck notification on periodic refresh (D-16)
+            if self.data.schedule_result is not None:
+                self.hass.async_create_task(
+                    self._async_maybe_send_notification(self.data.schedule_result)
+                )
         else:
             logger.debug("Periodic refresh skipped: no GPS coordinates yet")
