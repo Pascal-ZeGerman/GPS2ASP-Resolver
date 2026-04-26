@@ -332,17 +332,25 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
             options[CONF_DEBUG_ENABLED] = user_input.get(
                 CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED
             )
-            # Store lat/lon only if provided (NumberSelector may return 0.0 not None for empty)
+            # Store lat/lon only if provided; clear from options when blank so stale
+            # values don't persist across saves (WR-02)
             debug_lat = user_input.get(CONF_DEBUG_LAT)
             debug_lon = user_input.get(CONF_DEBUG_LON)
             if debug_lat is not None:
                 options[CONF_DEBUG_LAT] = float(debug_lat)
+            else:
+                options.pop(CONF_DEBUG_LAT, None)
             if debug_lon is not None:
                 options[CONF_DEBUG_LON] = float(debug_lon)
-            # Store datetime string if provided
+            else:
+                options.pop(CONF_DEBUG_LON, None)
+            # Store datetime string if provided; clear when blank so stale ISO
+            # strings don't re-activate the override at startup (WR-03)
             debug_dt = user_input.get(CONF_DEBUG_DATETIME)
             if debug_dt:
                 options[CONF_DEBUG_DATETIME] = debug_dt
+            else:
+                options.pop(CONF_DEBUG_DATETIME, None)
             options[CONF_SUPPRESS_NOTIFICATIONS] = user_input.get(
                 CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
             )

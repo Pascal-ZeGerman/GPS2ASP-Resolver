@@ -317,13 +317,15 @@ class ASPParkingCoordinator:
         raw_dt = self.entry.options.get(CONF_DEBUG_DATETIME, DEFAULT_DEBUG_DATETIME)
         if raw_dt and isinstance(raw_dt, str):
             try:
-                self._debug_datetime = datetime.fromisoformat(raw_dt).replace(
-                    tzinfo=NYC_TZ
-                )
+                parsed = datetime.fromisoformat(raw_dt)
+                if parsed.tzinfo is not None:
+                    self._debug_datetime = parsed.astimezone(NYC_TZ)
+                else:
+                    self._debug_datetime = parsed.replace(tzinfo=NYC_TZ)
             except (ValueError, TypeError):
                 self._debug_datetime = None
         elif isinstance(raw_dt, datetime):
-            self._debug_datetime = raw_dt if raw_dt.tzinfo else raw_dt.replace(tzinfo=NYC_TZ)
+            self._debug_datetime = raw_dt.astimezone(NYC_TZ) if raw_dt.tzinfo else raw_dt.replace(tzinfo=NYC_TZ)
         self._suppress_notifications = self.entry.options.get(
             CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
         )
@@ -678,9 +680,11 @@ class ASPParkingCoordinator:
         If no GPS coordinates have been received yet, logs an info message and
         returns.
         """
-        if self.data.last_lat is not None and self.data.last_lon is not None:
-            self._pending_lat = self.data.last_lat
-            self._pending_lon = self.data.last_lon
+        lat = self._pending_lat if self._pending_lat is not None else self.data.last_lat
+        lon = self._pending_lon if self._pending_lon is not None else self.data.last_lon
+        if lat is not None and lon is not None:
+            self._pending_lat = lat
+            self._pending_lon = lon
             await self._async_resolve_pipeline()  # bypass debouncer for force path
         else:
             logger.info("Cannot force resolve: no GPS coordinates available yet")
@@ -696,13 +700,10 @@ class ASPParkingCoordinator:
             now: Current datetime (provided by async_track_time_interval).
         """
         if self.data.last_lat is not None and self.data.last_lon is not None:
-            self._pending_lat = self.data.last_lat
-            self._pending_lon = self.data.last_lon
+            if self._pending_lat is None:
+                self._pending_lat = self.data.last_lat
+            if self._pending_lon is None:
+                self._pending_lon = self.data.last_lon
             self.hass.async_create_task(self._debouncer.async_call())
-            # Recheck notification on periodic refresh (D-16)
-            if self.data.schedule_result is not None:
-                self.hass.async_create_task(
-                    self._async_maybe_send_notification(self.data.schedule_result)
-                )
         else:
             logger.debug("Periodic refresh skipped: no GPS coordinates yet")
