@@ -44,3 +44,9 @@ DEFAULT_SUPPRESS_NOTIFICATIONS = False
 # Notifications (Phase 24)
 CONF_NOTIFY_SERVICE = "notify_service"
 DEFAULT_NOTIFY_SERVICE = ""
+
+# Spatial index download (first-time HA setup)
+INDEX_DOWNLOAD_URL = (
+    "https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver"
+    "/releases/latest/download/index.zip"
+)
