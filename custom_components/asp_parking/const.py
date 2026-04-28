@@ -48,5 +48,5 @@ DEFAULT_NOTIFY_SERVICE = ""
 # Spatial index download (first-time HA setup)
 INDEX_DOWNLOAD_URL = (
     "https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver"
-    "/releases/latest/download/index.zip"
+    "/releases/download/index-v1/index.zip"
 )
