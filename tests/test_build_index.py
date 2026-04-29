@@ -32,13 +32,16 @@ from build_index import (
 
 class TestNormalizeStreetName:
     def test_directional_east(self):
-        assert _normalize_street_name("E 100 ST") == "EAST 100 STREET"
+        # SODA fixed-width: "EAST  100 STREET" (2 spaces before 3-digit number)
+        assert _normalize_street_name("E 100 ST") == "EAST  100 STREET"
 
     def test_directional_west(self):
-        assert _normalize_street_name("W 4 ST") == "WEST 4 STREET"
+        # SODA fixed-width: "WEST    4 STREET" (4 spaces before 1-digit number)
+        assert _normalize_street_name("W 4 ST") == "WEST    4 STREET"
 
     def test_directional_north(self):
-        assert _normalize_street_name("N 10 AVE") == "NORTH 10 AVENUE"
+        # SODA fixed-width: "NORTH   10 AVENUE" (3 spaces before 2-digit number)
+        assert _normalize_street_name("N 10 AVE") == "NORTH   10 AVENUE"
 
     def test_suffix_only(self):
         assert _normalize_street_name("PROSPECT PL") == "PROSPECT PLACE"
@@ -51,8 +54,8 @@ class TestNormalizeStreetName:
         assert _normalize_street_name("") == ""
 
     def test_lowercase_input(self):
-        # Function should uppercase internally
-        assert _normalize_street_name("e 100 st") == "EAST 100 STREET"
+        # Function should uppercase internally; SODA fixed-width applies
+        assert _normalize_street_name("e 100 st") == "EAST  100 STREET"
 
 
 class TestFindCrossStreet:
@@ -215,9 +218,10 @@ class TestBuildIntersectionIndex:
 
         idx = _build_intersection_index(cross_streets, gdf_street_names)
 
-        # E 14 ST should normalize to EAST 14 STREET; W 14 ST to WEST 14 STREET
-        assert 7 in idx.get(("BROADWAY", "EAST 14 STREET"), set())
-        assert 7 in idx.get(("BROADWAY", "WEST 14 STREET"), set())
+        # E 14 ST should normalize to EAST   14 STREET (SODA fixed-width);
+        # W 14 ST to WEST   14 STREET
+        assert 7 in idx.get(("BROADWAY", "EAST   14 STREET"), set())
+        assert 7 in idx.get(("BROADWAY", "WEST   14 STREET"), set())
 
 
 class TestBfsBetween:

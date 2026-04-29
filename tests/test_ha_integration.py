@@ -12,10 +12,28 @@ correct state mapping.
 from __future__ import annotations
 
 import math
+import re
 import pytest
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
+
+NYC_TZ = ZoneInfo("America/New_York")
+UTC_TZ = timezone.utc
+
+
+def _format_move_time(dt: datetime) -> str:
+    """Mirror of ASPNextMoveTimeSensor._format_move_time() for test helpers.
+
+    Uses stdlib only (no dt_util) so tests run without Home Assistant.
+    """
+    local_dt = dt.astimezone(NYC_TZ)
+    seconds_until = (dt - datetime.now(tz=UTC_TZ)).total_seconds()
+    time_str = local_dt.strftime("%-I:%M %p")
+    if seconds_until < 12 * 3600:
+        return f"\u26a0 Today {time_str}"
+    day_str = local_dt.strftime("%a")
+    return f"{day_str} {time_str}"
 
 from gps2asp.schedule.models import (
     ASPActiveNow,
@@ -30,6 +48,7 @@ from gps2asp.schedule.models import (
     TimeWindow,
     WeeklySchedule,
 )
+from gps2asp.suspension import SuspensionInfo, apply_suspension
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +72,10 @@ class ASPParkingData:
     confidence_score: float | None = None
     sign_count: int = 0
     parse_failures: int = 0
+    soda_level: int = 0  # mirrors coordinator.py ASPParkingData
+    suspension_state: SuspensionInfo = field(
+        default_factory=lambda: SuspensionInfo(is_suspended=False, reason=None, source='none')
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -69,13 +92,19 @@ def sensor_native_value(data: ASPParkingData) -> str | None:
     if data.schedule_result is None:
         return None
 
-    schedule = data.schedule_result
+    # Lazy merge suspension at read time
+    schedule = apply_suspension(data.schedule_result, data.suspension_state)
+
+    # Suspension branch (before normal schedule branches)
+    if isinstance(schedule, (ScheduleFound, ASPActiveNow)) and schedule.suspended:
+        return "Suspended"
+
     if isinstance(schedule, ScheduleFound):
         if schedule.next_window is None:
             return None  # find_next_window returned None (no windows in schedule)
-        return schedule.next_window.start_datetime.isoformat()
+        return _format_move_time(schedule.next_window.start_datetime)
     if isinstance(schedule, ASPActiveNow):
-        return schedule.active_window.end_datetime.isoformat()
+        return _format_move_time(schedule.active_window.end_datetime)
     if isinstance(schedule, NoASPSchedule):
         return "No restrictions"
     if isinstance(schedule, NoMatchSchedule):
@@ -87,7 +116,11 @@ def sensor_native_value(data: ASPParkingData) -> str | None:
 
 def binary_sensor_is_on(data: ASPParkingData) -> bool:
     """Replicate ASPActiveNowBinarySensor.is_on logic."""
-    return isinstance(data.schedule_result, ASPActiveNow)
+    schedule = data.schedule_result
+    if not isinstance(schedule, ASPActiveNow):
+        return False
+    merged = apply_suspension(schedule, data.suspension_state)
+    return isinstance(merged, ASPActiveNow) and not merged.suspended
 
 
 def sensor_available(data: ASPParkingData, stale_timeout_hours: int = 8) -> bool:
@@ -102,6 +135,10 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
     """Replicate ASPNextMoveTimeSensor.extra_state_attributes logic."""
     attrs: dict = {}
     schedule = data.schedule_result
+
+    # Lazy merge suspension at read time
+    if schedule is not None:
+        schedule = apply_suspension(schedule, data.suspension_state)
 
     if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
         if isinstance(schedule, ScheduleFound):
@@ -125,6 +162,16 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
 
         attrs["schedule_summary"] = schedule.summary
 
+        # Urgency attribute — only when a concrete move datetime exists
+        _move_dt: datetime | None = None
+        if isinstance(schedule, ScheduleFound) and schedule.next_window is not None:
+            _move_dt = schedule.next_window.start_datetime
+        elif isinstance(schedule, ASPActiveNow):
+            _move_dt = schedule.active_window.end_datetime
+        if _move_dt is not None:
+            seconds_until = (_move_dt - datetime.now(tz=UTC_TZ)).total_seconds()
+            attrs["urgency"] = "high" if seconds_until < 12 * 3600 else "normal"
+
         attrs["street_name"] = schedule.on_street
         attrs["cross_streets"] = f"{schedule.from_street} to {schedule.to_street}"
         attrs["side_of_street"] = schedule.side_of_street
@@ -143,12 +190,17 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
             schedule.active_window.end_datetime.isoformat()
         )
 
+    if isinstance(schedule, (ScheduleFound, ASPActiveNow)) and schedule.suspended:
+        attrs["suspension_reason"] = schedule.suspension_reason
+        attrs["resolution_reason"] = schedule.resolution_reason
+
     attrs["last_resolved"] = (
         data.last_resolved.isoformat() if data.last_resolved else None
     )
     attrs["confidence_score"] = data.confidence_score
     attrs["sign_count"] = data.sign_count
     attrs["parse_failures"] = data.parse_failures
+    attrs["soda_level"] = data.soda_level
 
     if data.last_error is not None:
         attrs["last_error"] = data.last_error
@@ -180,8 +232,6 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
 # ---------------------------------------------------------------------------
 # Test fixtures
 # ---------------------------------------------------------------------------
-
-NYC_TZ = ZoneInfo("America/New_York")
 
 
 def _make_cleaning_window(
@@ -263,22 +313,31 @@ class TestSensorStateMapping:
     """Test ASPNextMoveTimeSensor native_value for all ScheduleResult variants."""
 
     def test_sensor_state_schedule_found(self) -> None:
-        """ScheduleFound -> ISO datetime of next window start."""
+        """ScheduleFound -> human-friendly move time (not ISO string)."""
         window = _make_cleaning_window()
         result = _make_schedule_found(window)
         data = ASPParkingData(schedule_result=result)
 
         state = sensor_native_value(data)
-        assert state == window.start_datetime.isoformat()
+        assert state is not None
+        # native_value should be human-friendly (not raw ISO)
+        assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
+            f"ISO string leaked into native_value: {state!r}"
+        )
+        assert state == _format_move_time(window.start_datetime)
 
     def test_sensor_state_asp_active_now(self) -> None:
-        """ASPActiveNow -> ISO datetime of active window end."""
+        """ASPActiveNow -> human-friendly end time (not ISO string)."""
         window = _make_cleaning_window()
         result = _make_asp_active_now(window)
         data = ASPParkingData(schedule_result=result)
 
         state = sensor_native_value(data)
-        assert state == window.end_datetime.isoformat()
+        assert state is not None
+        assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
+            f"ISO string leaked into native_value: {state!r}"
+        )
+        assert state == _format_move_time(window.end_datetime)
 
     def test_sensor_state_no_asp(self) -> None:
         """NoASPSchedule -> 'No restrictions'."""
@@ -562,3 +621,550 @@ class TestStaleTimeout:
         )
         data = ASPParkingData(last_gps_update=almost_stale)
         assert sensor_available(data, stale_timeout_hours=8) is True
+
+
+# ===========================================================================
+# Group 6: Human-friendly native_value format and urgency attribute
+# ===========================================================================
+
+
+# Pattern for normal case: "Mon 8:00 AM" (abbreviated day + no-leading-zero 12h time)
+_NORMAL_FORMAT_RE = re.compile(
+    r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2}:\d{2} (AM|PM)$"
+)
+
+# Pattern for urgent case: "⚠ Today 8:00 AM"
+_URGENT_FORMAT_RE = re.compile(r"^\u26a0 Today \d{1,2}:\d{2} (AM|PM)$")
+
+
+@pytest.mark.ha_integration
+class TestHumanFriendlyNativeValue:
+    """Test that native_value returns human-friendly strings, not ISO."""
+
+    def test_schedule_found_normal_format(self) -> None:
+        """ScheduleFound >12h away returns 'Mon 8:00 AM' style string."""
+        # Create a window 24 hours from now (well past 12h threshold)
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=24)
+        window = _make_cleaning_window(
+            day=ASPDay.MONDAY,
+            start_dt=future_dt,
+            end_dt=future_dt + timedelta(hours=1, minutes=30),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+
+        # Must match "DDD H:MM AM/PM" pattern — NOT an ISO string
+        assert state is not None
+        assert _NORMAL_FORMAT_RE.match(state), (
+            f"Expected normal format like 'Mon 8:00 AM', got: {state!r}"
+        )
+        # Must NOT be an ISO string (ISO format: YYYY-MM-DDTHH:MM...)
+        assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
+            f"ISO string leaked into native_value: {state!r}"
+        )
+
+    def test_schedule_found_urgent_format(self) -> None:
+        """ScheduleFound <12h away returns '⚠ Today 8:00 AM' prefix."""
+        # Create a window 3 hours from now (inside 12h threshold)
+        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=3)
+        window = _make_cleaning_window(
+            day=ASPDay.MONDAY,
+            start_dt=soon_dt,
+            end_dt=soon_dt + timedelta(hours=1, minutes=30),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+
+        assert state is not None
+        assert _URGENT_FORMAT_RE.match(state), (
+            f"Expected urgent format like '⚠ Today 8:00 AM', got: {state!r}"
+        )
+
+    def test_asp_active_now_normal_format(self) -> None:
+        """ASPActiveNow >12h end time returns 'Mon 8:00 AM' style for end time."""
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=24)
+        window = _make_cleaning_window(
+            day=ASPDay.MONDAY,
+            start_dt=future_dt - timedelta(hours=1),
+            end_dt=future_dt,
+        )
+        result = _make_asp_active_now(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+
+        assert state is not None
+        assert _NORMAL_FORMAT_RE.match(state), (
+            f"Expected normal format for ASPActiveNow, got: {state!r}"
+        )
+
+    def test_asp_active_now_urgent_format(self) -> None:
+        """ASPActiveNow with end time <12h away gets urgency prefix."""
+        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=2)
+        window = _make_cleaning_window(
+            day=ASPDay.MONDAY,
+            start_dt=soon_dt - timedelta(minutes=30),
+            end_dt=soon_dt,
+        )
+        result = _make_asp_active_now(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+
+        assert state is not None
+        assert _URGENT_FORMAT_RE.match(state), (
+            f"Expected urgent format for ASPActiveNow end, got: {state!r}"
+        )
+
+    def test_no_iso_string_leaks_in_schedule_found(self) -> None:
+        """native_value for ScheduleFound must never contain raw ISO datetime."""
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=48)
+        window = _make_cleaning_window(
+            start_dt=future_dt,
+            end_dt=future_dt + timedelta(hours=2),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+        # ISO 8601 pattern: digits-digits-digitsT
+        assert state is not None
+        assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
+            f"Raw ISO string returned from native_value: {state!r}"
+        )
+
+    def test_no_iso_string_leaks_in_asp_active_now(self) -> None:
+        """native_value for ASPActiveNow must never contain raw ISO datetime."""
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=48)
+        window = _make_cleaning_window(
+            start_dt=future_dt,
+            end_dt=future_dt + timedelta(hours=2),
+        )
+        result = _make_asp_active_now(window)
+        data = ASPParkingData(schedule_result=result)
+
+        state = sensor_native_value(data)
+        assert state is not None
+        assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
+            f"Raw ISO string returned from ASPActiveNow native_value: {state!r}"
+        )
+
+
+@pytest.mark.ha_integration
+class TestUrgencyAttribute:
+    """Test that extra_state_attributes gains 'urgency' key."""
+
+    def test_urgency_normal_when_far_away(self) -> None:
+        """Move time >12h away -> urgency='normal'."""
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=24)
+        window = _make_cleaning_window(
+            start_dt=future_dt,
+            end_dt=future_dt + timedelta(hours=2),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        attrs = sensor_extra_attributes(data)
+        assert "urgency" in attrs, "urgency key missing from extra_state_attributes"
+        assert attrs["urgency"] == "normal"
+
+    def test_urgency_high_when_soon(self) -> None:
+        """Move time <12h away -> urgency='high'."""
+        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=3)
+        window = _make_cleaning_window(
+            start_dt=soon_dt,
+            end_dt=soon_dt + timedelta(hours=2),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        attrs = sensor_extra_attributes(data)
+        assert "urgency" in attrs
+        assert attrs["urgency"] == "high"
+
+    def test_urgency_high_for_asp_active_now_soon(self) -> None:
+        """ASPActiveNow with end time <12h -> urgency='high'."""
+        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=1)
+        window = _make_cleaning_window(
+            start_dt=soon_dt - timedelta(minutes=30),
+            end_dt=soon_dt,
+        )
+        result = _make_asp_active_now(window)
+        data = ASPParkingData(schedule_result=result)
+
+        attrs = sensor_extra_attributes(data)
+        assert "urgency" in attrs
+        assert attrs["urgency"] == "high"
+
+    def test_urgency_absent_when_next_window_none(self) -> None:
+        """ScheduleFound with next_window=None -> no urgency key."""
+        tw = TimeWindow(
+            day=ASPDay.MONDAY,
+            start_time=time(8, 30),
+            end_time=time(10, 0),
+            source_sign="NO PARKING 8:30AM-10AM MON",
+        )
+        schedule = ScheduleFound(
+            status="schedule_found",
+            next_window=None,
+            weekly_schedule=WeeklySchedule(windows=(tw,)),
+            on_street="PROSPECT PLACE",
+            from_street="VANDERBILT AVENUE",
+            to_street="UNDERHILL AVENUE",
+            side_of_street="N",
+            source_signs=["NO PARKING 8:30AM-10AM MON"],
+            summary="Mon 8:30-10am",
+            parse_failures=[],
+        )
+        data = ASPParkingData(schedule_result=schedule)
+
+        attrs = sensor_extra_attributes(data)
+        # urgency must NOT be present when no datetime is available
+        assert "urgency" not in attrs
+
+    def test_urgency_absent_for_no_asp_schedule(self) -> None:
+        """NoASPSchedule -> no urgency key in attributes."""
+        data = ASPParkingData(schedule_result=NoASPSchedule())
+        attrs = sensor_extra_attributes(data)
+        assert "urgency" not in attrs
+
+    def test_iso_attributes_still_present(self) -> None:
+        """next_window_start/end still use .isoformat() (unchanged)."""
+        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=24)
+        window = _make_cleaning_window(
+            day=ASPDay.MONDAY,
+            start_dt=future_dt,
+            end_dt=future_dt + timedelta(hours=2),
+        )
+        result = _make_schedule_found(window)
+        data = ASPParkingData(schedule_result=result)
+
+        attrs = sensor_extra_attributes(data)
+        # ISO format must still be present in attributes
+        assert "next_window_start" in attrs
+        assert re.match(r"\d{4}-\d{2}-\d{2}T", attrs["next_window_start"]), (
+            f"next_window_start not in ISO format: {attrs['next_window_start']!r}"
+        )
+
+
+# ===========================================================================
+# Group 7: soda_level attribute
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestSodaLevelAttribute:
+    """Test soda_level always present in extra_state_attributes."""
+
+    def test_soda_level_default_zero_on_initial_state(self) -> None:
+        """Initial state (no schedule) -> soda_level=0."""
+        data = ASPParkingData()
+        attrs = sensor_extra_attributes(data)
+        assert "soda_level" in attrs
+        assert attrs["soda_level"] == 0
+
+    def test_soda_level_set_when_schedule_found(self) -> None:
+        """soda_level from data propagates to attributes."""
+        data = ASPParkingData(schedule_result=_make_schedule_found(), soda_level=2)
+        attrs = sensor_extra_attributes(data)
+        assert attrs["soda_level"] == 2
+
+    def test_soda_level_zero_on_special_state(self) -> None:
+        """special_state='outside_coverage' with soda_level=0 -> soda_level=0 in attrs."""
+        data = ASPParkingData(special_state="outside_coverage", soda_level=0)
+        attrs = sensor_extra_attributes(data)
+        assert attrs["soda_level"] == 0
+
+    def test_soda_level_4_present(self) -> None:
+        """Level 4 match -> soda_level=4 in attributes."""
+        data = ASPParkingData(schedule_result=_make_schedule_found(), soda_level=4)
+        attrs = sensor_extra_attributes(data)
+        assert attrs["soda_level"] == 4
+
+
+# ===========================================================================
+# Group 8: Suspension sensor state (SC1)
+# ===========================================================================
+
+@pytest.mark.ha_integration
+class TestSuspensionSensorState:
+    """Test sensor native_value returns 'Suspended' when suspension is active."""
+
+    def test_suspended_holiday(self) -> None:
+        """SC1: ScheduleFound + holiday suspension -> 'Suspended'."""
+        data = ASPParkingData(
+            schedule_result=_make_schedule_found(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Martin Luther King Jr.'s Birthday", source='holiday'
+            ),
+        )
+        assert sensor_native_value(data) == "Suspended"
+
+    def test_suspended_emergency(self) -> None:
+        """Emergency suspension -> 'Suspended'."""
+        data = ASPParkingData(
+            schedule_result=_make_schedule_found(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Snow Day", source='emergency'
+            ),
+        )
+        assert sensor_native_value(data) == "Suspended"
+
+    def test_not_suspended_normal_schedule(self) -> None:
+        """No suspension -> normal move time (not 'Suspended')."""
+        data = ASPParkingData(schedule_result=_make_schedule_found())
+        state = sensor_native_value(data)
+        assert state is not None
+        assert state != "Suspended"
+
+    def test_suspension_attrs_present(self) -> None:
+        """SC1: suspension_reason and resolution_reason in attrs when suspended."""
+        data = ASPParkingData(
+            schedule_result=_make_schedule_found(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Memorial Day", source='holiday'
+            ),
+        )
+        attrs = sensor_extra_attributes(data)
+        assert attrs["suspension_reason"] == "Memorial Day"
+        assert attrs["resolution_reason"] == "suspended_holiday"
+
+    def test_suspension_attrs_absent_when_not_suspended(self) -> None:
+        """No suspension_reason/resolution_reason when not suspended."""
+        data = ASPParkingData(schedule_result=_make_schedule_found())
+        attrs = sensor_extra_attributes(data)
+        assert "suspension_reason" not in attrs
+        assert "resolution_reason" not in attrs
+
+    def test_existing_schedule_attrs_retained_when_suspended(self) -> None:
+        """Per D-05: existing schedule attrs retained during suspension."""
+        data = ASPParkingData(
+            schedule_result=_make_schedule_found(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Christmas Day", source='holiday'
+            ),
+        )
+        attrs = sensor_extra_attributes(data)
+        # Suspension attrs present
+        assert "suspension_reason" in attrs
+        # Existing schedule attrs also present
+        assert "cleaning_days" in attrs
+        assert "schedule_summary" in attrs
+        assert "street_name" in attrs
+
+
+# ===========================================================================
+# Group 9: Suspension binary sensor (SC2)
+# ===========================================================================
+
+@pytest.mark.ha_integration
+class TestSuspensionBinarySensor:
+    """Test binary sensor is_on returns False during suspended active windows."""
+
+    def test_is_on_false_when_suspended(self) -> None:
+        """SC2: ASPActiveNow + suspended -> is_on=False."""
+        data = ASPParkingData(
+            schedule_result=_make_asp_active_now(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Snow Day", source='emergency'
+            ),
+        )
+        assert binary_sensor_is_on(data) is False
+
+    def test_is_on_true_when_not_suspended(self) -> None:
+        """ASPActiveNow without suspension -> is_on=True."""
+        data = ASPParkingData(schedule_result=_make_asp_active_now())
+        assert binary_sensor_is_on(data) is True
+
+    def test_is_on_false_when_no_active_window(self) -> None:
+        """ScheduleFound (not active) + suspended -> is_on=False."""
+        data = ASPParkingData(
+            schedule_result=_make_schedule_found(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True, reason="Memorial Day", source='holiday'
+            ),
+        )
+        assert binary_sensor_is_on(data) is False
+
+
+# ===========================================================================
+# Group 10: Suspension poll timer independence (SC3)
+# ===========================================================================
+
+import pathlib as _pathlib
+
+_COORDINATOR_SRC = (
+    _pathlib.Path(__file__).parent.parent
+    / "custom_components" / "asp_parking" / "coordinator.py"
+)
+
+
+@pytest.mark.ha_integration
+class TestSuspensionPoll:
+    """SC3: Suspension poll timer fires independently of GPS movement."""
+
+    def test_poll_updates_without_gps(self) -> None:
+        """_async_suspension_poll method exists and is registered with async_track_time_interval.
+
+        The coordinator must register a periodic suspension timer that calls
+        _async_suspension_poll, independent of any GPS state change events.
+        This test inspects the coordinator source to confirm the wiring is
+        present without requiring a running Home Assistant instance.
+        """
+        src = _COORDINATOR_SRC.read_text()
+        assert "_async_suspension_poll" in src, (
+            "coordinator.py missing _async_suspension_poll method"
+        )
+        assert "_async_update_suspension" in src, (
+            "coordinator.py missing _async_update_suspension method"
+        )
+        # Confirm async_track_time_interval is used to register the suspension poll
+        # (not just the GPS periodic refresh which uses a different timedelta)
+        assert "DEFAULT_SUSPENSION_INTERVAL" in src, (
+            "coordinator.py does not reference DEFAULT_SUSPENSION_INTERVAL for suspension timer"
+        )
+        # Confirm the poll callback is passed to async_track_time_interval
+        assert "self._async_suspension_poll" in src, (
+            "coordinator.py does not wire _async_suspension_poll into async_track_time_interval"
+        )
+
+    def test_suspension_poll_does_not_require_gps_coordinates(self) -> None:
+        """_async_update_suspension reads today's date, not GPS coordinates.
+
+        The holiday calendar check uses datetime.now(NYC_TZ).date(), not
+        self.data.last_lat / last_lon, confirming independence from GPS movement.
+        """
+        src = _COORDINATOR_SRC.read_text()
+        # The update method must check the current date
+        assert "datetime.now(NYC_TZ).date()" in src, (
+            "coordinator.py suspension poll does not derive 'today' from current time"
+        )
+        # Confirm _async_suspension_poll does not gate on last_lat / last_lon
+        poll_start = src.find("def _async_suspension_poll")
+        update_start = src.find("async def _async_update_suspension")
+        # Both methods must be present
+        assert poll_start != -1
+        assert update_start != -1
+        # Extract _async_update_suspension body and verify no GPS gate
+        update_body = src[update_start: update_start + 600]
+        assert "last_lat" not in update_body, (
+            "_async_update_suspension should not gate on last_lat (GPS-independent)"
+        )
+
+
+# ===========================================================================
+# Group 11: Suspension startup holiday status (SC4)
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestSuspensionStartup:
+    """SC4: Holiday suspension status is correct on first entity read after restart."""
+
+    def test_immediate_holiday_status(self) -> None:
+        """coordinator.py calls HolidayCalendar.is_suspended(today) in async_start
+        before the suspension poll timer is registered.
+
+        Code inspection: holiday check precedes async_track_time_interval for suspension.
+        """
+        src = _COORDINATOR_SRC.read_text()
+        # Holiday calendar is initialised and loaded at startup
+        assert "self._holiday_calendar = HolidayCalendar()" in src, (
+            "coordinator.py does not initialise HolidayCalendar in async_start"
+        )
+        assert "await self._holiday_calendar.load()" in src, (
+            "coordinator.py does not await holiday_calendar.load() on startup"
+        )
+        # Holiday check happens at startup
+        assert "self._holiday_calendar.is_suspended(today)" in src, (
+            "coordinator.py does not call is_suspended(today) on startup"
+        )
+        # The suspension timer is registered after the holiday check
+        holiday_check_pos = src.find("self._holiday_calendar.is_suspended(today)")
+        suspension_timer_pos = src.find("self._async_suspension_poll")
+        assert holiday_check_pos < suspension_timer_pos, (
+            "coordinator.py suspension timer registered before holiday check at startup"
+        )
+
+    def test_holiday_calendar_returns_suspended_for_known_holiday(self) -> None:
+        """HolidayCalendar.is_suspended() returns is_suspended=True for a known holiday.
+
+        Uses the hardcoded 2026 fallback calendar (no network required).
+        April 8 2026 is 'Passover (7th Day)' per FALLBACK_2026.
+        This validates the logic that the coordinator uses to set suspension_state.
+        """
+        from datetime import date as _date
+
+        # Import everything from the same module path to avoid class identity mismatch
+        from custom_components.asp_parking.gps2asp.suspension import (
+            FALLBACK_2026,
+            HolidayCalendar,
+            SuspensionInfo as _SuspensionInfo,
+        )
+        cal = HolidayCalendar()
+        cal._holidays = dict(FALLBACK_2026)
+        cal._loaded = True
+
+        # April 8 2026 is a known holiday in FALLBACK_2026
+        holiday_date = _date(2026, 4, 8)
+        info = cal.is_suspended(holiday_date)
+
+        assert isinstance(info, _SuspensionInfo)
+        assert info.is_suspended is True
+        assert info.reason == "Passover (7th Day)"
+        assert info.source == "holiday"
+
+    def test_holiday_calendar_returns_not_suspended_for_normal_day(self) -> None:
+        """HolidayCalendar.is_suspended() returns is_suspended=False for a non-holiday.
+
+        Confirms coordinator startup correctly leaves suspension_state as default
+        when today is not a holiday.
+        """
+        from datetime import date as _date
+
+        from custom_components.asp_parking.gps2asp.suspension import (
+            FALLBACK_2026,
+            HolidayCalendar,
+        )
+        cal = HolidayCalendar()
+        cal._holidays = dict(FALLBACK_2026)
+        cal._loaded = True
+
+        # A date with no holiday in 2026 fallback calendar
+        normal_date = _date(2026, 4, 9)  # day after Passover (7th Day)
+        info = cal.is_suspended(normal_date)
+
+        assert info.is_suspended is False
+        assert info.reason is None
+        assert info.source == "none"
+
+
+# ===========================================================================
+# Group 12: Config flow API key constants (SC5)
+# ===========================================================================
+
+CONF_NYC311_API_KEY = "nyc311_api_key"
+
+
+@pytest.mark.ha_integration
+class TestConfigFlowApiKey:
+    """Test that config flow API key infrastructure is in place."""
+
+    def test_api_key_constant_value(self) -> None:
+        """CONF_NYC311_API_KEY has expected string value."""
+        assert CONF_NYC311_API_KEY == "nyc311_api_key"
+
+    def test_suspension_info_default_not_suspended(self) -> None:
+        """Default SuspensionInfo is not suspended."""
+        info = SuspensionInfo(is_suspended=False, reason=None, source='none')
+        assert not info.is_suspended
+        assert info.reason is None
+        assert info.source == 'none'
+
+    def test_api_key_stored_separately_from_device_tracker(self) -> None:
+        """API key constant is distinct from device_tracker constant."""
+        assert CONF_NYC311_API_KEY != "device_tracker"

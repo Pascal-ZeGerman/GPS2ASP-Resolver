@@ -1,19 +1,20 @@
 """GPS2ASP pipeline: full GPS-to-ASP-schedule resolver.
 
 This module contains the implementation of resolve_asp(), the single public
-entry point that wires the three pipeline stages together.
+entry point that wires the four pipeline stages together.
 """
 
 from __future__ import annotations
 
 from typing import Literal, overload
 
-from gps2asp.api_models import ASPDebugResult, ASPResult
-from gps2asp.resolver import convert, resolve_segment
-from gps2asp.resolver.exceptions import AmbiguousResolutionError
-from gps2asp.schedule import compute_schedule
-from gps2asp.signs import retrieve_signs
-from gps2asp.signs.models import SignRetrievalSuccess
+from .api_models import ASPDebugResult, ASPResult
+from .resolver import convert, resolve_segment
+from .resolver.exceptions import AmbiguousResolutionError
+from .schedule import compute_schedule
+from .signs import retrieve_signs
+from .signs.models import SignRetrievalSuccess
+from .suspension import SuspensionInfo, apply_suspension
 
 
 @overload
@@ -21,6 +22,7 @@ async def resolve_asp(
     lat: float,
     lon: float,
     debug: Literal[False] = ...,
+    suspension_status: SuspensionInfo | None = ...,
 ) -> ASPResult: ...
 
 
@@ -29,6 +31,7 @@ async def resolve_asp(
     lat: float,
     lon: float,
     debug: Literal[True],
+    suspension_status: SuspensionInfo | None = ...,
 ) -> ASPDebugResult: ...
 
 
@@ -36,10 +39,12 @@ async def resolve_asp(
     lat: float,
     lon: float,
     debug: bool = False,
+    suspension_status: SuspensionInfo | None = None,
 ) -> ASPResult | ASPDebugResult:
     """Resolve GPS coordinates to an ASP schedule.
 
-    Runs the full three-stage pipeline: GPS -> street segment -> SODA signs -> schedule.
+    Runs the full pipeline: GPS -> street segment -> SODA signs -> schedule,
+    with an optional Stage 4 suspension annotation.
     AmbiguousResolutionError is caught and surfaced as structured fields on the result
     rather than propagating. All other errors (OutsideNYCError, NoSegmentFoundError,
     network failures) propagate to the caller.
@@ -49,6 +54,11 @@ async def resolve_asp(
         lon: Longitude in WGS84.
         debug: When True, returns ASPDebugResult with all intermediate pipeline state.
             When False (default), returns lean ASPResult.
+        suspension_status: Optional suspension check result. When provided and
+            is_suspended=True, apply_suspension() runs as Stage 4 after
+            compute_schedule(), annotating the result with suspended=True,
+            suspension_reason, and resolution_reason. When None (default),
+            pipeline is identical to pre-v3.0 — fully backwards compatible.
 
     Returns:
         ASPResult when debug=False; ASPDebugResult when debug=True.
@@ -85,6 +95,10 @@ async def resolve_asp(
     # Stage 3: signs -> schedule
     schedule = compute_schedule(sign_result)
 
+    # Stage 4: apply suspension annotation (optional, post-pipeline)
+    if suspension_status is not None:
+        schedule = apply_suspension(schedule, suspension_status)
+
     if debug:
         soda_level = sign_result.soda_level if isinstance(sign_result, SignRetrievalSuccess) else 0
         return ASPDebugResult.from_resolution(
@@ -100,4 +114,5 @@ async def resolve_asp(
         schedule=schedule,
         resolution_failed=False,
         resolution_error=None,
+        soda_level=sign_result.soda_level if isinstance(sign_result, SignRetrievalSuccess) else 0,
     )

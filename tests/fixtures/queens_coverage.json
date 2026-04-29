@@ -1,0 +1,127 @@
+[
+  {
+    "description": "160-10 89 AVENUE, Jamaica, NY, USA",
+    "lat": 40.706023,
+    "lon": -73.800255
+  },
+  {
+    "description": "107-06 150 STREET, Jamaica, NY, USA",
+    "lat": 40.69416,
+    "lon": -73.801028
+  },
+  {
+    "description": "144-30 SANFORD AVENUE, Flushing, NY, USA",
+    "lat": 40.7588,
+    "lon": -73.819406
+  },
+  {
+    "description": "35-35 168 STREET, Flushing, NY, USA",
+    "lat": 40.763968,
+    "lon": -73.797592
+  },
+  {
+    "description": "147-20 ARCHER AVENUE, Jamaica, NY, USA",
+    "lat": 40.700522,
+    "lon": -73.806861
+  },
+  {
+    "description": "41-15 KISSENA BOULEVARD, Flushing, NY, USA",
+    "lat": 40.758203,
+    "lon": -73.828462
+  },
+  {
+    "description": "136-19 SANFORD AVENUE, Flushing, NY, USA",
+    "lat": 40.757122,
+    "lon": -73.828178
+  },
+  {
+    "description": "33-33 FARRINGTON STREET, Flushing, NY, USA",
+    "lat": 40.76587,
+    "lon": -73.83199
+  },
+  {
+    "description": "45-15 BOWNE STREET, Flushing, NY, USA",
+    "lat": 40.753572,
+    "lon": -73.817783
+  },
+  {
+    "description": "138-11 FRANKLIN AVENUE, Flushing, NY, USA",
+    "lat": 40.755234,
+    "lon": -73.826216
+  },
+  {
+    "description": "31-15 DITMARS BOULEVARD, Astoria, NY, USA",
+    "lat": 40.775871,
+    "lon": -73.909936
+  },
+  {
+    "description": "25-30 31 STREET, Astoria, NY, USA",
+    "lat": 40.76993,
+    "lon": -73.91854
+  },
+  {
+    "description": "23-15 28 AVENUE, Astoria, NY, USA",
+    "lat": 40.770422,
+    "lon": -73.924771
+  },
+  {
+    "description": "30-50 38 STREET, Astoria, NY, USA",
+    "lat": 40.763171,
+    "lon": -73.916999
+  },
+  {
+    "description": "22-40 35 STREET, Astoria, NY, USA",
+    "lat": 40.774137,
+    "lon": -73.910152
+  },
+  {
+    "description": "37-21 80 STREET, Jackson Heights, NY, USA",
+    "lat": 40.748957,
+    "lon": -73.885789
+  },
+  {
+    "description": "34-20 74 STREET, Jackson Heights, NY, USA",
+    "lat": 40.752207,
+    "lon": -73.8926
+  },
+  {
+    "description": "35-40 82 STREET, Jackson Heights, NY, USA",
+    "lat": 40.750538,
+    "lon": -73.884717
+  },
+  {
+    "description": "78-10 34 AVENUE, Jackson Heights, NY, USA",
+    "lat": 40.753166,
+    "lon": -73.888209
+  },
+  {
+    "description": "108-20 68 ROAD, Forest Hills, NY, USA",
+    "lat": 40.726353,
+    "lon": -73.845256
+  },
+  {
+    "description": "67-35 DARTMOUTH STREET, Forest Hills, NY, USA",
+    "lat": 40.721487,
+    "lon": -73.855706
+  },
+  {
+    "description": "98-30 67 AVENUE, Forest Hills, NY, USA",
+    "lat": 40.724661,
+    "lon": -73.85493
+  },
+  {
+    "description": "71-15 AUSTIN STREET, Forest Hills, NY, USA",
+    "lat": 40.720089,
+    "lon": -73.844023
+  },
+  {
+    "description": "189-10 UNION TURNPIKE, Fresh Meadows, NY, USA",
+    "lat": 40.729435,
+    "lon": -73.779647
+  },
+  {
+    "description": "80-80 CHEVY CHASE STREET, Jamaica Estates, NY, USA",
+    "lat": 40.726199,
+    "lon": -73.78307
+  }
+]

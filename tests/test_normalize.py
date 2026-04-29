@@ -39,18 +39,21 @@ class TestNormalizeToSoda:
         assert normalize_to_soda("PARK TER") == "PARK TERRACE"
 
     def test_directional_expansion_east(self) -> None:
-        # Internal whitespace is collapsed before expansion so double-space
-        # in CSCL "E  100 ST" is normalized to single-space "EAST 100 STREET".
-        assert normalize_to_soda("E  100 ST") == "EAST 100 STREET"
+        # SODA uses fixed-width formatting: number right-justified in 5-char field.
+        # "E  100 ST" -> "EAST  100 STREET" (2 spaces before 3-digit number).
+        assert normalize_to_soda("E  100 ST") == "EAST  100 STREET"
 
     def test_directional_expansion_west(self) -> None:
-        assert normalize_to_soda("W 4 ST") == "WEST 4 STREET"
+        # "W 4 ST" -> "WEST    4 STREET" (4 spaces before 1-digit number).
+        assert normalize_to_soda("W 4 ST") == "WEST    4 STREET"
 
     def test_directional_expansion_north(self) -> None:
-        assert normalize_to_soda("N 6 ST") == "NORTH 6 STREET"
+        # "N 6 ST" -> "NORTH    6 STREET" (4 spaces before 1-digit number).
+        assert normalize_to_soda("N 6 ST") == "NORTH    6 STREET"
 
     def test_directional_expansion_south(self) -> None:
-        assert normalize_to_soda("S 5 PL") == "SOUTH 5 PLACE"
+        # "S 5 PL" -> "SOUTH    5 PLACE" (4 spaces before 1-digit number).
+        assert normalize_to_soda("S 5 PL") == "SOUTH    5 PLACE"
 
     def test_directional_not_expanded_essex(self) -> None:
         """ESSEX ST should NOT become EASTSSEX STREET."""
@@ -77,14 +80,14 @@ class TestNormalizeToSoda:
     def test_whitespace_leading_trailing_stripped(self) -> None:
         assert normalize_to_soda("  3 AVE  ") == "3 AVENUE"
 
-    def test_whitespace_internal_collapsed(self) -> None:
-        """Internal multiple spaces are collapsed to single space.
+    def test_whitespace_internal_reformatted(self) -> None:
+        """Internal whitespace is reformatted to SODA fixed-width.
 
-        CSCL uses variable spacing (e.g., "E  100 ST" with two spaces) but
-        SODA uses different variable spacing (e.g., "EAST   100 STREET" with
-        three spaces). Collapsing to single spaces ensures consistent matching.
+        CSCL uses variable spacing (e.g., "E  100 ST" with two spaces).
+        SODA uses fixed-width formatting (e.g., "EAST  100 STREET" with
+        the number right-justified in a 5-character field).
         """
-        assert normalize_to_soda("E  100 ST") == "EAST 100 STREET"
+        assert normalize_to_soda("E  100 ST") == "EAST  100 STREET"
 
     def test_lowercase_input(self) -> None:
         assert normalize_to_soda("prospect pl") == "PROSPECT PLACE"
@@ -131,6 +134,56 @@ class TestNormalizeToSoda:
         """WESTERN AVE should NOT expand W prefix."""
         assert normalize_to_soda("WESTERN AVE") == "WESTERN AVENUE"
 
+    # SODA fixed-width formatting for directional numbered streets
+    def test_soda_fixedwidth_single_digit(self) -> None:
+        """Single-digit number gets 4 spaces: EAST    7 STREET."""
+        assert normalize_to_soda("E 7 ST") == "EAST    7 STREET"
+
+    def test_soda_fixedwidth_double_digit(self) -> None:
+        """Double-digit number gets 3 spaces: WEST   86 STREET."""
+        assert normalize_to_soda("W 86 ST") == "WEST   86 STREET"
+
+    def test_soda_fixedwidth_triple_digit(self) -> None:
+        """Triple-digit number gets 2 spaces: EAST  100 STREET."""
+        assert normalize_to_soda("E 100 ST") == "EAST  100 STREET"
+
+    def test_soda_fixedwidth_not_applied_to_named(self) -> None:
+        """Named directional streets keep single spacing."""
+        assert normalize_to_soda("W BROADWAY") == "WEST BROADWAY"
+
+    def test_soda_fixedwidth_not_applied_to_non_directional(self) -> None:
+        """Non-directional numbered streets keep single spacing."""
+        assert normalize_to_soda("38 AVE") == "38 AVENUE"
+
+    def test_suffix_expansion_tpke(self) -> None:
+        """UNION TPKE should become UNION TURNPIKE (Queens coverage fix)."""
+        assert normalize_to_soda("UNION TPKE") == "UNION TURNPIKE"
+
+    def test_suffix_expansion_cres(self) -> None:
+        """72 CRES should become 72 CRESCENT (Queens coverage fix)."""
+        assert normalize_to_soda("72 CRES") == "72 CRESCENT"
+
+    # Lettered avenue prefix expansion (Manhattan East Village)
+    def test_lettered_avenue_ave_a(self) -> None:
+        """AVE A should become AVENUE A (Manhattan coverage fix)."""
+        assert normalize_to_soda("AVE A") == "AVENUE A"
+
+    def test_lettered_avenue_ave_b(self) -> None:
+        """AVE B should become AVENUE B (Manhattan coverage fix)."""
+        assert normalize_to_soda("AVE B") == "AVENUE B"
+
+    def test_lettered_avenue_ave_c(self) -> None:
+        """AVE C should become AVENUE C (Manhattan coverage fix)."""
+        assert normalize_to_soda("AVE C") == "AVENUE C"
+
+    def test_lettered_avenue_ave_d(self) -> None:
+        """AVE D should become AVENUE D (Manhattan coverage fix)."""
+        assert normalize_to_soda("AVE D") == "AVENUE D"
+
+    def test_lettered_avenue_does_not_affect_numbered(self) -> None:
+        """3 AVE should still become 3 AVENUE (suffix expansion, not prefix)."""
+        assert normalize_to_soda("3 AVE") == "3 AVENUE"
+
 
 # ── name_variants ────────────────────────────────────────────────────
 
@@ -157,7 +210,7 @@ class TestNameVariants:
     def test_directional_produces_two_variants(self) -> None:
         variants = name_variants("E 100 ST")
         assert len(variants) == 2
-        assert variants[0] == "EAST 100 STREET"
+        assert variants[0] == "EAST  100 STREET"
         assert variants[1] == "E 100 ST"
 
 
