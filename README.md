@@ -1,180 +1,87 @@
-# gps2asp
+[![hacs_badge](https://img.shields.io/badge/HACS-Default-orange.svg)](https://github.com/hacs/integration) [![GitHub release](https://img.shields.io/github/v/release/Pascal-ZeGerman/GPS2ASP-Resolver)](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/releases) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![GitHub issues](https://img.shields.io/github/issues/Pascal-ZeGerman/GPS2ASP-Resolver)](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/issues)
 
-> **GPS coordinates → NYC Alternate Side Parking schedule → "next move" datetime**
+# ASP Parking — NYC Alternate Side Parking for Home Assistant
 
-`gps2asp` resolves a GPS location to the [NYC Alternate Side Parking](https://www.nyc.gov/html/dot/html/motorist/alternate-side-parking.shtml) (ASP)
-schedule for the nearest street block, then computes the next time you need to move your car.
+Never miss an alternate side parking window again. **ASP Parking** watches your car's GPS position via any Home Assistant device tracker, looks up the parking-regulation signs for your exact block, and tells you the next time you need to move — as a sensor you can put on your dashboard, use in automations, or push as a notification.
 
-Designed as a custom sensor backend for [Home Assistant](https://www.home-assistant.io/).
+Supports all five NYC boroughs. Data is fetched live from NYC Open Data.
 
-## How it works
+## What You Get
 
-```
-GPS (lat, lon)
-  → NY State Plane coordinates
-    → CSCL R-tree spatial index → nearest street segment + side of street
-      → NYC Open Data SODA API → ASP sign records for that block
-        → schedule parser
-          → next move datetime
-```
+Three sensors are created for each tracked device:
 
-Data source: [NYC Open Data Parking Regulation Locations and Signs](https://data.cityofnewyork.us/Transportation/Parking-Regulation-Locations-and-Signs/xswq-wnv9)
+| Sensor | What it shows |
+|--------|---------------|
+| Next move time | The datetime when alternate side parking begins on your block |
+| Schedule summary | Human-readable schedule, e.g. "Mon 8–9:30 AM, Thu 11:30 AM–1 PM" |
+| ASP active now | Binary sensor — ON while street cleaning is currently in progress |
+
+## Requirements
+
+- Home Assistant 2024.1 or later
+- A device tracker entity with GPS coordinates (e.g. the HA Companion app, OwnTracks, iCloud, or the Google Maps integration)
+- Your vehicle must be parked in New York City
+
+No Python knowledge or terminal access required.
 
 ## Installation
 
-Requires Python 3.11+. Install into your Home Assistant Python environment:
+### Via HACS (recommended)
 
-```bash
-git clone <repo-url>
-cd gps2asp
-pip install -e .
-```
+1. Open HACS in your Home Assistant sidebar.
+2. Click **Integrations**, then click the three-dot menu (top-right) and choose **Custom repositories**.
+3. Enter `https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver` and select **Integration**, then click **Add**.
+4. Search for **ASP Parking** and click **Download**.
+5. Restart Home Assistant.
 
-> You must build the spatial index before first use. See [Build Index](#build-index) below.
+### Manual installation
 
-## Quick Start
+1. Download the latest release from the [Releases page](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/releases).
+2. Copy the `custom_components/asp_parking/` folder into your HA config directory under `custom_components/`.
+3. Restart Home Assistant.
 
-```python
-import asyncio
-from gps2asp import resolve_asp
+## Configuration
 
-async def main():
-    # PROSPECT PL between VANDERBILT AVE and CARLTON AVE, Brooklyn
-    result = await resolve_asp(40.677629, -73.968527)
+After installation, set up the integration from the HA UI — no YAML required.
 
-    if result.resolution_failed:
-        print(f"Resolution error: {result.resolution_error}")
-        return
+1. Go to **Settings → Devices & Services → Add Integration**.
+2. Search for **ASP Parking** and click it.
+3. Select the **device tracker** entity that follows your car.
+4. (Optional) Adjust advanced options:
 
-    schedule = result.schedule
-    if schedule is None or schedule.status != "schedule_found":
-        status = schedule.status if schedule else "none"
-        print(f"No ASP schedule: {status}")
-        return
+| Option | Default | Description |
+|--------|---------|-------------|
+| Movement threshold | 50 m | Minimum distance the car must move before re-fetching the schedule |
+| Stale timeout | 30 min | How long to keep the last known schedule after the tracker goes unavailable |
 
-    # schedule is ScheduleFound
-    if schedule.next_window:
-        print(f"Move by: {schedule.next_window.start_datetime}")
-        print(f"Block:   {schedule.on_street} ({schedule.from_street} to {schedule.to_street}, {schedule.side_of_street} side)")
-        print(f"Schedule: {schedule.summary}")
-    else:
-        print("No upcoming ASP window in the next 7 days")
-
-asyncio.run(main())
-```
-
-### Result fields
-
-`resolve_asp()` returns `ASPResult`:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `schedule` | `ScheduleResult \| None` | Parsed schedule. `None` if `resolution_failed` is `True`. |
-| `resolution_failed` | `bool` | `True` when the GPS point could not be uniquely assigned to a street segment. |
-| `resolution_error` | `str \| None` | Error message when `resolution_failed` is `True`. |
-
-When `schedule.status == "schedule_found"` (`ScheduleFound`):
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `next_window` | `CleaningWindow \| None` | Next upcoming ASP window, or `None` if none within 7 days. |
-| `next_window.start_datetime` | `datetime` | NYC-local datetime when you must move your car by. |
-| `next_window.end_datetime` | `datetime` | NYC-local datetime when cleaning ends. |
-| `summary` | `str` | Human-readable schedule (e.g., `"Mon 8–9:30 AM, Thu 11:30 AM–1 PM"`). |
-| `on_street` | `str` | Street name. |
-| `from_street` / `to_street` | `str` | Cross streets at block boundaries. |
-| `side_of_street` | `str` | `N` / `S` / `E` / `W`. |
-
-### Schedule status values
-
-| `schedule.status` | Meaning |
-|-------------------|---------|
-| `"schedule_found"` | ASP schedule found; `next_window` has the next cleaning time. |
-| `"asp_active_now"` | ASP cleaning is currently in progress at your location. |
-| `"no_asp"` | No ASP restrictions on this block. |
-| `"no_match"` | Block not found in SODA sign data. |
-| `"all_unparseable"` | Signs found but none could be parsed. |
-
-### Exceptions
-
-These propagate from `resolve_asp()` and must be handled by the caller:
-
-| Exception | When |
-|-----------|------|
-| `OutsideNYCError` | Coordinates outside NYC bounding box |
-| `NoSegmentFoundError` | No street segment within 164 ft |
-| `SODAAPIError` | SODA API errors after retries |
-| `IncompleteResultsError` | SODA pagination interrupted |
-
-`AmbiguousResolutionError` is caught internally and surfaced as `resolution_failed=True`.
-
-### Debug mode
-
-```python
-debug_result = await resolve_asp(40.677629, -73.968527, debug=True)
-print(f"Confidence:   {debug_result.confidence:.2f}")
-print(f"SODA level:   {debug_result.soda_level}")      # 1, 2, or 3 (fallback level)
-print(f"State Plane:  ({debug_result.state_plane_x:.1f}, {debug_result.state_plane_y:.1f})")
-print(f"Sign result:  {debug_result.sign_result}")
-```
-
-## Build Index
-
-`gps2asp` requires a prebuilt spatial index of NYC street segments with ASP sign data.
-Index files are large and are gitignored — you must build them locally before first use.
-
-```bash
-# From the project root (requires internet access to NYC Open Data)
-python scripts/build_index.py
-```
-
-- **Runtime:** ~3–5 minutes
-- **Output:** `src/gps2asp/data/index/`
-- **Verify:** `src/gps2asp/data/index/build_info.json` shows `asp_segments_count` and `build_timestamp`
-
-Rebuild whenever you want to pick up updated sign data from NYC Open Data.
+5. Click **Submit**. The three sensors appear immediately under the new device.
 
 ## Known Limitations
 
-### Coverage gaps
+**Coverage varies by borough.** ASP Parking matches your GPS location against NYC's official sign database. Some blocks — especially in Queens, the Bronx, and Manhattan — may return "schedule not found" because the city's open-data records don't always include every block. Coverage is best in Brooklyn.
 
-`gps2asp` uses exact boundary-to-boundary matching to associate SODA sign records with CSCL
-street segments. Many NYC Open Data ASP sign records span **multiple consecutive blocks**
-under a single SODA entry. When a record spans blocks A–C, only block A (the first boundary)
-gets matched; blocks B and C return `"no_match"`.
+**Staten Island** has very limited data in the city's sign database. Most Staten Island locations will show "no schedule found" through no fault of the integration.
 
-**Per-borough coverage** (Phase 9 index build, March 2026):
+**Suspended days.** The integration is aware of citywide ASP suspension days (holidays, snow emergencies). When ASP is suspended, the sensors reflect that automatically.
 
-| Borough | Coverage |
-|---------|----------|
-| Brooklyn | 47.9% |
-| Manhattan | 29.5% |
-| Bronx | 28.6% |
-| Queens | 18.1% |
-| Staten Island | ~0% (see below) |
+**Accuracy.** Results depend on your device tracker's GPS precision. Indoors or in parking garages, the GPS fix may point to the wrong block.
 
-Phase 11 will address multi-block spans via mid-span matching, which is expected to
-significantly improve coverage in Manhattan and the Bronx.
+## FAQ
 
-### Staten Island
+**Q: The sensor shows "schedule not found" — what does that mean?**
+Your block's sign data isn't in NYC's open database yet, or the GPS fix landed on a block without ASP restrictions. Try moving a few meters outside and triggering a refresh.
 
-Staten Island shows ~0% coverage because the NYC Open Data SODA API contains essentially
-no ASP sign records for Staten Island. This is a gap in the **source data**, not the
-algorithm. `gps2asp` cannot produce schedules for blocks not present in SODA.
+**Q: How often does the data update?**
+The schedule is re-fetched each time your car moves more than the movement threshold (default 50 m). There is no fixed polling interval.
 
-### Street resolution
+**Q: Can I use this outside NYC?**
+No. The integration is hard-coded to NYC's street database and sign API.
 
-`gps2asp` resolves GPS coordinates against the NYC CSCL dataset (NYC Street Centerline).
-Points more than 164 ft from any street segment raise `NoSegmentFoundError`. Points
-equidistant from two segments raise `AmbiguousResolutionError`, which is surfaced as
-`resolution_failed=True` on the result (not a raised exception).
+**Q: Where do I report bugs or request features?**
+Please open an issue on the [GitHub issue tracker](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/issues).
 
-## Project Status
+## For Developers
 
-`gps2asp` v1.1 — active development.
+If you want to understand the three-stage pipeline (GPS → spatial index → sign API → schedule parser), the suspension calendar subsystem, or how to contribute, see the in-depth reference:
 
-- **v1.0** (2026-02-23): Full GPS → ASP schedule pipeline
-- **v1.1** (2026-03): Bug fixes, confidence algorithm, pipeline stabilization, index rebuild
-
-**Upcoming:**
-- Phase 11: Mid-span coverage — address multi-block SODA span gap (expected coverage improvement in Manhattan/Bronx)
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
