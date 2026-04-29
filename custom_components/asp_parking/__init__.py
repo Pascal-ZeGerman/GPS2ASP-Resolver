@@ -101,6 +101,7 @@ async def _async_download_index(hass: HomeAssistant) -> None:
         raise
 
 
+
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate config entry from version 1 to 2.
 
@@ -110,6 +111,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         hass.config_entries.async_update_entry(config_entry, version=2)
         logger.info("Migrated ASP Parking config entry from v1 to v2")
     return True
+
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
