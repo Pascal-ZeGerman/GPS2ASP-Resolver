@@ -58,6 +58,7 @@ from .const import (
     CONF_DEBUG_LON,
     CONF_DEVICE_TRACKER,
     CONF_MOVEMENT_THRESHOLD,
+    CONF_NOTIFY_LEAD_TIME,
     CONF_NOTIFY_SERVICE,
     CONF_NYC311_API_KEY,
     CONF_NYC311_ENTITY,
@@ -69,6 +70,7 @@ from .const import (
     DEFAULT_DEBUG_LAT,
     DEFAULT_DEBUG_LON,
     DEFAULT_MOVEMENT_THRESHOLD,
+    DEFAULT_NOTIFY_LEAD_TIME,
     DEFAULT_NOTIFY_SERVICE,
     DEFAULT_NYC311_BRIDGE_ENTITY,
     DEFAULT_NYC311_ENTITY,
@@ -171,6 +173,7 @@ class ASPParkingCoordinator:
         self._debug_datetime: datetime | None = None
         self._suppress_notifications: bool = False
         self._notify_service: str = ""
+        self._notify_lead_time: int = DEFAULT_NOTIFY_LEAD_TIME
 
         # Debouncer: coalesce rapid GPS updates into a single pipeline run
         self._debouncer = Debouncer(
@@ -331,6 +334,11 @@ class ASPParkingCoordinator:
         )
         self._notify_service = self.entry.options.get(
             CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
+        )
+        self._notify_lead_time = int(
+            self.entry.options.get(
+                CONF_NOTIFY_LEAD_TIME, DEFAULT_NOTIFY_LEAD_TIME
+            )
         )
         if self._debug_enabled:
             logger.warning(
@@ -622,7 +630,7 @@ class ASPParkingCoordinator:
     async def _async_maybe_send_notification(
         self, schedule: ScheduleResult
     ) -> None:
-        """Send push notification if next ASP window is within 2 hours.
+        """Send push notification if next ASP window is within self._notify_lead_time minutes.
 
         Guards:
         - CONF_NOTIFY_SERVICE must be configured (D-15)
@@ -643,7 +651,7 @@ class ASPParkingCoordinator:
         window_start_utc = dt_util.as_utc(window.start_datetime)
         seconds_until = (window_start_utc - now_utc).total_seconds()
 
-        if not (0 < seconds_until <= 2 * 3600):
+        if not (0 < seconds_until <= self._notify_lead_time * 60):
             return
         if window == self.data.last_notified_window:
             return
@@ -656,10 +664,13 @@ class ASPParkingCoordinator:
             f"Move your car before then."
         )
 
+        service_name = self._notify_service
+        if service_name.startswith("notify."):
+            service_name = service_name[len("notify."):]
         try:
             await self.hass.services.async_call(
                 "notify",
-                self._notify_service,
+                service_name,
                 {"message": message, "title": "ASP Parking"},
                 blocking=False,
             )

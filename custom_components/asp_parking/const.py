@@ -44,6 +44,8 @@ DEFAULT_SUPPRESS_NOTIFICATIONS = False
 # Notifications (Phase 24)
 CONF_NOTIFY_SERVICE = "notify_service"
 DEFAULT_NOTIFY_SERVICE = ""
+CONF_NOTIFY_LEAD_TIME = "notify_lead_time"
+DEFAULT_NOTIFY_LEAD_TIME = 120  # minutes; matches former hardcoded 2-hour threshold
 
 # Spatial index download (first-time HA setup)
 INDEX_DOWNLOAD_URL = (
