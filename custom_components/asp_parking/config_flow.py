@@ -315,8 +315,8 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     default=self.config_entry.options.get(
                         CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
                     ),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
+                ): selector.ServiceSelector(
+                    selector.ServiceSelectorConfig(
                         domain="notify",
                     )
                 ),
