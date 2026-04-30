@@ -271,13 +271,11 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 elif CONF_NYC311_API_KEY in self.config_entry.options and api_key is None:
                     # User cleared the key -- remove it
                     options.pop(CONF_NYC311_API_KEY, None)
-                # Carry notify_service forward to debug step
+                # Carry notify_service forward to debug step; "" means disabled
                 notify_svc = user_input.get(CONF_NOTIFY_SERVICE, "").strip()
-                if notify_svc:
-                    options[CONF_NOTIFY_SERVICE] = notify_svc
+                options[CONF_NOTIFY_SERVICE] = notify_svc
                 lead_time_raw = user_input.get(CONF_NOTIFY_LEAD_TIME)
-                if lead_time_raw is not None:
-                    options[CONF_NOTIFY_LEAD_TIME] = int(lead_time_raw)
+                options[CONF_NOTIFY_LEAD_TIME] = int(lead_time_raw) if lead_time_raw is not None else DEFAULT_NOTIFY_LEAD_TIME
                 self._options = options
                 return await self.async_step_debug()
 
