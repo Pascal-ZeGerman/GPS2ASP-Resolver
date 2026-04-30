@@ -672,9 +672,9 @@ class ASPParkingCoordinator:
                 "notify",
                 service_name,
                 {"message": message, "title": "ASP Parking"},
-                blocking=False,
+                blocking=True,
             )
-            self.data.last_notified_window = window
+            self.data.last_notified_window = window   # only set on confirmed delivery
             logger.info("ASP notification sent for window at %s", time_str)
         except Exception:  # noqa: BLE001
             logger.warning("Failed to send ASP notification via %s", self._notify_service)
