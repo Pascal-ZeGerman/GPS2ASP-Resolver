@@ -385,53 +385,42 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
             )
             return self.async_create_entry(title="", data=options)
 
+        opts = self.config_entry.options
+        debug_schema: dict = {
+            vol.Optional(
+                CONF_DEBUG_ENABLED,
+                default=opts.get(CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED),
+            ): selector.BooleanSelector(),
+            **({
+                vol.Optional(CONF_DEBUG_LAT, default=opts[CONF_DEBUG_LAT]): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=-90, max=90, step=0.000001, mode=selector.NumberSelectorMode.BOX)
+                ),
+            } if CONF_DEBUG_LAT in opts else {
+                vol.Optional(CONF_DEBUG_LAT): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=-90, max=90, step=0.000001, mode=selector.NumberSelectorMode.BOX)
+                ),
+            }),
+            **({
+                vol.Optional(CONF_DEBUG_LON, default=opts[CONF_DEBUG_LON]): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=-180, max=180, step=0.000001, mode=selector.NumberSelectorMode.BOX)
+                ),
+            } if CONF_DEBUG_LON in opts else {
+                vol.Optional(CONF_DEBUG_LON): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=-180, max=180, step=0.000001, mode=selector.NumberSelectorMode.BOX)
+                ),
+            }),
+            **({
+                vol.Optional(CONF_DEBUG_DATETIME, default=opts[CONF_DEBUG_DATETIME]): selector.DateTimeSelector(),
+            } if CONF_DEBUG_DATETIME in opts else {
+                vol.Optional(CONF_DEBUG_DATETIME): selector.DateTimeSelector(),
+            }),
+            vol.Optional(
+                CONF_SUPPRESS_NOTIFICATIONS,
+                default=opts.get(CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS),
+            ): selector.BooleanSelector(),
+        }
         return self.async_show_form(
             step_id="debug",
-            data_schema=vol.Schema({
-                vol.Optional(
-                    CONF_DEBUG_ENABLED,
-                    default=self.config_entry.options.get(
-                        CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED
-                    ),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_DEBUG_LAT,
-                    default=self.config_entry.options.get(
-                        CONF_DEBUG_LAT, DEFAULT_DEBUG_LAT
-                    ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=-90,
-                        max=90,
-                        step=0.000001,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(
-                    CONF_DEBUG_LON,
-                    default=self.config_entry.options.get(
-                        CONF_DEBUG_LON, DEFAULT_DEBUG_LON
-                    ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=-180,
-                        max=180,
-                        step=0.000001,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(
-                    CONF_DEBUG_DATETIME,
-                    default=self.config_entry.options.get(
-                        CONF_DEBUG_DATETIME, DEFAULT_DEBUG_DATETIME
-                    ),
-                ): selector.DateTimeSelector(),
-                vol.Optional(
-                    CONF_SUPPRESS_NOTIFICATIONS,
-                    default=self.config_entry.options.get(
-                        CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
-                    ),
-                ): selector.BooleanSelector(),
-            }),
+            data_schema=vol.Schema(debug_schema),
             errors=errors,
         )
