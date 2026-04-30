@@ -54,7 +54,8 @@
           "stale_timeout": "GPS stale timeout",
           "nyc311_entity": "ha-nyc311 suspension entity",
           "nyc311_api_key": "NYC 311 API key",
-          "notify_service": "Push notification service"
+          "notify_service": "Push notification service",
+          "notify_lead_time": "Notification lead time"
         },
         "data_description": {
           "movement_threshold": "Min distance the car must move before re-running the schedule lookup. 50 m filters GPS drift without missing real moves.",
@@ -62,7 +63,8 @@
           "stale_timeout": "Mark sensor unavailable after this long without a GPS update. Match your tracker's reporting frequency.",
           "nyc311_entity": "Leave empty for auto-detection. Only set this if you renamed the ha-nyc311 binary sensor.",
           "nyc311_api_key": "Get a free key at api-portal.nyc.gov. Leave blank to disable 311 polling.",
-          "notify_service": "HA notify service name, e.g. mobile_app_pascal_iphone. Leave empty to disable push notifications."
+          "notify_service": "Pick a notify entity (e.g. mobile_app target). Leave empty to disable push notifications. If the dropdown is empty, set up the Home Assistant Companion app or another notify integration first.",
+          "notify_lead_time": "How many minutes before a cleaning window starts to send the push notification. Default 120 minutes (2 hours). Range 15-480."
         }
       },
       "debug": {

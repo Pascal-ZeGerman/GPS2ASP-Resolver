@@ -24,6 +24,7 @@ from .const import (
     CONF_DEBUG_LON,
     CONF_DEVICE_TRACKER,
     CONF_MOVEMENT_THRESHOLD,
+    CONF_NOTIFY_LEAD_TIME,
     CONF_NOTIFY_SERVICE,
     CONF_NYC311_API_KEY,
     CONF_NYC311_ENTITY,
@@ -35,6 +36,7 @@ from .const import (
     DEFAULT_DEBUG_LAT,
     DEFAULT_DEBUG_LON,
     DEFAULT_MOVEMENT_THRESHOLD,
+    DEFAULT_NOTIFY_LEAD_TIME,
     DEFAULT_NOTIFY_SERVICE,
     DEFAULT_NYC311_ENTITY,
     DEFAULT_REFRESH_INTERVAL,
@@ -273,6 +275,9 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 notify_svc = user_input.get(CONF_NOTIFY_SERVICE, "").strip()
                 if notify_svc:
                     options[CONF_NOTIFY_SERVICE] = notify_svc
+                lead_time_raw = user_input.get(CONF_NOTIFY_LEAD_TIME)
+                if lead_time_raw is not None:
+                    options[CONF_NOTIFY_LEAD_TIME] = int(lead_time_raw)
                 self._options = options
                 return await self.async_step_debug()
 
@@ -312,9 +317,23 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     default=self.config_entry.options.get(
                         CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
                     ),
-                ): selector.TextSelector(
-                    selector.TextSelectorConfig(
-                        type=selector.TextSelectorType.TEXT,
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="notify",
+                    )
+                ),
+                vol.Optional(
+                    CONF_NOTIFY_LEAD_TIME,
+                    default=self.config_entry.options.get(
+                        CONF_NOTIFY_LEAD_TIME, DEFAULT_NOTIFY_LEAD_TIME
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=15,
+                        max=480,
+                        step=1,
+                        unit_of_measurement="min",
+                        mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
             }),

@@ -32,7 +32,9 @@
         "data": {
           "movement_threshold": "Movement threshold (meters)",
           "refresh_interval": "Refresh interval (hours)",
-          "stale_timeout": "GPS stale timeout (hours)"
+          "stale_timeout": "GPS stale timeout (hours)",
+          "notify_service": "Push notification service",
+          "notify_lead_time": "Notification lead time (minutes)"
         }
       }
     }
