@@ -232,6 +232,46 @@ class ASPParkingCoordinator:
         Subscribes to device_tracker state change events and sets up a
         periodic timer to refresh the schedule even without GPS movement.
         """
+        # --- Debug overrides (Phase 24) — loaded FIRST so _get_now() is correct
+        # for ALL subsequent calls in this method (suspension startup, bridge
+        # detection, etc.).
+        self._debug_enabled = self.entry.options.get(
+            CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED
+        )
+        self._debug_lat = self.entry.options.get(CONF_DEBUG_LAT, DEFAULT_DEBUG_LAT)
+        self._debug_lon = self.entry.options.get(CONF_DEBUG_LON, DEFAULT_DEBUG_LON)
+        raw_dt = self.entry.options.get(CONF_DEBUG_DATETIME, DEFAULT_DEBUG_DATETIME)
+        if raw_dt and isinstance(raw_dt, str):
+            try:
+                parsed = datetime.fromisoformat(raw_dt)
+                if parsed.tzinfo is not None:
+                    self._debug_datetime = parsed.astimezone(NYC_TZ)
+                else:
+                    self._debug_datetime = parsed.replace(tzinfo=NYC_TZ)
+            except (ValueError, TypeError):
+                self._debug_datetime = None
+        elif isinstance(raw_dt, datetime):
+            self._debug_datetime = raw_dt.astimezone(NYC_TZ) if raw_dt.tzinfo else raw_dt.replace(tzinfo=NYC_TZ)
+        self._suppress_notifications = self.entry.options.get(
+            CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
+        )
+        self._notify_service = self.entry.options.get(
+            CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
+        )
+        self._notify_lead_time = int(
+            self.entry.options.get(
+                CONF_NOTIFY_LEAD_TIME, DEFAULT_NOTIFY_LEAD_TIME
+            )
+        )
+        if self._debug_enabled:
+            logger.warning(
+                "ASP Parking: DEBUG MODE is active -- overrides in effect "
+                "(lat=%s, lon=%s, datetime=%s)",
+                self._debug_lat,
+                self._debug_lon,
+                self._debug_datetime,
+            )
+
         # Subscribe to GPS state changes
         unsub_state = async_track_state_change_event(
             self.hass,
@@ -310,44 +350,6 @@ class ASPParkingCoordinator:
             self.movement_threshold,
             self.refresh_interval,
         )
-
-        # --- Debug overrides (Phase 24) ---
-        self._debug_enabled = self.entry.options.get(
-            CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED
-        )
-        self._debug_lat = self.entry.options.get(CONF_DEBUG_LAT, DEFAULT_DEBUG_LAT)
-        self._debug_lon = self.entry.options.get(CONF_DEBUG_LON, DEFAULT_DEBUG_LON)
-        raw_dt = self.entry.options.get(CONF_DEBUG_DATETIME, DEFAULT_DEBUG_DATETIME)
-        if raw_dt and isinstance(raw_dt, str):
-            try:
-                parsed = datetime.fromisoformat(raw_dt)
-                if parsed.tzinfo is not None:
-                    self._debug_datetime = parsed.astimezone(NYC_TZ)
-                else:
-                    self._debug_datetime = parsed.replace(tzinfo=NYC_TZ)
-            except (ValueError, TypeError):
-                self._debug_datetime = None
-        elif isinstance(raw_dt, datetime):
-            self._debug_datetime = raw_dt.astimezone(NYC_TZ) if raw_dt.tzinfo else raw_dt.replace(tzinfo=NYC_TZ)
-        self._suppress_notifications = self.entry.options.get(
-            CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
-        )
-        self._notify_service = self.entry.options.get(
-            CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
-        )
-        self._notify_lead_time = int(
-            self.entry.options.get(
-                CONF_NOTIFY_LEAD_TIME, DEFAULT_NOTIFY_LEAD_TIME
-            )
-        )
-        if self._debug_enabled:
-            logger.warning(
-                "ASP Parking: DEBUG MODE is active -- overrides in effect "
-                "(lat=%s, lon=%s, datetime=%s)",
-                self._debug_lat,
-                self._debug_lon,
-                self._debug_datetime,
-            )
 
     async def async_stop(self) -> None:
         """Stop all listeners and cancel the debouncer."""
