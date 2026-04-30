@@ -10,36 +10,29 @@ Pipeline: `GPS (lat, lon) → NY State Plane → CSCL spatial index → street s
 
 ## Development Commands
 
+Always use `.venv/bin/python` and `.venv/bin/pytest` — system Python is externally managed (PEP 668).
+
 ```bash
 # Install (dev deps including pytest, mypy, HA test fixtures)
-pip install -e ".[dev]"
+.venv/bin/python -m pip install -e ".[dev]"
 
 # Install build tools (geopandas, requests — needed for build_index.py)
-pip install -e ".[build]"
+.venv/bin/python -m pip install -e ".[build]"
 
 # Run all tests
-pytest
+.venv/bin/pytest
 
 # Run a single test file
-pytest tests/test_resolver.py
+.venv/bin/pytest tests/test_resolver.py
 
 # Run a single test
-pytest tests/test_resolver.py::test_name
+.venv/bin/pytest tests/test_resolver.py::test_name
 
 # Run only fast (non-network) tests
-pytest -m "not integration and not ha_integration"
+.venv/bin/pytest -m "not integration and not ha_integration"
 
 # Build the spatial index (required before first use, ~3-5 min, needs internet)
-python scripts/build_index.py
-```
-
-## pip / venv Convention
-
-Always use `python -m pip` (not `.venv/bin/pip`) when the venv was created in a directory path that may have been renamed or moved. The `.venv/bin/pip` wrapper script embeds an absolute shebang that becomes stale after a directory rename.
-
-After any project directory rename, regenerate `.pth` and wrapper scripts:
-```bash
-python -m pip install -e ".[dev]"
+.venv/bin/python scripts/build_index.py
 ```
 
 ## Architecture

@@ -29,6 +29,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import requests
+import zstandard
 from pyproj import Transformer
 from rtree import index as rtree_index
 from shapely.geometry import MultiLineString, shape
@@ -650,12 +651,13 @@ def _fetch_asp_signs() -> set[tuple[str, str, str, str]]:
             break
 
         for record in records:
-            # Collapse internal whitespace so "EAST   22 STREET" (3 spaces
-            # from SODA) matches "EAST 22 STREET" (1 space after normalization
-            # of CSCL "E  22 ST").
-            on_street = " ".join((record.get("on_street") or "").upper().split())
-            from_street = " ".join((record.get("from_street") or "").upper().split())
-            to_street = " ".join((record.get("to_street") or "").upper().split())
+            # Normalize SODA street names through _normalize_street_name() to
+            # match the format used in intersection_index and segments.json.
+            # This handles both whitespace collapsing and SODA fixed-width
+            # formatting (e.g., "EAST   22 STREET" -> "EAST   22 STREET").
+            on_street = _normalize_street_name(record.get("on_street") or "")
+            from_street = _normalize_street_name(record.get("from_street") or "")
+            to_street = _normalize_street_name(record.get("to_street") or "")
             side = (record.get("side_of_street") or "").upper().strip()
 
             if on_street and side:
@@ -843,6 +845,29 @@ def _build_rtree_and_metadata(
     }
 
 
+def _filter_2hop_neighborhood(
+    adjacency: dict[int, set[int]],
+    asp_pids: set[int],
+) -> set[int]:
+    """Return PIDs reachable within 2 hops from any ASP segment."""
+    retained: set[int] = set()
+    seeds = asp_pids & set(adjacency.keys())
+    retained.update(seeds)
+
+    hop1_new: set[int] = set()
+    for pid in seeds:
+        for neighbor in adjacency.get(pid, set()):
+            if neighbor not in retained:
+                hop1_new.add(neighbor)
+    retained.update(hop1_new)
+
+    for pid in hop1_new:
+        for neighbor in adjacency.get(pid, set()):
+            retained.add(neighbor)
+
+    return retained
+
+
 async def build_index(output_dir: Path | None = None) -> None:
     """Build the spatial index from NYC CSCL data.
 
@@ -901,8 +926,8 @@ async def build_index(output_dir: Path | None = None) -> None:
         gdf, cross_streets, asp_lookup, output_dir,
     )
 
-    # Step F2: Write graph.json (only for segments with has_asp=True)
-    logger.info("Writing graph.json...")
+    # Step F2: Write graph.json.zst (2-hop filtered + zstandard compressed)
+    logger.info("Writing graph.json.zst (2-hop filtered)...")
     asp_pids: set[int] = set()
     for on_street, from_cs, to_cs, _side in asp_lookup:
         # Collect all PIDs mentioned in the intersection index entries for this street
@@ -910,17 +935,20 @@ async def build_index(output_dir: Path | None = None) -> None:
             for pid in intersection_index.get((on_street, cs), set()):
                 asp_pids.add(pid)
 
-    # Include all PIDs that have has_asp in segments metadata
-    # (segments.json written by _build_rtree_and_metadata has has_asp_left/right)
-    # Simpler: include all adjacency PIDs that appear in the asp_lookup set
-    # Use the full adjacency graph filtered to ASP segments
+    retained_pids = _filter_2hop_neighborhood(adjacency, asp_pids)
+    logger.info(
+        "Graph filter: %d -> %d segments (2-hop from %d ASP seeds)",
+        len(adjacency), len(retained_pids), len(asp_pids & set(adjacency.keys())),
+    )
+
     graph_adjacency: dict[str, list[int]] = {}
     graph_segment_streets: dict[str, str] = {}
     graph_segment_cross_streets: dict[str, list[str]] = {}
 
-    for pid, neighbors in adjacency.items():
+    for pid in retained_pids:
         pid_str = str(pid)
-        graph_adjacency[pid_str] = sorted(neighbors)
+        neighbors = adjacency.get(pid, set())
+        graph_adjacency[pid_str] = sorted(n for n in neighbors if n in retained_pids)
         graph_segment_streets[pid_str] = gdf_street_names.get(pid, "")
         pid_from, pid_to = cross_streets.get(pid, ("", ""))
         graph_segment_cross_streets[pid_str] = [pid_from, pid_to]
@@ -930,11 +958,19 @@ async def build_index(output_dir: Path | None = None) -> None:
         "segment_streets": graph_segment_streets,
         "segment_cross_streets": graph_segment_cross_streets,
     }
-    graph_path = output_dir / "graph.json"
-    with open(graph_path, "w") as f:
-        json.dump(graph_data, f)
-    graph_size = graph_path.stat().st_size / (1024 * 1024)
-    logger.info("graph.json written: %.1f MB (%d segments)", graph_size, len(graph_adjacency))
+
+    json_bytes = json.dumps(graph_data, separators=(",", ":")).encode("utf-8")
+    cctx = zstandard.ZstdCompressor()
+    compressed = cctx.compress(json_bytes)
+
+    graph_path = output_dir / "graph.json.zst"
+    with open(graph_path, "wb") as f:
+        f.write(compressed)
+
+    graph_size_mb = graph_path.stat().st_size / (1024 * 1024)
+    logger.info("graph.json.zst written: %.2f MB (%d segments)", graph_size_mb, len(graph_adjacency))
+    if graph_size_mb > 4.0:
+        logger.warning("graph.json.zst exceeds 4 MB target: %.2f MB", graph_size_mb)
 
     # Step G: Save build metadata
     elapsed = time.time() - start_time

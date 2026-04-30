@@ -1,0 +1,92 @@
+[
+  {
+    "description": "215 WEST 76 STREET, New York, NY, USA",
+    "lat": 40.781719,
+    "lon": -73.980652
+  },
+  {
+    "description": "310 WEST 83 STREET, New York, NY, USA",
+    "lat": 40.786991,
+    "lon": -73.979902
+  },
+  {
+    "description": "225 WEST 88 STREET, New York, NY, USA",
+    "lat": 40.78958,
+    "lon": -73.974721
+  },
+  {
+    "description": "305 WEST 72 STREET, New York, NY, USA",
+    "lat": 40.780267,
+    "lon": -73.984943
+  },
+  {
+    "description": "2 WEST 91 STREET, New York, NY, USA",
+    "lat": 40.788354,
+    "lon": -73.967471
+  },
+  {
+    "description": "210 WEST 122 STREET, New York, NY, USA",
+    "lat": 40.807203,
+    "lon": -73.950628
+  },
+  {
+    "description": "130 WEST 130 STREET, New York, NY, USA",
+    "lat": 40.811297,
+    "lon": -73.944503
+  },
+  {
+    "description": "310 WEST 116 STREET, New York, NY, USA",
+    "lat": 40.804537,
+    "lon": -73.956285
+  },
+  {
+    "description": "120 WEST 135 STREET, New York, NY, USA",
+    "lat": 40.814414,
+    "lon": -73.942687
+  },
+  {
+    "description": "215 EAST 7 STREET, New York, NY, USA",
+    "lat": 40.72465,
+    "lon": -73.97964
+  },
+  {
+    "description": "220 EAST 5 STREET, New York, NY, USA",
+    "lat": 40.727137,
+    "lon": -73.990308
+  },
+  {
+    "description": "310 EAST 9 STREET, New York, NY, USA",
+    "lat": 40.728811,
+    "lon": -73.986748
+  },
+  {
+    "description": "225 EAST 4 STREET, New York, NY, USA",
+    "lat": 40.723709,
+    "lon": -73.98307
+  },
+  {
+    "description": "25 SAINT MARK'S PLACE, New York, NY, USA",
+    "lat": 40.729163,
+    "lon": -73.988428
+  },
+  {
+    "description": "340 WEST 46 STREET, New York, NY, USA",
+    "lat": 40.760227,
+    "lon": -73.989571
+  },
+  {
+    "description": "225 EAST 50 STREET, New York, NY, USA",
+    "lat": 40.755553,
+    "lon": -73.96965
+  },
+  {
+    "description": "410 WEST 54 STREET, New York, NY, USA",
+    "lat": 40.766123,
+    "lon": -73.987911
+  },
+  {
+    "description": "320 EAST 43 STREET, New York, NY, USA",
+    "lat": 40.749856,
+    "lon": -73.971182
+  }
+]

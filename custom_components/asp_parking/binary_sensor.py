@@ -13,7 +13,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from gps2asp.schedule.models import ASPActiveNow
+from .gps2asp.schedule.models import ASPActiveNow
+from .gps2asp.suspension import apply_suspension
 
 from .const import DOMAIN
 from .coordinator import ASPParkingCoordinator
@@ -66,8 +67,12 @@ class ASPActiveNowBinarySensor(BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return True only when ASP cleaning is currently active."""
-        return isinstance(self._coordinator.data.schedule_result, ASPActiveNow)
+        """Return True only when ASP cleaning is currently active and not suspended."""
+        schedule = self._coordinator.data.schedule_result
+        if not isinstance(schedule, ASPActiveNow):
+            return False
+        merged = apply_suspension(schedule, self._coordinator.data.suspension_state)
+        return isinstance(merged, ASPActiveNow) and not merged.suspended
 
     @property
     def extra_state_attributes(self) -> dict[str, str]:
