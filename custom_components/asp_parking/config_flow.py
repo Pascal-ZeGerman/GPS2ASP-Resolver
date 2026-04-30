@@ -252,8 +252,8 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             cleaned, errors = _validate_settings(user_input)
-            nyc311_entity = user_input.get(CONF_NYC311_ENTITY, "").strip()
-            api_key = user_input.get(CONF_NYC311_API_KEY, "").strip() or None
+            nyc311_entity = (user_input.get(CONF_NYC311_ENTITY) or "").strip()
+            api_key = (user_input.get(CONF_NYC311_API_KEY) or "").strip() or None
             if api_key:
                 try:
                     client = NYC311Client(api_key=api_key)
@@ -269,15 +269,23 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 if api_key:
                     options[CONF_NYC311_API_KEY] = api_key
                 elif CONF_NYC311_API_KEY in self.config_entry.options and api_key is None:
-                    # User cleared the key -- remove it
                     options.pop(CONF_NYC311_API_KEY, None)
-                # Carry notify_service forward to debug step; "" means disabled
-                notify_svc = user_input.get(CONF_NOTIFY_SERVICE, "").strip()
+                notify_svc = (user_input.get(CONF_NOTIFY_SERVICE) or "").strip()
                 options[CONF_NOTIFY_SERVICE] = notify_svc
                 lead_time_raw = user_input.get(CONF_NOTIFY_LEAD_TIME)
-                options[CONF_NOTIFY_LEAD_TIME] = int(lead_time_raw) if lead_time_raw is not None else DEFAULT_NOTIFY_LEAD_TIME
-                self._options = options
-                return await self.async_step_debug()
+                options[CONF_NOTIFY_LEAD_TIME] = int(float(lead_time_raw)) if lead_time_raw is not None else DEFAULT_NOTIFY_LEAD_TIME
+                # Carry forward existing debug options unchanged — debug step
+                # is bypassed in the options flow to keep Configure single-step.
+                for key in (
+                    CONF_DEBUG_ENABLED,
+                    CONF_DEBUG_LAT,
+                    CONF_DEBUG_LON,
+                    CONF_DEBUG_DATETIME,
+                    CONF_SUPPRESS_NOTIFICATIONS,
+                ):
+                    if key in self.config_entry.options:
+                        options[key] = self.config_entry.options[key]
+                return self.async_create_entry(title="", data=options)
 
         notify_options = [
             f"notify.{svc}"
