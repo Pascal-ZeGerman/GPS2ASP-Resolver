@@ -279,6 +279,16 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 self._options = options
                 return await self.async_step_debug()
 
+        notify_options = [
+            f"notify.{svc}"
+            for svc in self.hass.services.async_services_for_domain("notify")
+        ]
+        current_notify = self.config_entry.options.get(
+            CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
+        )
+        if current_notify and current_notify not in notify_options:
+            notify_options.insert(0, current_notify)
+
         return self.async_show_form(
             step_id="init",
             data_schema=_settings_schema(
@@ -312,12 +322,12 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 ),
                 vol.Optional(
                     CONF_NOTIFY_SERVICE,
-                    default=self.config_entry.options.get(
-                        CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
-                    ),
-                ): selector.ServiceSelector(
-                    selector.ServiceSelectorConfig(
-                        domain="notify",
+                    default=current_notify,
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=notify_options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                        custom_value=True,
                     )
                 ),
                 vol.Optional(
