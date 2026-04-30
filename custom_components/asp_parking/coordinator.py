@@ -658,7 +658,7 @@ class ASPParkingCoordinator:
 
         # Format the notification message
         time_str = window.start_datetime.strftime("%-I:%M %p")
-        street = schedule.on_street if hasattr(schedule, 'on_street') else "your street"
+        street = schedule.on_street
         message = (
             f"ASP parking cleaning starts at {time_str} on {street}. "
             f"Move your car before then."
