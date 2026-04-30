@@ -35,6 +35,30 @@
           "stale_timeout": "GPS stale timeout (hours)",
           "notify_service": "Push notification service",
           "notify_lead_time": "Notification lead time (minutes)"
+        },
+        "data_description": {
+          "movement_threshold": "Min distance the car must move before re-running the schedule lookup.",
+          "refresh_interval": "Re-check schedule even without movement so upcoming windows stay current.",
+          "stale_timeout": "Mark sensor unavailable after this long without a GPS update.",
+          "notify_service": "Pick a notify entity. Leave empty to disable push notifications.",
+          "notify_lead_time": "How many minutes before a cleaning window starts to send the push notification."
+        }
+      },
+      "debug": {
+        "title": "Debug Overrides",
+        "data": {
+          "debug_enabled": "Debug mode",
+          "debug_lat": "Override latitude",
+          "debug_lon": "Override longitude",
+          "debug_datetime": "Override current date/time",
+          "suppress_notifications": "Suppress push notifications"
+        },
+        "data_description": {
+          "debug_enabled": "Master toggle. When off, all override fields are ignored even if set.",
+          "debug_lat": "Fake GPS latitude for testing. Both lat and lon must be set together.",
+          "debug_lon": "Fake GPS longitude for testing. Both lat and lon must be set together.",
+          "debug_datetime": "Replace the current date/time for schedule and suspension checks.",
+          "suppress_notifications": "Prevent push notifications while debug mode is active."
         }
       }
     }
