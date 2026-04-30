@@ -302,16 +302,18 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT
                 ),
             ).extend({
-                vol.Optional(
-                    CONF_NYC311_ENTITY,
-                    default=self.config_entry.options.get(
-                        CONF_NYC311_ENTITY, DEFAULT_NYC311_ENTITY
+                **({
+                    vol.Optional(
+                        CONF_NYC311_ENTITY,
+                        default=self.config_entry.options[CONF_NYC311_ENTITY],
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="binary_sensor")
                     ),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="binary_sensor",
-                    )
-                ),
+                } if self.config_entry.options.get(CONF_NYC311_ENTITY) else {
+                    vol.Optional(CONF_NYC311_ENTITY): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="binary_sensor")
+                    ),
+                }),
                 vol.Optional(
                     CONF_NYC311_API_KEY,
                     default=self.config_entry.options.get(CONF_NYC311_API_KEY, ""),
