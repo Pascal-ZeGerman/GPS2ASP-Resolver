@@ -894,8 +894,10 @@ class ASPParkingCoordinator:
     def _async_periodic_cache_rebuild(self, now: datetime) -> None:
         """Periodic callback to rebuild the SODA sign cache (D-02).
 
-        Clears the current cache and spawns a new pre-seed task. Triggered
-        every refresh_interval hours by async_track_time_interval.
+        Spawns a new pre-seed task. Triggered every refresh_interval hours by
+        async_track_time_interval. The live cache is NOT cleared here —
+        _async_preseed_cache builds a local new_cache and swaps atomically at
+        the end, so cache lookups continue to hit the old data during rebuild.
         """
         if (
             self._parking_lat is None
@@ -905,7 +907,6 @@ class ASPParkingCoordinator:
         ):
             return
         logger.info("Phase 26: periodic cache rebuild starting")
-        self._sign_cache = {}
         self._preseed_task = self.entry.async_create_background_task(
             self.hass,
             self._async_preseed_cache(),
