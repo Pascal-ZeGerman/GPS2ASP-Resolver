@@ -84,6 +84,20 @@
           "debug_datetime": "Replace the current date/time for schedule and suspension checks.",
           "suppress_notifications": "Prevent push notifications while debug mode is active."
         }
+      },
+      "parking_area": {
+        "title": "Parking Area (Optional)",
+        "description": "Define a home parking zone so the integration can pre-fetch sign data for nearby blocks. Leave all fields blank to use on-demand lookups only.",
+        "data": {
+          "parking_lat": "Center latitude",
+          "parking_lon": "Center longitude",
+          "parking_radius": "Radius"
+        },
+        "data_description": {
+          "parking_lat": "Latitude of your usual parking area (e.g. copy from Google Maps).",
+          "parking_lon": "Longitude of your usual parking area.",
+          "parking_radius": "How far around the centre to pre-fetch sign data, in metres. Larger radii pre-fetch more blocks but make more requests to NYC Open Data — set NYC_OPEN_DATA_APP_TOKEN in your environment if you go above 1000 m."
+        }
       }
     },
     "error": {
