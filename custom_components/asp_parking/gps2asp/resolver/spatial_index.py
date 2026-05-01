@@ -185,3 +185,68 @@ class SpatialIndex:
             raise NoSegmentFoundError(x, y, max_distance_ft)
 
         return results
+
+    def query_radius(
+        self,
+        x: float,
+        y: float,
+        radius_ft: float,
+    ) -> list[SegmentCandidate]:
+        """Return every segment whose centerline is within radius_ft of (x, y).
+
+        Args:
+            x: State Plane X coordinate (US survey feet).
+            y: State Plane Y coordinate (US survey feet).
+            radius_ft: Inclusive upper bound on centerline distance, in feet.
+
+        Returns:
+            List of SegmentCandidate objects sorted by distance (closest first).
+            Empty list if no segments are within the radius. Unlike nearest(),
+            this method does NOT raise on empty result.
+
+        Raises:
+            RuntimeError: If the index has not been loaded yet.
+        """
+        if self._index is None or self._segments is None:
+            raise RuntimeError(
+                "SpatialIndex not loaded. Call await SpatialIndex.get() first."
+            )
+
+        # Query R-tree for candidates intersecting the radius bounding box
+        candidate_ids = self._index.intersection(
+            (x - radius_ft, y - radius_ft, x + radius_ft, y + radius_ft)
+        )
+        point = Point(x, y)
+
+        results: list[SegmentCandidate] = []
+        for seg_id in candidate_ids:
+            seg_key = str(seg_id)
+            if seg_key not in self._segments:
+                continue
+
+            seg_data = self._segments[seg_key]
+            geometry = wkt.loads(seg_data["geometry_wkt"])
+            distance_ft = point.distance(geometry)
+
+            if distance_ft <= radius_ft:
+                results.append(
+                    SegmentCandidate(
+                        segment_id=seg_id,
+                        geometry=geometry,
+                        full_street_name=seg_data.get("full_street_name", ""),
+                        from_street=seg_data.get("from_street", ""),
+                        to_street=seg_data.get("to_street", ""),
+                        trafdir=seg_data.get("trafdir", ""),
+                        nominaldir=seg_data.get("nominaldir", ""),
+                        rw_type=int(seg_data.get("rw_type", 0)),
+                        streetwidth=float(seg_data.get("streetwidth", 30.0)),
+                        borocode=seg_data.get("borocode", ""),
+                        has_asp_left=bool(seg_data.get("has_asp_left", False)),
+                        has_asp_right=bool(seg_data.get("has_asp_right", False)),
+                        distance_ft=distance_ft,
+                    )
+                )
+
+        results.sort(key=lambda c: c.distance_ft)
+
+        return results
