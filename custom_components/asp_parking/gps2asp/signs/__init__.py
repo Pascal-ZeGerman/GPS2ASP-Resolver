@@ -29,7 +29,7 @@ from .exceptions import (
     SODAAPIError,
     SignRetrievalError,
 )
-from .graph import StreetGraph, _find_best_covering_span
+from .graph import StreetGraph
 from .models import (
     NoASPSigns,
     NoMatchFound,
@@ -396,6 +396,10 @@ async def retrieve_signs(
                         (r.get("from_street", ""), r.get("to_street", ""))
                         for r in records
                     })
+                    # Local import: _find_best_covering_span is a private
+                    # implementation detail of signs.graph; importing here
+                    # keeps it off the package's public namespace.
+                    from .graph import _find_best_covering_span  # noqa: PLC0415
                     best_span = _find_best_covering_span(
                         records, from_street, to_street, graph
                     )
