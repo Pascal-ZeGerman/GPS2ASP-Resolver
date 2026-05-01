@@ -33,12 +33,13 @@ from homeassistant.util import location as location_util
 
 from zoneinfo import ZoneInfo
 
-from .gps2asp.resolver import resolve
+from .gps2asp.resolver import convert, resolve
 from .gps2asp.resolver.exceptions import (
     AmbiguousResolutionError,
     NoSegmentFoundError,
     OutsideNYCError,
 )
+from .gps2asp.resolver.spatial_index import SpatialIndex
 from .gps2asp.schedule import compute_schedule
 from .gps2asp.schedule.models import (
     AllUnparseable,
@@ -46,7 +47,8 @@ from .gps2asp.schedule.models import (
     ScheduleFound,
     ScheduleResult,
 )
-from .gps2asp.signs import retrieve_signs
+from .gps2asp.signs import materialize_cached_records, retrieve_signs
+from .gps2asp.signs.client import SODAClient
 from .gps2asp.signs.models import SignRetrievalSuccess
 from .gps2asp.suspension import HolidayCalendar, NYC311Client, SuspensionInfo
 from .gps2asp.suspension.poller import NYC311AuthError
@@ -62,6 +64,9 @@ from .const import (
     CONF_NOTIFY_SERVICE,
     CONF_NYC311_API_KEY,
     CONF_NYC311_ENTITY,
+    CONF_PARKING_LAT,
+    CONF_PARKING_LON,
+    CONF_PARKING_RADIUS,
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
     CONF_SUPPRESS_NOTIFICATIONS,
@@ -74,6 +79,7 @@ from .const import (
     DEFAULT_NOTIFY_SERVICE,
     DEFAULT_NYC311_BRIDGE_ENTITY,
     DEFAULT_NYC311_ENTITY,
+    DEFAULT_PARKING_RADIUS,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STALE_TIMEOUT,
     DEFAULT_SUPPRESS_NOTIFICATIONS,
@@ -131,6 +137,21 @@ class ASPParkingData:
     last_notified_window: CleaningWindow | None = None
 
 
+def _legal_sides_for(candidate) -> tuple[str, ...]:
+    """Return the two legal compass sides for a segment based on nominaldir.
+
+    For N–S oriented streets (nominaldir N or S) sides are E/W.
+    For E–W oriented streets (nominaldir E or W) sides are N/S.
+    Defaults to all four if nominaldir is unknown so the cache stays correct.
+    """
+    nd = (candidate.nominaldir or "").upper().strip()
+    if nd in ("N", "S"):
+        return ("E", "W")
+    if nd in ("E", "W"):
+        return ("N", "S")
+    return ("N", "S", "E", "W")
+
+
 class ASPParkingCoordinator:
     """Event-driven coordinator for ASP Parking.
 
@@ -174,6 +195,16 @@ class ASPParkingCoordinator:
         self._suppress_notifications: bool = False
         self._notify_service: str = ""
         self._notify_lead_time: int = DEFAULT_NOTIFY_LEAD_TIME
+
+        # Parking area + sign cache (Phase 26)
+        self._parking_lat: float | None = None
+        self._parking_lon: float | None = None
+        self._parking_radius_m: int | None = None
+        # Cache key: (on_street, from_street, to_street, side_of_street)
+        # Value: list of raw SODA records (may be empty list = NoMatchFound after lookup)
+        self._sign_cache: dict[tuple[str, str, str, str], list[dict]] = {}
+        self._preseed_task = None  # type: ignore[var-annotated]  # handle for tests
+        self._unsub_cache_rebuild = None  # type: ignore[var-annotated]  # cancel callback
 
         # Debouncer: coalesce rapid GPS updates into a single pipeline run
         self._debouncer = Debouncer(
@@ -263,6 +294,15 @@ class ASPParkingCoordinator:
                 CONF_NOTIFY_LEAD_TIME, DEFAULT_NOTIFY_LEAD_TIME
             )
         )
+
+        # Phase 26: parking area + sign cache config
+        raw_lat = self.entry.options.get(CONF_PARKING_LAT)
+        raw_lon = self.entry.options.get(CONF_PARKING_LON)
+        raw_radius = self.entry.options.get(CONF_PARKING_RADIUS)
+        self._parking_lat = float(raw_lat) if raw_lat is not None else None
+        self._parking_lon = float(raw_lon) if raw_lon is not None else None
+        self._parking_radius_m = int(raw_radius) if raw_radius is not None else None
+
         if self._debug_enabled:
             logger.warning(
                 "ASP Parking: DEBUG MODE is active -- overrides in effect "
@@ -341,6 +381,33 @@ class ASPParkingCoordinator:
             logger.debug(
                 "ha-nyc311 bridge active on %s -- direct 311 polling suppressed",
                 bridge_entity_id,
+            )
+
+        # Phase 26: schedule sign cache pre-seed if parking area is configured
+        # (D-03: fire-and-forget, lifecycle-tied to config entry)
+        if (
+            self._parking_lat is not None
+            and self._parking_lon is not None
+            and self._parking_radius_m is not None
+            and self._parking_radius_m > 0
+        ):
+            self._preseed_task = self.entry.async_create_background_task(
+                self.hass,
+                self._async_preseed_cache(),
+                name="asp_parking_preseed",
+            )
+            # Periodic cache rebuild on refresh_interval (D-02)
+            self._unsub_cache_rebuild = async_track_time_interval(
+                self.hass,
+                self._async_periodic_cache_rebuild,
+                timedelta(hours=self.refresh_interval),
+            )
+            self._listeners.append(self._unsub_cache_rebuild)
+        else:
+            logger.debug(
+                "Phase 26: parking area not configured (lat=%s, lon=%s, radius=%s); "
+                "sign cache pre-seed skipped (D-07 fallback)",
+                self._parking_lat, self._parking_lon, self._parking_radius_m,
             )
 
         logger.info(
@@ -491,13 +558,33 @@ class ASPParkingCoordinator:
             # Phase 1: GPS to street segment
             resolution = await resolve(lat, lon)
 
-            # Phase 2: Street segment to signs
-            sign_result = await retrieve_signs(
-                on_street=resolution.on_street,
-                from_street=resolution.from_street,
-                to_street=resolution.to_street,
-                side_of_street=resolution.side_of_street,
+            # Phase 2: Street segment to signs — Phase 26 cache lookup first (D-04)
+            cache_key = (
+                resolution.on_street,
+                resolution.from_street,
+                resolution.to_street,
+                resolution.side_of_street,
             )
+            cached_records = self._sign_cache.get(cache_key)
+            if cached_records is not None:
+                # Cache hit — synthesize result from pre-fetched records, NO live call
+                sign_result = materialize_cached_records(
+                    cached_records,
+                    on_street=resolution.on_street,
+                    from_street=resolution.from_street,
+                    to_street=resolution.to_street,
+                    side_of_street=resolution.side_of_street,
+                    soda_level=1,
+                )
+                logger.debug("Phase 26: cache hit for %s", cache_key)
+            else:
+                # Cache miss — existing path. D-04: do NOT write back.
+                sign_result = await retrieve_signs(
+                    on_street=resolution.on_street,
+                    from_street=resolution.from_street,
+                    to_street=resolution.to_street,
+                    side_of_street=resolution.side_of_street,
+                )
 
             # Phase 3: Signs to schedule
             schedule = compute_schedule(sign_result)
@@ -589,6 +676,100 @@ class ASPParkingCoordinator:
             logger.warning("NYC 311 API auth error during startup, failing open")
         except Exception:  # noqa: BLE001
             logger.warning("NYC 311 startup fetch failed, failing open")
+
+    # ------------------------------------------------------------------
+    # Phase 26: parking-area sign cache pre-seeding
+    # ------------------------------------------------------------------
+
+    async def _async_preseed_cache(self) -> None:
+        """Pre-seed SODA sign cache for segments within the configured parking area.
+
+        Fire-and-forget. Errors are logged but never propagated; a partial cache
+        is acceptable per D-03. Cache key is (on_street, from_street, to_street,
+        side_of_street) tuple — matches the resolution result shape so cache hits
+        in _async_resolve_pipeline can short-circuit retrieve_signs.
+        """
+        # Snapshot inputs at task start (Pitfall 6: do not re-read self._parking_*
+        # inside the loop — a parallel options-save reload starts a fresh task)
+        lat = self._parking_lat
+        lon = self._parking_lon
+        radius_m = self._parking_radius_m
+        if lat is None or lon is None or radius_m is None or radius_m <= 0:
+            logger.warning(
+                "Phase 26: pre-seed skipped — parking area not configured "
+                "(lat=%s, lon=%s, radius=%s)",
+                lat, lon, radius_m,
+            )
+            return
+
+        # Pitfall 1: convert WGS84 → State Plane (R-tree is indexed in feet)
+        try:
+            cx_ft, cy_ft = convert(lat, lon)
+        except OutsideNYCError:
+            # Pitfall 2: D-07 says no crash; clear, actionable WARN instead
+            logger.warning(
+                "Phase 26: parking area (%s, %s) is outside NYC; "
+                "pre-seed skipped — resolutions will use on-demand SODA calls",
+                lat, lon,
+            )
+            return
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Phase 26: parking area coordinate conversion failed",
+                exc_info=True,
+            )
+            return
+
+        radius_ft = radius_m * 3.28084
+        try:
+            idx = await SpatialIndex.get()
+            candidates = idx.query_radius(cx_ft, cy_ft, radius_ft)
+        except Exception:  # noqa: BLE001
+            logger.warning("Phase 26: spatial query failed during pre-seed", exc_info=True)
+            return
+
+        if not candidates:
+            logger.info(
+                "Phase 26: pre-seed found 0 segments within %d m of (%s, %s)",
+                radius_m, lat, lon,
+            )
+            self._sign_cache = {}
+            return
+
+        client = SODAClient()  # uses NYC_OPEN_DATA_APP_TOKEN env var if set
+        new_cache: dict[tuple[str, str, str, str], list[dict]] = {}
+        for cand in candidates:
+            # Pre-seed both legal sides per segment (resolver picks one at lookup time)
+            for side in _legal_sides_for(cand):
+                query = client.build_block_query(
+                    cand.full_street_name,
+                    cand.from_street,
+                    cand.to_street,
+                    side,
+                )
+                try:
+                    records = await client.fetch_signs(query)
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "Phase 26: pre-seed fetch failed for %s/%s/%s/%s",
+                        cand.full_street_name, cand.from_street, cand.to_street, side,
+                        exc_info=True,
+                    )
+                    continue
+                key = (
+                    cand.full_street_name,
+                    cand.from_street,
+                    cand.to_street,
+                    side,
+                )
+                new_cache[key] = records
+
+        self._sign_cache = new_cache
+        logger.info(
+            "Phase 26: pre-seed complete — %d (segment, side) entries cached "
+            "for %d-segment parking area",
+            len(new_cache), len(candidates),
+        )
 
     @callback
     def _async_suspension_poll(self, now: datetime) -> None:
@@ -701,6 +882,28 @@ class ASPParkingCoordinator:
             await self._async_resolve_pipeline()  # bypass debouncer for force path
         else:
             logger.info("Cannot force resolve: no GPS coordinates available yet")
+
+    @callback
+    def _async_periodic_cache_rebuild(self, now: datetime) -> None:
+        """Periodic callback to rebuild the SODA sign cache (D-02).
+
+        Clears the current cache and spawns a new pre-seed task. Triggered
+        every refresh_interval hours by async_track_time_interval.
+        """
+        if (
+            self._parking_lat is None
+            or self._parking_lon is None
+            or self._parking_radius_m is None
+            or self._parking_radius_m <= 0
+        ):
+            return
+        logger.info("Phase 26: periodic cache rebuild starting")
+        self._sign_cache = {}
+        self._preseed_task = self.entry.async_create_background_task(
+            self.hass,
+            self._async_preseed_cache(),
+            name="asp_parking_preseed",
+        )
 
     @callback
     def _async_periodic_refresh(self, now: datetime) -> None:

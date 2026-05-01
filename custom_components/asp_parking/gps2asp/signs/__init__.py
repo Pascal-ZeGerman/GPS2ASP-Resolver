@@ -41,6 +41,7 @@ from .normalize import name_variants, normalize_to_soda
 
 __all__ = [
     "retrieve_signs",
+    "materialize_cached_records",
     "SignRetrievalResult",
     "SignRetrievalSuccess",
     "NoASPSigns",
@@ -71,6 +72,49 @@ def _deduplicate(records: list[dict]) -> list[SignRecord]:
             seen.add(desc)
             unique.append(SignRecord(sign_description=desc))
     return unique
+
+
+def materialize_cached_records(
+    records: list[dict],
+    on_street: str,
+    from_street: str,
+    to_street: str,
+    side_of_street: str,
+    soda_level: int = 1,
+) -> SignRetrievalResult:
+    """Build a SignRetrievalResult from pre-fetched raw SODA records.
+
+    Used by the HA coordinator's parking-area sign cache to deliver
+    the same result shape as retrieve_signs() without making a network
+    call. Empty `records` => NoMatchFound; records present but no broom
+    signs after dedup => NoASPSigns; otherwise SignRetrievalSuccess.
+
+    Args:
+        records: Raw SODA API record dicts as returned by SODAClient.fetch_signs.
+        on_street: Canonical on_street name (CSCL format).
+        from_street: Canonical from_street name (CSCL format).
+        to_street: Canonical to_street name (CSCL format).
+        side_of_street: Compass direction side (N, S, E, or W).
+        soda_level: Fallback level marker; defaults to 1 since the cache
+            is populated via Level 1 block queries.
+
+    Returns:
+        SignRetrievalResult of the appropriate variant.
+    """
+    if not records:
+        return NoMatchFound()
+    signs = _deduplicate(records)
+    if not signs:
+        return NoASPSigns()
+    return SignRetrievalSuccess(
+        status="signs_found",
+        signs=signs,
+        on_street=on_street,
+        from_street=from_street,
+        to_street=to_street,
+        side_of_street=side_of_street,
+        soda_level=soda_level,
+    )
 
 
 def _normalize_street(name: str) -> str:
