@@ -12,6 +12,7 @@ The index must be built first using the build script (Plan 02). It consists of:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -39,6 +40,7 @@ class SpatialIndex:
     """
 
     _instance: ClassVar[SpatialIndex | None] = None  # singleton; cleared by reset()
+    _lock: ClassVar[asyncio.Lock] = asyncio.Lock()
 
     # Instance vars — assigned in __init__ and _load()
     _index: rtree_index.Index | None
@@ -72,9 +74,13 @@ class SpatialIndex:
         Raises:
             IndexNotFoundError: If the index files are not found on disk.
         """
-        if cls._instance is None:
-            cls._instance = cls(index_dir=index_dir)
-            await cls._instance._load()
+        if cls._instance is not None:
+            return cls._instance
+        async with cls._lock:
+            if cls._instance is None:
+                instance = cls(index_dir=index_dir)
+                await instance._load()
+                cls._instance = instance
         return cls._instance
 
     @classmethod
