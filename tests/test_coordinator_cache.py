@@ -365,10 +365,15 @@ async def test_cache_miss_does_not_write_back(make_coordinator):
     assert coord._sign_cache == {}
 
 
-async def test_periodic_rebuild_clears_and_respawns(make_coordinator):
-    """Periodic rebuild clears the cache then spawns a fresh pre-seed task."""
+async def test_periodic_rebuild_preserves_cache_and_respawns(make_coordinator):
+    """Periodic rebuild spawns a fresh pre-seed task WITHOUT clearing the live cache.
+
+    The preseed builds a local new_cache and swaps atomically at the end, so the
+    live cache must remain intact during the rebuild window.
+    """
     coord, _hass, entry = make_coordinator()
-    coord._sign_cache = {("X", "Y", "Z", "N"): [{"sign_description": "old"}]}
+    old_cache = {("X", "Y", "Z", "N"): [{"sign_description": "old"}]}
+    coord._sign_cache = old_cache
     coord._parking_lat = 40.6778
     coord._parking_lon = -73.9690
     coord._parking_radius_m = 500
@@ -377,7 +382,8 @@ async def test_periodic_rebuild_clears_and_respawns(make_coordinator):
 
     coord._async_periodic_cache_rebuild(MagicMock())
 
-    assert coord._sign_cache == {}
+    # Cache must NOT be wiped before the preseed task completes (WR-02 fix)
+    assert coord._sign_cache is old_cache
     assert entry.async_create_background_task.call_count == 1
     args, kwargs = entry.async_create_background_task.call_args
     assert kwargs.get("name") == "asp_parking_preseed"
