@@ -295,7 +295,7 @@ async def test_resolve_pipeline_falls_through_on_cache_miss(make_coordinator):
         ),
         patch(
             "custom_components.asp_parking.coordinator.retrieve_signs",
-            new=AsyncMock(return_value=sign_result),
+            new_callable=AsyncMock,
         ) as mock_retrieve,
         patch(
             "custom_components.asp_parking.coordinator.compute_schedule",
@@ -307,6 +307,7 @@ async def test_resolve_pipeline_falls_through_on_cache_miss(make_coordinator):
             new=AsyncMock(),
         ),
     ):
+        mock_retrieve.return_value = sign_result
         await coord._async_resolve_pipeline()
 
     mock_retrieve.assert_called_once_with(
