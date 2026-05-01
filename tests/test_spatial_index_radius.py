@@ -54,7 +54,15 @@ class TestQueryRadius:
     async def test_query_radius_returns_empty_list_for_zero_radius(
         self, spatial_index_dir,
     ):
-        """Zero radius returns [] (does NOT raise)."""
+        """Zero radius returns [] (does NOT raise).
+
+        Contract: query_radius() calls self._index.intersection((x, x, x, x)),
+        a degenerate zero-area bounding box.  Even if libspatialindex returns a
+        segment whose bounding box happens to include the exact point, the
+        subsequent ``distance_ft <= 0.0`` exact-distance filter eliminates it,
+        so the result list is always empty.  The behaviour is therefore
+        guaranteed by the implementation filter, not solely by libspatialindex.
+        """
         cx_ft, cy_ft = convert(PROSPECT_HEIGHTS_LAT, PROSPECT_HEIGHTS_LON)
         idx = await SpatialIndex.get(index_dir=spatial_index_dir)
 
