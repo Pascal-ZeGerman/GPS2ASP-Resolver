@@ -41,6 +41,14 @@ DEFAULT_DEBUG_DATETIME = None
 CONF_SUPPRESS_NOTIFICATIONS = "suppress_notifications"
 DEFAULT_SUPPRESS_NOTIFICATIONS = False
 
+# Parking area (Phase 26) — D-05/D-06/D-07: lat/lon-only, all optional
+CONF_PARKING_LAT = "parking_lat"
+DEFAULT_PARKING_LAT = None
+CONF_PARKING_LON = "parking_lon"
+DEFAULT_PARKING_LON = None
+CONF_PARKING_RADIUS = "parking_radius"
+DEFAULT_PARKING_RADIUS = 500  # metres; D-06
+
 # Notifications (Phase 24)
 CONF_NOTIFY_SERVICE = "notify_service"
 DEFAULT_NOTIFY_SERVICE = ""
