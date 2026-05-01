@@ -1168,3 +1168,90 @@ class TestConfigFlowApiKey:
     def test_api_key_stored_separately_from_device_tracker(self) -> None:
         """API key constant is distinct from device_tracker constant."""
         assert CONF_NYC311_API_KEY != "device_tracker"
+
+
+# ---------------------------------------------------------------------------
+# DIAG-04 diagnostic sensor native_value replication tests (Phase 27)
+# ---------------------------------------------------------------------------
+# These four pure-Python helpers replicate the native_value logic of the four
+# new diagnostic sensors that Plan 03 will add to sensor.py. Replicating the
+# logic locally (rather than importing the sensor classes) keeps the file's
+# no-HA-imports-at-module-top convention intact (see existing module docstring
+# lines 1-9). The four helper tests pass on commit because they exercise pure
+# Python; the fifth test (``test_diag04_sensor_classes_exist``) imports the
+# sensor classes and FAILS until Plan 03 ships — that is the RED gate for
+# DIAG-04's import-surface contract.
+
+
+def _confidence_score_native_value(data: ASPParkingData) -> float | None:
+    """Replicate ASPConfidenceScoreSensor.native_value logic."""
+    return data.confidence_score
+
+
+def _soda_level_native_value(data: ASPParkingData) -> int | None:
+    """Replicate ASPSODALevelSensor.native_value logic."""
+    return data.soda_level
+
+
+def _last_resolved_native_value(data: ASPParkingData) -> str | None:
+    """Replicate ASPLastResolvedSensor.native_value logic."""
+    ts = data.last_resolved
+    return ts.isoformat() if ts else None
+
+
+def _last_error_native_value(data: ASPParkingData) -> str | None:
+    """Replicate ASPLastErrorSensor.native_value logic."""
+    return data.last_error
+
+
+def test_diag04_confidence_score_native_value() -> None:
+    """ASPConfidenceScoreSensor surfaces coordinator.data.confidence_score (DIAG-04)."""
+    assert _confidence_score_native_value(ASPParkingData(confidence_score=0.85)) == 0.85
+    assert _confidence_score_native_value(ASPParkingData()) is None
+
+
+def test_diag04_soda_level_native_value() -> None:
+    """ASPSODALevelSensor surfaces coordinator.data.soda_level (DIAG-04)."""
+    assert _soda_level_native_value(ASPParkingData(soda_level=2)) == 2
+    assert _soda_level_native_value(ASPParkingData()) == 0
+
+
+def test_diag04_last_resolved_iso() -> None:
+    """ASPLastResolvedSensor returns ISO string or None (DIAG-04)."""
+    ts = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+    assert (
+        _last_resolved_native_value(ASPParkingData(last_resolved=ts))
+        == "2026-05-01T12:00:00+00:00"
+    )
+    assert _last_resolved_native_value(ASPParkingData()) is None
+
+
+def test_diag04_last_error_native_value() -> None:
+    """ASPLastErrorSensor surfaces coordinator.data.last_error (DIAG-04)."""
+    assert _last_error_native_value(ASPParkingData(last_error="boom")) == "boom"
+    assert _last_error_native_value(ASPParkingData()) is None
+
+
+@pytest.mark.ha_integration
+def test_diag04_sensor_classes_exist() -> None:
+    """The four DIAG-04 sensor classes must be importable from sensor.py (Plan 03).
+
+    RED gate: this test fails with ImportError until Plan 03 adds the four
+    diagnostic sensor classes to ``custom_components.asp_parking.sensor``.
+    """
+    from custom_components.asp_parking.sensor import (
+        ASPConfidenceScoreSensor,
+        ASPLastErrorSensor,
+        ASPLastResolvedSensor,
+        ASPSODALevelSensor,
+    )
+    # Subclass check — they must inherit from _ASPDiagnosticSensor
+    from custom_components.asp_parking.sensor import _ASPDiagnosticSensor
+
+    for cls in (
+        ASPConfidenceScoreSensor,
+        ASPSODALevelSensor,
+        ASPLastResolvedSensor,
+        ASPLastErrorSensor,
+    ):
+        assert issubclass(cls, _ASPDiagnosticSensor)
