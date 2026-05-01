@@ -457,25 +457,19 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
             lat_val = user_input.get(CONF_PARKING_LAT)
             lon_val = user_input.get(CONF_PARKING_LON)
             radius_val = user_input.get(CONF_PARKING_RADIUS)
-            # Persist lat/lon when explicitly provided; clear when blank.
-            if lat_val is not None:
+            # Persist lat/lon only when BOTH are present — a half-configured
+            # pair (lat without lon, or vice versa) is semantically invalid and
+            # would silently disable the cache feature. If either is missing,
+            # remove all three parking keys so the feature is fully disabled.
+            if lat_val is not None and lon_val is not None:
                 options[CONF_PARKING_LAT] = float(lat_val)
-            else:
-                options.pop(CONF_PARKING_LAT, None)
-            if lon_val is not None:
                 options[CONF_PARKING_LON] = float(lon_val)
-            else:
-                options.pop(CONF_PARKING_LON, None)
-            # Radius alone is meaningless (no centre to apply it to). Per D-07
-            # (no cross-field validation, all-empty = feature disabled), we only
-            # persist the radius when at least one of lat/lon is also being
-            # persisted. The form's default=500 would otherwise leak into
-            # entry.options on a fully-blank submission.
-            if lat_val is not None or lon_val is not None:
                 options[CONF_PARKING_RADIUS] = (
                     int(radius_val) if radius_val is not None else DEFAULT_PARKING_RADIUS
                 )
             else:
+                options.pop(CONF_PARKING_LAT, None)
+                options.pop(CONF_PARKING_LON, None)
                 options.pop(CONF_PARKING_RADIUS, None)
             return self.async_create_entry(title="", data=options)
 
