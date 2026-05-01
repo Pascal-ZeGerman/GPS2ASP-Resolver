@@ -8,9 +8,11 @@ Provides ASPNextMoveTimeSensor which maps coordinator data to a sensor state:
 
 Rich attributes cover schedule, location, window, metadata, and error groups.
 
-Also provides 6 diagnostic sensors for debugging and dashboards:
+Also provides 10 diagnostic sensors for debugging and dashboards:
 ASPCarNameSensor, ASPVINSensor, ASPLatitudeSensor, ASPLongitudeSensor,
-ASPResolvedStreetSensor, ASPResolutionStatusSensor.
+ASPResolvedStreetSensor, ASPResolutionStatusSensor, ASPDebugModeSensor,
+ASPConfidenceScoreSensor, ASPSODALevelSensor, ASPLastResolvedSensor,
+ASPLastErrorSensor.
 """
 
 from __future__ import annotations
@@ -54,6 +56,11 @@ async def async_setup_entry(
         ASPResolvedStreetSensor(coordinator),
         ASPResolutionStatusSensor(coordinator),
         ASPDebugModeSensor(coordinator),
+        # DIAG-04 (Phase 27): four diagnostic sensors surfacing coordinator state
+        ASPConfidenceScoreSensor(coordinator),
+        ASPSODALevelSensor(coordinator),
+        ASPLastResolvedSensor(coordinator),
+        ASPLastErrorSensor(coordinator),
     ])
 
 
@@ -479,3 +486,87 @@ class ASPDebugModeSensor(_ASPDiagnosticSensor):
             ),
             "suppress_notifications": c._suppress_notifications,
         }
+
+
+class ASPConfidenceScoreSensor(_ASPDiagnosticSensor):
+    """Diagnostic sensor showing the resolver confidence score (0-1).
+
+    Per D-08: surfaces coordinator.data.confidence_score as the entity state.
+    Reading frequency follows the coordinator's pipeline cadence (event-driven
+    on GPS change; refreshed every refresh_interval hours).
+    """
+
+    _attr_icon = "mdi:gauge"
+    _attr_translation_key = "confidence_score"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: ASPParkingCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_confidence_score"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the resolver confidence (0..1) or None if not yet resolved."""
+        return self._coordinator.data.confidence_score
+
+
+class ASPSODALevelSensor(_ASPDiagnosticSensor):
+    """Diagnostic sensor showing which SODA fallback level matched (0-4).
+
+    Per D-08: surfaces coordinator.data.soda_level as the entity state. 0 means
+    no resolution yet; 1-4 indicate which fallback strategy succeeded.
+    """
+
+    _attr_icon = "mdi:layers-search"
+    _attr_translation_key = "soda_level"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: ASPParkingCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_soda_level"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the SODA fallback level (0-4); 0 means not resolved."""
+        return self._coordinator.data.soda_level
+
+
+class ASPLastResolvedSensor(_ASPDiagnosticSensor):
+    """Diagnostic sensor showing the timestamp of the last successful resolve.
+
+    Per D-08: surfaces coordinator.data.last_resolved as ISO string entity state.
+    Returns None when the pipeline has never produced a successful resolution.
+    """
+
+    _attr_icon = "mdi:clock-check"
+    _attr_translation_key = "last_resolved"
+
+    def __init__(self, coordinator: ASPParkingCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_last_resolved"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return ISO timestamp of last successful pipeline run, or None."""
+        ts = self._coordinator.data.last_resolved
+        return ts.isoformat() if ts else None
+
+
+class ASPLastErrorSensor(_ASPDiagnosticSensor):
+    """Diagnostic sensor showing the most recent pipeline error string.
+
+    Per D-08: surfaces coordinator.data.last_error as the entity state.
+    Returns None when no errors have occurred since startup.
+    """
+
+    _attr_icon = "mdi:alert-circle-outline"
+    _attr_translation_key = "last_error"
+
+    def __init__(self, coordinator: ASPParkingCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_last_error"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the last error string, or None if no error."""
+        return self._coordinator.data.last_error
