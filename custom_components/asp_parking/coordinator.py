@@ -50,6 +50,7 @@ from .gps2asp.schedule.models import (
 from .gps2asp.signs import materialize_cached_records, retrieve_signs
 from .gps2asp.signs.client import SODAClient
 from .gps2asp.signs.models import SignRetrievalSuccess
+from .gps2asp.signs.normalize import name_variants
 from .gps2asp.suspension import HolidayCalendar, NYC311Client, SuspensionInfo
 from .gps2asp.suspension.poller import NYC311AuthError
 
@@ -739,12 +740,17 @@ class ASPParkingCoordinator:
         client = SODAClient()  # uses NYC_OPEN_DATA_APP_TOKEN env var if set
         new_cache: dict[tuple[str, str, str, str], list[dict]] = {}
         for cand in candidates:
+            # Normalize CSCL names to SODA format for the API query (Level 1),
+            # matching the name expansion done by retrieve_signs() -> name_variants().
+            on_soda = name_variants(cand.full_street_name)[0]
+            from_soda = name_variants(cand.from_street)[0]
+            to_soda = name_variants(cand.to_street)[0]
             # Pre-seed both legal sides per segment (resolver picks one at lookup time)
             for side in _legal_sides_for(cand):
                 query = client.build_block_query(
-                    cand.full_street_name,
-                    cand.from_street,
-                    cand.to_street,
+                    on_soda,
+                    from_soda,
+                    to_soda,
                     side,
                 )
                 try:
@@ -756,6 +762,7 @@ class ASPParkingCoordinator:
                         exc_info=True,
                     )
                     continue
+                # Cache key uses canonical CSCL names to match the resolution result
                 key = (
                     cand.full_street_name,
                     cand.from_street,
