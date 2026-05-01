@@ -96,6 +96,8 @@ logger = logging.getLogger(__name__)
 
 NYC_TZ = ZoneInfo("America/New_York")
 
+_METRES_TO_FEET = 3.28084  # 1 metre = 3.28084 US survey feet
+
 
 @dataclass
 class ASPParkingData:
@@ -721,7 +723,7 @@ class ASPParkingCoordinator:
             )
             return
 
-        radius_ft = radius_m * 3.28084
+        radius_ft = radius_m * _METRES_TO_FEET
         try:
             idx = await SpatialIndex.get()
             candidates = idx.query_radius(cx_ft, cy_ft, radius_ft)

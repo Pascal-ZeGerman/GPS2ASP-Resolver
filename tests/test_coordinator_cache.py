@@ -27,7 +27,7 @@ from custom_components.asp_parking.const import (
     CONF_PARKING_LON,
     CONF_PARKING_RADIUS,
 )
-from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+from custom_components.asp_parking.coordinator import ASPParkingCoordinator, _METRES_TO_FEET
 from custom_components.asp_parking.gps2asp.resolver.exceptions import OutsideNYCError
 
 
@@ -144,7 +144,7 @@ async def test_preseed_uses_state_plane_conversion(make_coordinator):
     mock_convert.assert_called_once_with(40.6778, -73.9690)
     mock_idx.query_radius.assert_called_once()
     args, _kwargs = mock_idx.query_radius.call_args
-    assert args == (987654.0, 178432.0, 500 * 3.28084)
+    assert args == (987654.0, 178432.0, 500 * _METRES_TO_FEET)
 
 
 async def test_preseed_populates_cache_with_tuple_keys(make_coordinator):
