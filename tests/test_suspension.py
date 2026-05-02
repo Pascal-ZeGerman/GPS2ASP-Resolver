@@ -64,6 +64,7 @@ def test_is_suspended_normal(ics_bytes: bytes) -> None:
     """is_suspended returns False with None reason for a normal weekday."""
     cal = HolidayCalendar()
     cal._holidays = _parse_ics(ics_bytes)
+    cal._loaded = True
     result = cal.is_suspended(date(2026, 6, 3))
     assert result == SuspensionInfo(is_suspended=False, reason=None)
 
