@@ -85,6 +85,18 @@
     "sensor": {
       "next_move_time": {
         "name": "Next Move Time"
+      },
+      "confidence_score": {
+        "name": "Confidence Score"
+      },
+      "soda_level": {
+        "name": "SODA Level"
+      },
+      "last_resolved": {
+        "name": "Last Resolved"
+      },
+      "last_error": {
+        "name": "Last Error"
       }
     },
     "binary_sensor": {
