@@ -104,5 +104,11 @@
         "name": "ASP Active Now"
       }
     }
+  },
+  "issues": {
+    "gps2asp_import_error": {
+      "title": "ASP Parking: vendored package is incomplete",
+      "description": "The bundled gps2asp Python package is missing files. Reinstall ASP Parking from HACS to restore them, then reload the integration. After a successful reload, this notification clears automatically."
+    }
   }
 }
