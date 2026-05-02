@@ -33,6 +33,8 @@
           "movement_threshold": "Movement threshold (meters)",
           "refresh_interval": "Refresh interval (hours)",
           "stale_timeout": "GPS stale timeout (hours)",
+          "nyc311_entity": "ha-nyc311 suspension entity",
+          "nyc311_api_key": "NYC 311 API key",
           "notify_service": "Push notification service",
           "notify_lead_time": "Notification lead time (minutes)"
         },
@@ -40,6 +42,8 @@
           "movement_threshold": "Min distance the car must move before re-running the schedule lookup.",
           "refresh_interval": "Re-check schedule even without movement so upcoming windows stay current.",
           "stale_timeout": "Mark sensor unavailable after this long without a GPS update.",
+          "nyc311_entity": "Leave empty for auto-detection. Only set this if you renamed the ha-nyc311 binary sensor.",
+          "nyc311_api_key": "Get a free key at api-portal.nyc.gov. Leave blank to disable 311 polling.",
           "notify_service": "Pick a notify entity. Leave empty to disable push notifications.",
           "notify_lead_time": "How many minutes before a cleaning window starts to send the push notification."
         }
@@ -60,6 +64,20 @@
           "debug_datetime": "Replace the current date/time for schedule and suspension checks.",
           "suppress_notifications": "Prevent push notifications while debug mode is active."
         }
+      },
+      "parking_area": {
+        "title": "Parking Area (Optional)",
+        "description": "Define a home parking zone so the integration can pre-fetch sign data for nearby blocks. Leave all fields blank to use on-demand lookups only.",
+        "data": {
+          "parking_lat": "Center latitude",
+          "parking_lon": "Center longitude",
+          "parking_radius": "Radius"
+        },
+        "data_description": {
+          "parking_lat": "Latitude of your usual parking area (e.g. copy from Google Maps).",
+          "parking_lon": "Longitude of your usual parking area.",
+          "parking_radius": "How far around the centre to pre-fetch sign data, in metres. Larger radii pre-fetch more blocks but make more requests to NYC Open Data — set NYC_OPEN_DATA_APP_TOKEN in your environment if you go above 1000 m."
+        }
       }
     }
   },
@@ -67,6 +85,18 @@
     "sensor": {
       "next_move_time": {
         "name": "Next Move Time"
+      },
+      "confidence_score": {
+        "name": "Confidence Score"
+      },
+      "soda_level": {
+        "name": "SODA Level"
+      },
+      "last_resolved": {
+        "name": "Last Resolved"
+      },
+      "last_error": {
+        "name": "Last Error"
       }
     },
     "binary_sensor": {

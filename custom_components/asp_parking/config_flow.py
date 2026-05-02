@@ -28,6 +28,9 @@ from .const import (
     CONF_NOTIFY_SERVICE,
     CONF_NYC311_API_KEY,
     CONF_NYC311_ENTITY,
+    CONF_PARKING_LAT,
+    CONF_PARKING_LON,
+    CONF_PARKING_RADIUS,
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
     CONF_SUPPRESS_NOTIFICATIONS,
@@ -39,6 +42,7 @@ from .const import (
     DEFAULT_NOTIFY_LEAD_TIME,
     DEFAULT_NOTIFY_SERVICE,
     DEFAULT_NYC311_ENTITY,
+    DEFAULT_PARKING_RADIUS,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STALE_TIMEOUT,
     DEFAULT_SUPPRESS_NOTIFICATIONS,
@@ -274,18 +278,23 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 options[CONF_NOTIFY_SERVICE] = notify_svc
                 lead_time_raw = user_input.get(CONF_NOTIFY_LEAD_TIME)
                 options[CONF_NOTIFY_LEAD_TIME] = int(float(lead_time_raw)) if lead_time_raw is not None else DEFAULT_NOTIFY_LEAD_TIME
-                # Carry forward existing debug options unchanged — debug step
-                # is bypassed in the options flow to keep Configure single-step.
+                # Carry forward existing debug + parking options unchanged —
+                # debug step is bypassed in the options flow; parking values
+                # carry through so a re-save of init alone preserves them.
                 for key in (
                     CONF_DEBUG_ENABLED,
                     CONF_DEBUG_LAT,
                     CONF_DEBUG_LON,
                     CONF_DEBUG_DATETIME,
                     CONF_SUPPRESS_NOTIFICATIONS,
+                    CONF_PARKING_LAT,
+                    CONF_PARKING_LON,
+                    CONF_PARKING_RADIUS,
                 ):
                     if key in self.config_entry.options:
                         options[key] = self.config_entry.options[key]
-                return self.async_create_entry(title="", data=options)
+                self._options = options
+                return await self.async_step_parking_area()
 
         notify_options = [
             f"notify.{svc}"
@@ -430,5 +439,79 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="debug",
             data_schema=vol.Schema(debug_schema),
+            errors=errors,
+        )
+
+    async def async_step_parking_area(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Optional home parking area for SODA cache pre-seeding (AREA-01).
+
+        Three optional fields (lat/lon/radius). Empty submission is valid (D-07);
+        in that case CONF_PARKING_* keys are removed from entry.options entirely.
+        """
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            options = {**getattr(self, "_options", {})}
+            lat_val = user_input.get(CONF_PARKING_LAT)
+            lon_val = user_input.get(CONF_PARKING_LON)
+            radius_val = user_input.get(CONF_PARKING_RADIUS)
+            # Persist lat/lon only when BOTH are present — a half-configured
+            # pair (lat without lon, or vice versa) is semantically invalid and
+            # would silently disable the cache feature. If either is missing,
+            # remove all three parking keys so the feature is fully disabled.
+            if lat_val is not None and lon_val is not None:
+                options[CONF_PARKING_LAT] = float(lat_val)
+                options[CONF_PARKING_LON] = float(lon_val)
+                options[CONF_PARKING_RADIUS] = (
+                    int(radius_val) if radius_val is not None else DEFAULT_PARKING_RADIUS
+                )
+            else:
+                options.pop(CONF_PARKING_LAT, None)
+                options.pop(CONF_PARKING_LON, None)
+                options.pop(CONF_PARKING_RADIUS, None)
+            return self.async_create_entry(title="", data=options)
+
+        opts = self.config_entry.options
+        # NOTE: step="any" is used (not 0.000001) because HA 2026.2.3's
+        # NumberSelectorConfig schema enforces step>=0.001 — the literal "any"
+        # is the documented escape hatch for arbitrary-precision inputs (GPS
+        # coordinates). The existing debug step uses step=0.000001 but is
+        # bypassed in the options flow (Phase 25 commit 64fbf6d) so it never
+        # triggers the validation. This step is reachable, so we must use "any".
+        parking_schema: dict = {
+            **({
+                vol.Optional(CONF_PARKING_LAT, default=opts[CONF_PARKING_LAT]): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=-90, max=90, step="any", mode=selector.NumberSelectorMode.BOX)
+                ),
+            } if CONF_PARKING_LAT in opts else {
+                vol.Optional(CONF_PARKING_LAT): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=-90, max=90, step="any", mode=selector.NumberSelectorMode.BOX)
+                ),
+            }),
+            **({
+                vol.Optional(CONF_PARKING_LON, default=opts[CONF_PARKING_LON]): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=-180, max=180, step="any", mode=selector.NumberSelectorMode.BOX)
+                ),
+            } if CONF_PARKING_LON in opts else {
+                vol.Optional(CONF_PARKING_LON): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=-180, max=180, step="any", mode=selector.NumberSelectorMode.BOX)
+                ),
+            }),
+            vol.Optional(
+                CONF_PARKING_RADIUS,
+                default=opts.get(CONF_PARKING_RADIUS, DEFAULT_PARKING_RADIUS),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=50, max=5000, step=50,
+                    unit_of_measurement="m",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+        }
+        return self.async_show_form(
+            step_id="parking_area",
+            data_schema=vol.Schema(parking_schema),
             errors=errors,
         )
