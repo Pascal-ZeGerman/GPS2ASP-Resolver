@@ -14,6 +14,7 @@ from pathlib import Path
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import issue_registry as ir
 
 from .const import DOMAIN, INDEX_DOWNLOAD_URL, PLATFORMS
 from .coordinator import ASPParkingCoordinator
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 _INDEX_DIR = Path(__file__).parent / "gps2asp" / "data" / "index"
 _INDEX_FILES = ("segments.idx", "segments.dat", "segments.json", "graph.json")
 _DOWNLOAD_TASK_KEY = f"{DOMAIN}_index_task"
+_IMPORT_ERROR_ISSUE_ID = "gps2asp_import_error"
 
 
 async def _async_ensure_index(hass: HomeAssistant) -> None:
@@ -120,6 +122,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     Creates the coordinator, starts GPS tracking, forwards entity platforms,
     registers the resolve_now service, and sets up options change listener.
 
+    On ImportError from the vendored gps2asp package (DIAG-02/03), logs an
+    actionable error message, creates a persistent HA Repair issue, and
+    raises ConfigEntryNotReady. On every successful setup attempt, any
+    stale repair issue is auto-dismissed first (D-07).
+
     Args:
         hass: Home Assistant instance.
         entry: Config entry for this integration instance.
@@ -127,11 +134,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     Returns:
         True if setup was successful.
     """
+    # D-07: auto-dismiss stale repair on every setup attempt (no-op if absent).
+    # Runs first so a successful HACS reinstall clears the Repairs badge automatically.
+    ir.async_delete_issue(hass, DOMAIN, _IMPORT_ERROR_ISSUE_ID)
+
     # Ensure spatial index is present (downloads on first setup)
     await _async_ensure_index(hass)
 
-    # Create and start the coordinator
-    coordinator = ASPParkingCoordinator(hass, entry)
+    # D-06: guard the gps2asp-dependent coordinator instantiation. Late
+    # vendored imports happen inside the coordinator's __init__ chain;
+    # ImportError surfaces here. (Module-level coordinator.py import failure
+    # is caught at HA's own integration loader -- see 27-04-SUMMARY.)
+    try:
+        coordinator = ASPParkingCoordinator(hass, entry)
+    except ImportError as err:
+        logger.error(
+            "ASP Parking: gps2asp vendored package is incomplete -- "
+            "reinstall via HACS. (%s)", err,
+        )
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _IMPORT_ERROR_ISSUE_ID,
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="gps2asp_import_error",
+        )
+        raise ConfigEntryNotReady(
+            "gps2asp vendored package is incomplete -- reinstall via HACS"
+        ) from err
+
     entry.runtime_data = coordinator
     await coordinator.async_start()
 
