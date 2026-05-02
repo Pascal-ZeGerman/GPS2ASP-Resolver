@@ -63,7 +63,7 @@
           "stale_timeout": "Mark sensor unavailable after this long without a GPS update. Match your tracker's reporting frequency.",
           "nyc311_entity": "Leave empty for auto-detection. Only set this if you renamed the ha-nyc311 binary sensor.",
           "nyc311_api_key": "Get a free key at api-portal.nyc.gov. Leave blank to disable 311 polling.",
-          "notify_service": "Pick a notify service (e.g. notify.mobile_app_yourphone). Leave empty to disable push notifications. If the list is empty, set up the Home Assistant Companion app or another notify integration first.",
+          "notify_service": "Pick a notify service. Leave empty to disable push notifications. If the list is empty, set up the Home Assistant Companion app or another notify integration first.",
           "notify_lead_time": "How many minutes before a cleaning window starts to send the push notification. Default 120 minutes (2 hours). Range 15-480."
         }
       },
