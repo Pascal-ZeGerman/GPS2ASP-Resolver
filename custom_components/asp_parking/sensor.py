@@ -240,7 +240,6 @@ class ASPNextMoveTimeSensor(SensorEntity):
             attrs["street_name"] = schedule.on_street
             attrs["cross_streets"] = f"{schedule.from_street} to {schedule.to_street}"
             attrs["side_of_street"] = schedule.side_of_street
-            attrs["borough"] = data.borough
 
         # --- Window group ---
         if isinstance(schedule, ScheduleFound):
@@ -268,6 +267,7 @@ class ASPNextMoveTimeSensor(SensorEntity):
             data.last_resolved.isoformat() if data.last_resolved else None
         )
         attrs["confidence_score"] = data.confidence_score
+        attrs["borough"] = data.borough          # Phase 30 — always present (None when unresolved)
         attrs["sign_count"] = data.sign_count
         attrs["parse_failures"] = data.parse_failures
         attrs["soda_level"] = data.soda_level
