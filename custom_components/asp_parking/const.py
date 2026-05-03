@@ -30,8 +30,9 @@ DEFAULT_NYC311_ENTITY = ""
 DEFAULT_NYC311_BRIDGE_ENTITY = "binary_sensor.nyc311_parking_exception_today"
 
 # Debug overrides (Phase 24)
-CONF_DEBUG_ENABLED = "debug_enabled"
-DEFAULT_DEBUG_ENABLED = False
+# NOTE: CONF_DEBUG_ENABLED and DEFAULT_DEBUG_ENABLED have been removed (Phase 29,
+# IN-01). The coordinator unconditionally resets _debug_enabled = False on
+# async_start (D-02); the switch entity is the sole runtime setter.
 CONF_DEBUG_LAT = "debug_lat"
 DEFAULT_DEBUG_LAT = None
 CONF_DEBUG_LON = "debug_lon"
