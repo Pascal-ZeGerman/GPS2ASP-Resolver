@@ -824,6 +824,9 @@ class ASPParkingCoordinator:
                         exc_info=True,
                     )
                     continue
+                # Only cache non-empty results; empty = Level 1 miss, allow live L2/L3/L4 fallback
+                if not records:
+                    continue
                 # Cache key uses canonical CSCL names to match the resolution result
                 key = (
                     cand.full_street_name,
