@@ -24,7 +24,7 @@
       },
       "api_keys": {
         "title": "NYC 311 API Key (Optional)",
-        "description": "Enter your NYC 311 API key to receive weather and emergency suspension alerts. Leave blank to skip -- holiday suspensions still work without it.",
+        "description": "Enter your NYC 311 API key to receive weather and emergency suspension alerts. Leave blank to skip — holiday suspensions still work without it.",
         "data": {
           "nyc311_api_key": "NYC 311 API key"
         },
@@ -37,7 +37,7 @@
       "movement_threshold_too_small": "Must be at least 1 m.",
       "refresh_interval_too_small": "Must be at least 1 h.",
       "stale_timeout_too_small": "Must be at least 1 h.",
-      "invalid_api_key": "Invalid API key -- check your NYC 311 API portal subscription key."
+      "invalid_api_key": "Invalid API key — check your NYC 311 API portal subscription key."
     },
     "abort": {
       "already_configured": "ASP Parking Monitor is already configured."
@@ -69,7 +69,7 @@
       },
       "debug": {
         "title": "Debug Overrides",
-        "description": "Debug overrides -- for testing only. Leave blank/disabled for normal operation.",
+        "description": "Debug overrides — for testing only. Leave blank/disabled for normal operation.",
         "data": {
           "debug_enabled": "Debug mode",
           "debug_lat": "Override latitude",
@@ -104,7 +104,7 @@
       "movement_threshold_too_small": "Must be at least 1 m.",
       "refresh_interval_too_small": "Must be at least 1 h.",
       "stale_timeout_too_small": "Must be at least 1 h.",
-      "invalid_api_key": "Invalid API key -- check your NYC 311 API portal subscription key."
+      "invalid_api_key": "Invalid API key — check your NYC 311 API portal subscription key."
     }
   },
   "entity": {
