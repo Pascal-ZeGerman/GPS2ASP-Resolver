@@ -238,6 +238,10 @@ async def resolve_segment(
             side_of_street=side,
             confidence=round(confidence, 4),
             has_asp=has_asp,
+            borocode=best.borocode,
+            perpendicular_distance_ft=round(perp_distance, 2),
+            street_width_ft=effective_width,
+            segment_id=best.segment_id,
         )
 
     except (NoSegmentFoundError, AmbiguousResolutionError):

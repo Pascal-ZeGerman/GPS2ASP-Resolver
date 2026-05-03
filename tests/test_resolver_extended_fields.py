@@ -41,9 +41,10 @@ def _make_segment_candidate(
 ) -> SegmentCandidate:
     """Build a SegmentCandidate fixture with all 13 required fields populated."""
     if geometry is None:
-        # Horizontal segment so perpendicular distance from a point on the
-        # line (y matches) is exactly 0.0 — keeps the test deterministic.
-        geometry = LineString([(987600.0, 178432.0), (987700.0, 178432.0)])
+        # Horizontal 200ft segment along y=178432. Long enough that the test
+        # query point (midpoint) sits >30ft from either endpoint, avoiding the
+        # near-intersection ambiguity guard in compute_confidence().
+        geometry = LineString([(987600.0, 178432.0), (987800.0, 178432.0)])
     return SegmentCandidate(
         segment_id=segment_id,
         geometry=geometry,
@@ -108,8 +109,12 @@ async def test_resolve_segment_populates_new_fields_from_best_candidate() -> Non
         borocode="3",
     )
 
-    # Query point lies on the LineString (y=178432, between x=987600 and x=987700).
-    query_x, query_y = 987654.0, 178432.0
+    # Query point sits at the segment midpoint (x=987700) but offset 10ft
+    # perpendicular to the centerline (y=178442 vs centerline y=178432).
+    # For width=30ft this yields perp_dist=10ft (>4.95ft near-center guard),
+    # endpoint distance ~100ft (>30ft near-intersection guard) and
+    # confidence ~0.67 — comfortably above the 0.33 threshold.
+    query_x, query_y = 987700.0, 178442.0
     expected_perp = compute_perpendicular_distance(
         query_x, query_y, candidate.geometry,
     )
