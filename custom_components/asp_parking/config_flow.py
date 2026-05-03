@@ -35,7 +35,6 @@ from .const import (
     CONF_STALE_TIMEOUT,
     CONF_SUPPRESS_NOTIFICATIONS,
     DEFAULT_DEBUG_DATETIME,
-    DEFAULT_DEBUG_ENABLED,
     DEFAULT_DEBUG_LAT,
     DEFAULT_DEBUG_LON,
     DEFAULT_MOVEMENT_THRESHOLD,
@@ -45,7 +44,6 @@ from .const import (
     DEFAULT_PARKING_RADIUS,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STALE_TIMEOUT,
-    DEFAULT_SUPPRESS_NOTIFICATIONS,
     DOMAIN,
 )
 from .gps2asp.suspension import NYC311Client
@@ -375,9 +373,6 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             options = {**getattr(self, "_options", {})}
-            options[CONF_DEBUG_ENABLED] = user_input.get(
-                CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED
-            )
             # Store lat/lon only if provided; clear from options when blank so stale
             # values don't persist across saves (WR-02)
             debug_lat = user_input.get(CONF_DEBUG_LAT)
@@ -397,17 +392,10 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 options[CONF_DEBUG_DATETIME] = debug_dt
             else:
                 options.pop(CONF_DEBUG_DATETIME, None)
-            options[CONF_SUPPRESS_NOTIFICATIONS] = user_input.get(
-                CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
-            )
             return self.async_create_entry(title="", data=options)
 
         opts = self.config_entry.options
         debug_schema: dict = {
-            vol.Optional(
-                CONF_DEBUG_ENABLED,
-                default=opts.get(CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED),
-            ): selector.BooleanSelector(),
             **({
                 vol.Optional(CONF_DEBUG_LAT, default=opts[CONF_DEBUG_LAT]): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=-90, max=90, step=0.000001, mode=selector.NumberSelectorMode.BOX)
@@ -431,10 +419,6 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
             } if CONF_DEBUG_DATETIME in opts else {
                 vol.Optional(CONF_DEBUG_DATETIME): selector.DateTimeSelector(),
             }),
-            vol.Optional(
-                CONF_SUPPRESS_NOTIFICATIONS,
-                default=opts.get(CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS),
-            ): selector.BooleanSelector(),
         }
         return self.async_show_form(
             step_id="debug",
