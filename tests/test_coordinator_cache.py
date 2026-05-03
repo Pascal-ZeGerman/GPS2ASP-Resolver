@@ -237,6 +237,10 @@ async def test_resolve_pipeline_uses_cache_on_hit(make_coordinator):
     resolution.to_street = "UNDERHILL AVE"
     resolution.side_of_street = "N"
     resolution.confidence = 0.85
+    resolution.borocode = "3"
+    resolution.perpendicular_distance_ft = 12.5
+    resolution.street_width_ft = 30.0
+    resolution.segment_id = 12345
 
     benign_schedule = MagicMock()
     benign_schedule.status = "schedule_found"
@@ -279,6 +283,10 @@ async def test_resolve_pipeline_falls_through_on_cache_miss(make_coordinator):
     resolution.to_street = "UNDERHILL AVE"
     resolution.side_of_street = "N"
     resolution.confidence = 0.85
+    resolution.borocode = "3"
+    resolution.perpendicular_distance_ft = 12.5
+    resolution.street_width_ft = 30.0
+    resolution.segment_id = 12345
 
     sign_result = MagicMock()
     sign_result.signs = []
@@ -331,6 +339,10 @@ async def test_cache_miss_does_not_write_back(make_coordinator):
     resolution.to_street = "UNDERHILL AVE"
     resolution.side_of_street = "N"
     resolution.confidence = 0.85
+    resolution.borocode = "3"
+    resolution.perpendicular_distance_ft = 12.5
+    resolution.street_width_ft = 30.0
+    resolution.segment_id = 12345
 
     sign_result = MagicMock()
     sign_result.signs = []
