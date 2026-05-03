@@ -5,7 +5,7 @@ importable function that runs the full GPS-to-schedule pipeline.
 
 Two variants:
     ASPResult      — lean result when debug=False (schedule + error fields only)
-    ASPDebugResult — rich result when debug=True (all 13 intermediate fields)
+    ASPDebugResult — rich result when debug=True (all 17 intermediate fields)
 """
 
 from __future__ import annotations
