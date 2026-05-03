@@ -304,15 +304,6 @@ class ASPParkingCoordinator:
         self._parking_lon = float(raw_lon) if raw_lon is not None else None
         self._parking_radius_m = int(raw_radius) if raw_radius is not None else None
 
-        if self._debug_enabled:
-            logger.warning(
-                "ASP Parking: DEBUG MODE is active -- overrides in effect "
-                "(lat=%s, lon=%s, datetime=%s)",
-                self._debug_lat,
-                self._debug_lon,
-                self._debug_datetime,
-            )
-
         # Subscribe to GPS state changes
         unsub_state = async_track_state_change_event(
             self.hass,
