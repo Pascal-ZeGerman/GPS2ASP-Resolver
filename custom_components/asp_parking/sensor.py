@@ -8,9 +8,9 @@ Provides ASPNextMoveTimeSensor which maps coordinator data to a sensor state:
 
 Rich attributes cover schedule, location, window, metadata, and error groups.
 
-Also provides 10 diagnostic sensors for debugging and dashboards:
+Also provides 9 diagnostic sensors for debugging and dashboards:
 ASPCarNameSensor, ASPVINSensor, ASPLatitudeSensor, ASPLongitudeSensor,
-ASPResolvedStreetSensor, ASPResolutionStatusSensor, ASPDebugModeSensor,
+ASPResolvedStreetSensor, ASPResolutionStatusSensor,
 ASPConfidenceScoreSensor, ASPSODALevelSensor, ASPLastResolvedSensor,
 ASPLastErrorSensor.
 """
@@ -55,7 +55,6 @@ async def async_setup_entry(
         ASPLongitudeSensor(coordinator),
         ASPResolvedStreetSensor(coordinator),
         ASPResolutionStatusSensor(coordinator),
-        ASPDebugModeSensor(coordinator),
         # DIAG-04 (Phase 27): four diagnostic sensors surfacing coordinator state
         ASPConfidenceScoreSensor(coordinator),
         ASPSODALevelSensor(coordinator),
@@ -453,39 +452,6 @@ class ASPResolutionStatusSensor(_ASPDiagnosticSensor):
         if data.last_error is not None:
             attrs["last_error"] = data.last_error
         return attrs
-
-
-class ASPDebugModeSensor(_ASPDiagnosticSensor):
-    """Diagnostic sensor showing whether debug mode is active.
-
-    Per D-09: EntityCategory.DIAGNOSTIC, state is 'active'/'inactive',
-    attributes show current debug override values for visibility.
-    """
-
-    _attr_icon = "mdi:bug"
-    _attr_translation_key = "debug_mode"
-
-    def __init__(self, coordinator: ASPParkingCoordinator) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_debug_mode"
-
-    @property
-    def native_value(self) -> str:
-        """Return 'active' when debug mode is enabled, 'inactive' otherwise."""
-        return "active" if self._coordinator._debug_enabled else "inactive"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, str | float | bool | None]:
-        """Return current debug override values for visibility."""
-        c = self._coordinator
-        return {
-            "debug_lat": c._debug_lat,
-            "debug_lon": c._debug_lon,
-            "debug_datetime": (
-                c._debug_datetime.isoformat() if c._debug_datetime else None
-            ),
-            "suppress_notifications": c._suppress_notifications,
-        }
 
 
 class ASPConfidenceScoreSensor(_ASPDiagnosticSensor):
