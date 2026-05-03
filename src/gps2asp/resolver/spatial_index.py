@@ -105,17 +105,16 @@ class SpatialIndex:
         dat_file = self._index_dir / "segments.dat"
         meta_file = self._index_dir / "segments.json"
 
-        if not idx_file.exists() or not dat_file.exists():
-            raise IndexNotFoundError(str(self._index_dir))
-        if not meta_file.exists():
-            raise IndexNotFoundError(str(self._index_dir))
+        # Load blocking I/O off the event loop (required for Home Assistant)
+        def blocking_load() -> tuple[rtree_index.Index, dict]:
+            if not (idx_file.exists() and dat_file.exists() and meta_file.exists()):
+                raise IndexNotFoundError(str(self._index_dir))
+            idx = rtree_index.Index(str(index_path))
+            with open(meta_file) as f:
+                segments = json.load(f)
+            return idx, segments
 
-        # Load the R-tree index (reads .idx and .dat files)
-        self._index = rtree_index.Index(str(index_path))
-
-        # Load segment metadata
-        with open(meta_file, "r") as f:
-            self._segments = json.load(f)
+        self._index, self._segments = await asyncio.to_thread(blocking_load)
 
     def nearest(
         self,
