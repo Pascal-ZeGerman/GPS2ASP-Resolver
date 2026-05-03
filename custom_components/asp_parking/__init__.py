@@ -82,6 +82,13 @@ async def _async_download_index(hass: HomeAssistant) -> None:
                         for chunk in resp.iter_bytes(chunk_size=65536):
                             f.write(chunk)
             with zipfile.ZipFile(tmp) as zf:
+                resolved_base = _INDEX_DIR.resolve()
+                for member in zf.namelist():
+                    member_path = (resolved_base / member).resolve()
+                    if not str(member_path).startswith(str(resolved_base) + "/"):
+                        raise ValueError(
+                            f"Unsafe ZIP entry rejected (path traversal): {member!r}"
+                        )
                 zf.extractall(_INDEX_DIR)
         finally:
             tmp.unlink(missing_ok=True)
