@@ -96,6 +96,14 @@ NYC_TZ = ZoneInfo("America/New_York")
 
 _METRES_TO_FEET = 3.28084  # 1 metre = 3.28084 US survey feet
 
+_BOROUGH_NAMES: dict[str, str] = {
+    "1": "Manhattan",
+    "2": "Bronx",
+    "3": "Brooklyn",
+    "4": "Queens",
+    "5": "Staten Island",
+}
+
 
 @dataclass
 class ASPParkingData:
@@ -118,6 +126,13 @@ class ASPParkingData:
         sign_count: Number of signs retrieved from SODA.
         parse_failures: Count of unparseable signs.
         soda_level: Which SODA fallback level matched (1–4); 0 if not resolved.
+        borough: Human-readable borough name ("Manhattan", "Bronx", "Brooklyn",
+            "Queens", "Staten Island"); None if not resolved or unmapped (Phase 30, D-11).
+        distance_ft: Perpendicular distance from GPS point to segment centerline
+            (feet, rounded to 2 decimals). None if not resolved (Phase 30).
+        street_width_ft: Effective street width used in confidence calc (feet,
+            post-fallback). None if not resolved (Phase 30).
+        segment_id: CSCL physical segment ID. None if not resolved (Phase 30).
     """
 
     schedule_result: ScheduleResult | None = None
@@ -132,6 +147,10 @@ class ASPParkingData:
     sign_count: int = 0
     parse_failures: int = 0
     soda_level: int = 0  # which SODA fallback level matched (1–4); 0 if not resolved
+    borough: str | None = None
+    distance_ft: float | None = None
+    street_width_ft: float | None = None
+    segment_id: int | None = None
     suspension_state: SuspensionInfo = field(
         default_factory=lambda: SuspensionInfo(is_suspended=False, reason=None, source='none')
     )
@@ -616,6 +635,12 @@ class ASPParkingCoordinator:
             self.data.last_resolved = dt_util.utcnow()
             self.data.confidence_score = resolution.confidence
 
+            # Phase 30: Extract new diagnostic fields from resolution (D-09, D-10, D-11)
+            self.data.borough = _BOROUGH_NAMES.get(resolution.borocode or "")
+            self.data.distance_ft = resolution.perpendicular_distance_ft
+            self.data.street_width_ft = resolution.street_width_ft
+            self.data.segment_id = resolution.segment_id
+
             # Extract sign count from Phase 2 result
             if isinstance(sign_result, SignRetrievalSuccess):
                 self.data.sign_count = len(sign_result.signs)
@@ -655,6 +680,11 @@ class ASPParkingCoordinator:
             self.data.last_lat = lat
             self.data.last_lon = lon
             self.data.soda_level = 0  # reset: GPS outside coverage
+            # Phase 30: reset new diagnostic fields
+            self.data.borough = None
+            self.data.distance_ft = None
+            self.data.street_width_ft = None
+            self.data.segment_id = None
             # Retain last schedule_result per user decision
             logger.warning(
                 "GPS coordinates (%.4f, %.4f) are outside NYC coverage area"
@@ -668,6 +698,11 @@ class ASPParkingCoordinator:
             self.data.last_lat = lat
             self.data.last_lon = lon
             self.data.soda_level = 0  # reset: no street match
+            # Phase 30: reset new diagnostic fields
+            self.data.borough = None
+            self.data.distance_ft = None
+            self.data.street_width_ft = None
+            self.data.segment_id = None
             # Retain last schedule_result per user decision
             logger.warning(
                 "No street segment found at (%.4f, %.4f)"
