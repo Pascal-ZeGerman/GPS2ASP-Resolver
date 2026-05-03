@@ -240,7 +240,7 @@ class ASPNextMoveTimeSensor(SensorEntity):
             attrs["street_name"] = schedule.on_street
             attrs["cross_streets"] = f"{schedule.from_street} to {schedule.to_street}"
             attrs["side_of_street"] = schedule.side_of_street
-            attrs["borough"] = None  # Not in current pipeline output
+            attrs["borough"] = data.borough
 
         # --- Window group ---
         if isinstance(schedule, ScheduleFound):
@@ -405,8 +405,8 @@ class ASPResolvedStreetSensor(_ASPDiagnosticSensor):
         return None
 
     @property
-    def extra_state_attributes(self) -> dict[str, str | float | None]:
-        """Return cross streets, side, and confidence."""
+    def extra_state_attributes(self) -> dict[str, str | float | int | None]:
+        """Return cross streets, side, confidence, and Phase 30 diagnostic fields."""
         schedule = self._coordinator.data.schedule_result
         if not isinstance(schedule, (ScheduleFound, ASPActiveNow)):
             return {}
@@ -415,6 +415,10 @@ class ASPResolvedStreetSensor(_ASPDiagnosticSensor):
             "to_street": schedule.to_street,
             "side_of_street": schedule.side_of_street,
             "confidence_score": self._coordinator.data.confidence_score,
+            "borough": self._coordinator.data.borough,
+            "distance_ft": self._coordinator.data.distance_ft,
+            "street_width_ft": self._coordinator.data.street_width_ft,
+            "segment_id": self._coordinator.data.segment_id,
         }
 
 
