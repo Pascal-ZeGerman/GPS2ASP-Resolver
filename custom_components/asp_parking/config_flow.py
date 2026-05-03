@@ -269,7 +269,8 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     options[CONF_NYC311_ENTITY] = nyc311_entity
                 if api_key:
                     options[CONF_NYC311_API_KEY] = api_key
-                elif CONF_NYC311_API_KEY in self.config_entry.options and api_key is None:
+                else:
+                    # User cleared the field — remove key so it is not re-read at startup
                     options.pop(CONF_NYC311_API_KEY, None)
                 notify_svc = (user_input.get(CONF_NOTIFY_SERVICE) or "").strip()
                 options[CONF_NOTIFY_SERVICE] = notify_svc
