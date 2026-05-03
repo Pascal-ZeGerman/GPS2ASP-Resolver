@@ -1282,12 +1282,13 @@ def test_resolved_street_sensor_exposes_phase_30_diagnostic_attributes() -> None
     # so the sensor's branch is exercised.
     from custom_components.asp_parking.gps2asp.schedule.models import (
         ScheduleFound as VendoredScheduleFound,
+        WeeklySchedule as VendoredWeeklySchedule,
     )
 
     schedule = VendoredScheduleFound(
         status="schedule_found",
         next_window=None,
-        weekly_schedule=None,
+        weekly_schedule=VendoredWeeklySchedule(windows=()),
         on_street="PROSPECT PLACE",
         from_street="VANDERBILT AVENUE",
         to_street="UNDERHILL AVENUE",
