@@ -33,6 +33,13 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
     Raises ConfigEntryNotReady while the download is in progress so HA retries
     automatically. After the download completes, the next retry succeeds.
     """
+    from homeassistant.components.persistent_notification import (
+        async_dismiss as pn_dismiss,
+    )
+
+    # Dismiss any stale error notification from a previous failed download attempt
+    pn_dismiss(hass, "asp_parking_index_error")
+
     if all((_INDEX_DIR / f).exists() for f in _INDEX_FILES):
         return
 
