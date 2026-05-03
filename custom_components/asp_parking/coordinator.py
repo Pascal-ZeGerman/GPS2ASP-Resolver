@@ -415,6 +415,7 @@ class ASPParkingCoordinator:
         for unsub in self._listeners:
             unsub()
         self._listeners.clear()
+        self._entity_update_callbacks.clear()
         await self._debouncer.async_cancel()
         logger.info("ASP Parking coordinator stopped")
 
@@ -476,6 +477,22 @@ class ASPParkingCoordinator:
             cb: Callback to invoke when new data is available.
         """
         self._entity_update_callbacks.append(cb)
+
+    @callback
+    def async_remove_update_callback(self, cb: CALLBACK_TYPE) -> None:
+        """Deregister a previously registered entity update callback.
+
+        Called automatically by entities via async_on_remove() to prevent
+        stale closures accumulating across integration reloads.
+
+        Args:
+            cb: Callback to remove (same object that was passed to
+                async_add_update_callback).
+        """
+        try:
+            self._entity_update_callbacks.remove(cb)
+        except ValueError:
+            pass
 
     @callback
     def _async_notify_entities(self) -> None:
