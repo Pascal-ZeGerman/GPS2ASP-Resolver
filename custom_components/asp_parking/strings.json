@@ -96,7 +96,7 @@
         "data_description": {
           "parking_lat": "Latitude of your usual parking area (e.g. copy from Google Maps).",
           "parking_lon": "Longitude of your usual parking area.",
-          "parking_radius": "How far around the centre to pre-fetch sign data, in metres. Larger radii pre-fetch more blocks but make more requests to NYC Open Data — set NYC_OPEN_DATA_APP_TOKEN in your environment if you go above 1000 m."
+          "parking_radius": "How far around the center to pre-fetch sign data, in meters. Larger radii pre-fetch more blocks but make more API calls to NYC Open Data. For radii above 1000 m, a NYC Open Data app token is recommended to avoid rate limits (set via the NYC_OPEN_DATA_APP_TOKEN environment variable on your HA host)."
         }
       }
     },
