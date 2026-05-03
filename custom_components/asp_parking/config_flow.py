@@ -393,6 +393,14 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 options[CONF_DEBUG_DATETIME] = debug_dt
             else:
                 options.pop(CONF_DEBUG_DATETIME, None)
+            # Carry forward suppress_notifications — the debug form has no
+            # BooleanSelector for it, so we must preserve the existing value
+            # explicitly to prevent it silently disappearing (WR-04).
+            existing_opts = self.config_entry.options
+            if CONF_SUPPRESS_NOTIFICATIONS in existing_opts:
+                options[CONF_SUPPRESS_NOTIFICATIONS] = existing_opts[
+                    CONF_SUPPRESS_NOTIFICATIONS
+                ]
             return self.async_create_entry(title="", data=options)
 
         opts = self.config_entry.options
