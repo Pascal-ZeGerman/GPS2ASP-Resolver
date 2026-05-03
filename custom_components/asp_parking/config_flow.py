@@ -286,13 +286,17 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     CONF_DEBUG_LAT,
                     CONF_DEBUG_LON,
                     CONF_DEBUG_DATETIME,
-                    CONF_SUPPRESS_NOTIFICATIONS,
                     CONF_PARKING_LAT,
                     CONF_PARKING_LON,
                     CONF_PARKING_RADIUS,
                 ):
                     if key in self.config_entry.options:
                         options[key] = self.config_entry.options[key]
+                # Do NOT carry forward CONF_SUPPRESS_NOTIFICATIONS —
+                # its purpose is to suppress notifications during debug mode,
+                # which resets to False on restart. Carrying it forward causes
+                # permanent silent suppression with no UI indicator.
+                options[CONF_SUPPRESS_NOTIFICATIONS] = False
                 self._options = options
                 return await self.async_step_parking_area()
 
