@@ -55,7 +55,7 @@ class SegmentCandidate:
         nominaldir: Nominal compass direction of the segment.
         rw_type: Road type (1=Street, 2=Highway, etc.).
         streetwidth: Paved width in feet.
-        borocode: Borough code (1=Manhattan, 2=Bronx, 3=Brooklyn, 4=Queens, 5=Staten Island).
+        borocode: Borough code as string ("1"=Manhattan, "2"=Bronx, "3"=Brooklyn, "4"=Queens, "5"=Staten Island).
         distance_ft: Distance from the query point to the segment centerline in feet.
     """
 
