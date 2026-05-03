@@ -26,6 +26,10 @@ COORD_PATH = (
     / "coordinator.py"
 )
 
+# NOTE: These tests inspect coordinator.py source text directly because the
+# logger calls are difficult to unit-test without the HA harness. Changing
+# log message wording or formatting requires updating the assertion strings here.
+
 
 def _coord_source() -> str:
     return COORD_PATH.read_text(encoding="utf-8")
