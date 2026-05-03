@@ -1045,8 +1045,8 @@ class TestSuspensionPoll:
         """
         src = _COORDINATOR_SRC.read_text()
         # The update method must check the current date
-        assert "datetime.now(NYC_TZ).date()" in src, (
-            "coordinator.py suspension poll does not derive 'today' from current time"
+        assert "self._get_now().date()" in src, (
+            "coordinator.py suspension poll does not derive 'today' via _get_now()"
         )
         # Confirm _async_suspension_poll does not gate on last_lat / last_lon
         poll_start = src.find("def _async_suspension_poll")
