@@ -56,7 +56,6 @@ from .gps2asp.suspension.poller import NYC311AuthError
 
 from .const import (
     CONF_DEBUG_DATETIME,
-    CONF_DEBUG_ENABLED,
     CONF_DEBUG_LAT,
     CONF_DEBUG_LON,
     CONF_DEVICE_TRACKER,
@@ -72,7 +71,6 @@ from .const import (
     CONF_STALE_TIMEOUT,
     CONF_SUPPRESS_NOTIFICATIONS,
     DEFAULT_DEBUG_DATETIME,
-    DEFAULT_DEBUG_ENABLED,
     DEFAULT_DEBUG_LAT,
     DEFAULT_DEBUG_LON,
     DEFAULT_MOVEMENT_THRESHOLD,
@@ -269,9 +267,9 @@ class ASPParkingCoordinator:
         # --- Debug overrides (Phase 24) — loaded FIRST so _get_now() is correct
         # for ALL subsequent calls in this method (suspension startup, bridge
         # detection, etc.).
-        self._debug_enabled = self.entry.options.get(
-            CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED
-        )
+        # D-02 (Phase 29): debug mode is in-memory only — switch.py is the
+        # sole runtime setter. Always start as False on HA restart.
+        self._debug_enabled = False
         self._debug_lat = self.entry.options.get(CONF_DEBUG_LAT, DEFAULT_DEBUG_LAT)
         self._debug_lon = self.entry.options.get(CONF_DEBUG_LON, DEFAULT_DEBUG_LON)
         raw_dt = self.entry.options.get(CONF_DEBUG_DATETIME, DEFAULT_DEBUG_DATETIME)
@@ -494,6 +492,16 @@ class ASPParkingCoordinator:
         for cb in self._entity_update_callbacks:
             cb()
 
+    @callback
+    def async_update_listeners(self) -> None:
+        """Public alias for entity update notification.
+
+        Used by the switch platform (Phase 29 / D-03) to push debug-mode
+        state changes to all registered entities immediately after
+        mutating ``_debug_enabled``.
+        """
+        self._async_notify_entities()
+
     # ------------------------------------------------------------------
     # GPS event handling
     # ------------------------------------------------------------------
@@ -640,7 +648,11 @@ class ASPParkingCoordinator:
             self.data.last_lon = lon
             self.data.soda_level = 0  # reset: GPS outside coverage
             # Retain last schedule_result per user decision
-            logger.info("GPS outside NYC coverage area (%.4f, %.4f)", lat, lon)
+            logger.warning(
+                "GPS coordinates (%.4f, %.4f) are outside NYC coverage area"
+                " -- check that your device tracker is reporting a valid NYC location",
+                lat, lon,
+            )
 
         except (NoSegmentFoundError, AmbiguousResolutionError) as err:
             # GPS is valid but no matching street segment
@@ -649,7 +661,12 @@ class ASPParkingCoordinator:
             self.data.last_lon = lon
             self.data.soda_level = 0  # reset: no street match
             # Retain last schedule_result per user decision
-            logger.info("No street match at (%.4f, %.4f): %s", lat, lon, err)
+            logger.warning(
+                "No street segment found at (%.4f, %.4f)"
+                " -- check that your device tracker is reporting accurate"
+                " coordinates within a mapped NYC street: %s",
+                lat, lon, err,
+            )
 
         except Exception as err:  # noqa: BLE001
             # SODA API errors, network errors, unexpected exceptions

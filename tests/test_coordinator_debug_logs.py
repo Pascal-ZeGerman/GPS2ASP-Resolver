@@ -98,11 +98,15 @@ def test_async_start_initializes_debug_enabled_false_unconditionally():
     ), "async_start still contains the legacy CONF_DEBUG_ENABLED read (D-02)."
 
     # Two unconditional assignments must exist:
-    # one in __init__ (line ~194), one in async_start (per D-02).
-    occurrences = re.findall(r"self\._debug_enabled\s*=\s*False\b", src)
+    # one in __init__ (annotated `self._debug_enabled: bool = False`),
+    # one in async_start (`self._debug_enabled = False`) per D-02.
+    occurrences = re.findall(
+        r"self\._debug_enabled(?:\s*:\s*bool)?\s*=\s*False\b",
+        src,
+    )
     assert len(occurrences) == 2, (
-        f"Expected exactly 2 `self._debug_enabled = False` assignments "
-        f"(__init__ + async_start per D-02); found {len(occurrences)}."
+        f"Expected exactly 2 unconditional `self._debug_enabled = False` "
+        f"assignments (__init__ + async_start per D-02); found {len(occurrences)}."
     )
 
 
@@ -117,36 +121,74 @@ def test_const_imports_drop_debug_enabled_names():
     )
 
 
+def _join_string_continuations(src: str) -> str:
+    """Concatenate adjacent string literals split across lines.
+
+    Python source like::
+
+        "first part"
+        " -- second part"
+
+    becomes the single runtime string ``"first part -- second part"`` after
+    Python's literal-concatenation rule. This helper splices such pairs in
+    raw source so substring matching can find the runtime concatenation.
+    """
+    # Replace `"...\n   "` with empty string (closing quote, optional comma,
+    # whitespace including newline, opening quote of next adjacent literal).
+    return re.sub(r'"\s*\n\s*"', "", src)
+
+
 def test_outside_nyc_main_loop_logs_warning_with_actionable_message():
-    """D-10, D-13: OutsideNYCError in main resolve loop emits WARNING with actionable text."""
-    src = _coord_source()
-    assert (
-        "are outside NYC coverage area"
+    """D-10, D-13: OutsideNYCError in main resolve loop emits WARNING with actionable text.
+
+    The format string may be written in source as adjacent string literals
+    split across lines for readability — at runtime they concatenate. The
+    test normalizes whitespace before substring matching so either layout
+    is acceptable, but the *concatenated* phrase must be present.
+    """
+    src_joined = _join_string_continuations(_coord_source())
+    expected = (
+        "GPS coordinates (%.4f, %.4f) are outside NYC coverage area"
         " -- check that your device tracker is reporting a valid NYC location"
-    ) in src, "Main-loop OutsideNYCError WARNING is missing or differs from spec (D-10, D-13)."
+    )
+    assert expected in src_joined, (
+        "Main-loop OutsideNYCError WARNING is missing or differs from spec "
+        "(D-10, D-13)."
+    )
     # And the legacy info-level line must be gone:
+    src = _coord_source()
     assert "logger.info(\"GPS outside NYC coverage area" not in src, (
         "Legacy `logger.info(\"GPS outside NYC coverage area ...\")` must be replaced "
         "with logger.warning(...) per D-10."
     )
+    # The new line must be a logger.warning call (search the immediate window).
+    assert re.search(
+        r"logger\.warning\(\s*\n?\s*\"GPS coordinates \(%\.4f, %\.4f\) are outside NYC coverage area\"",
+        src,
+    ), "OutsideNYCError handler must use logger.warning(...) for the actionable message."
 
 
 def test_no_segment_handler_logs_warning_with_actionable_message():
     """D-11, D-13: NoSegmentFoundError/AmbiguousResolutionError emit WARNING with actionable text."""
-    src = _coord_source()
+    src_joined = _join_string_continuations(_coord_source())
     expected = (
         "No street segment found at (%.4f, %.4f)"
         " -- check that your device tracker is reporting accurate"
         " coordinates within a mapped NYC street: %s"
     )
-    assert expected in src, (
+    assert expected in src_joined, (
         "Main-loop NoSegmentFoundError/AmbiguousResolutionError WARNING is "
         "missing or differs from spec (D-11, D-13)."
     )
+    src = _coord_source()
     assert "logger.info(\"No street match at" not in src, (
         "Legacy `logger.info(\"No street match ...\")` must be replaced with "
         "logger.warning(...) per D-11."
     )
+    assert re.search(
+        r"logger\.warning\(\s*\n?\s*\"No street segment found at \(%\.4f, %\.4f\)\"",
+        src,
+    ), "NoSegment/Ambiguous handler must use logger.warning(...) for the actionable message."
 
 
 def test_preseeder_outside_nyc_warning_unchanged():
