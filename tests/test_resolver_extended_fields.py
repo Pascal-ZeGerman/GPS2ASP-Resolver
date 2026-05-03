@@ -39,7 +39,7 @@ def _make_segment_candidate(
     has_asp_right: bool = True,
     distance_ft: float = 5.0,
 ) -> SegmentCandidate:
-    """Build a SegmentCandidate fixture with all 13 required fields populated."""
+    """Build a SegmentCandidate fixture with all required fields populated."""
     if geometry is None:
         # Horizontal 200ft segment along y=178432. Long enough that the test
         # query point (midpoint) sits >30ft from either endpoint, avoiding the
