@@ -86,6 +86,11 @@ class ASPNextMoveTimeSensor(SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Register update callback when entity is added to HA."""
         self._coordinator.async_add_update_callback(self.async_write_ha_state)
+        self.async_on_remove(
+            lambda: self._coordinator.async_remove_update_callback(
+                self.async_write_ha_state
+            )
+        )
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -299,6 +304,11 @@ class _ASPDiagnosticSensor(SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Register update callback when entity is added to HA."""
         self._coordinator.async_add_update_callback(self.async_write_ha_state)
+        self.async_on_remove(
+            lambda: self._coordinator.async_remove_update_callback(
+                self.async_write_ha_state
+            )
+        )
 
     @property
     def device_info(self) -> DeviceInfo:
