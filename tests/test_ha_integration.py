@@ -73,6 +73,11 @@ class ASPParkingData:
     sign_count: int = 0
     parse_failures: int = 0
     soda_level: int = 0  # mirrors coordinator.py ASPParkingData
+    # Phase 30 diagnostic fields (mirror coordinator.py ASPParkingData)
+    borough: str | None = None
+    distance_ft: float | None = None
+    street_width_ft: float | None = None
+    segment_id: int | None = None
     suspension_state: SuspensionInfo = field(
         default_factory=lambda: SuspensionInfo(is_suspended=False, reason=None, source='none')
     )
@@ -175,7 +180,7 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
         attrs["street_name"] = schedule.on_street
         attrs["cross_streets"] = f"{schedule.from_street} to {schedule.to_street}"
         attrs["side_of_street"] = schedule.side_of_street
-        attrs["borough"] = None
+        attrs["borough"] = data.borough
 
     if isinstance(schedule, ScheduleFound):
         if schedule.next_window is not None:
@@ -1255,3 +1260,81 @@ def test_diag04_sensor_classes_exist() -> None:
         ASPLastErrorSensor,
     ):
         assert issubclass(cls, _ASPDiagnosticSensor)
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 Plan 04: Sensor extra_state_attributes for new diagnostic fields
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ha_integration
+def test_resolved_street_sensor_exposes_phase_30_diagnostic_attributes() -> None:
+    """ASPResolvedStreetSensor.extra_state_attributes must surface borough,
+    distance_ft, street_width_ft, segment_id from coordinator.data (Phase 30, D-13).
+    """
+    from unittest.mock import MagicMock
+
+    from custom_components.asp_parking.sensor import ASPResolvedStreetSensor
+    # The sensor imports ScheduleFound from the VENDORED copy under
+    # custom_components.asp_parking.gps2asp.*; the canonical src/ ScheduleFound
+    # used elsewhere in this file is a DIFFERENT class object — isinstance()
+    # against the vendored class would fail. Reuse the vendored ScheduleFound
+    # so the sensor's branch is exercised.
+    from custom_components.asp_parking.gps2asp.schedule.models import (
+        ScheduleFound as VendoredScheduleFound,
+    )
+
+    schedule = VendoredScheduleFound(
+        status="schedule_found",
+        next_window=None,
+        weekly_schedule=None,
+        on_street="PROSPECT PLACE",
+        from_street="VANDERBILT AVENUE",
+        to_street="UNDERHILL AVENUE",
+        side_of_street="N",
+        source_signs=["NO PARKING 8:30AM-10AM MON"],
+        summary="Mon 8:30-10am",
+        parse_failures=[],
+    )
+
+    # Build a coordinator stub with .data populated like Plan 03 success path.
+    # The local ASPParkingData mirror in this module includes the Phase 30
+    # diagnostic fields (borough, distance_ft, street_width_ft, segment_id),
+    # so the sensor's `self._coordinator.data.<field>` reads resolve correctly.
+    coord = MagicMock()
+    coord.data = ASPParkingData()
+    coord.data.borough = "Brooklyn"
+    coord.data.distance_ft = 12.34
+    coord.data.street_width_ft = 30.0
+    coord.data.segment_id = 987654
+    coord.data.confidence_score = 0.85
+    coord.data.schedule_result = schedule
+    coord.entry = MagicMock()
+    coord.entry.entry_id = "test_entry"
+
+    sensor = ASPResolvedStreetSensor(coord)
+    attrs = sensor.extra_state_attributes
+
+    # Phase 30 D-13: 4 new diagnostic keys
+    assert attrs["borough"] == "Brooklyn"
+    assert attrs["distance_ft"] == 12.34
+    assert attrs["street_width_ft"] == 30.0
+    assert attrs["segment_id"] == 987654
+    # Existing 4 keys still present
+    assert "from_street" in attrs
+    assert "to_street" in attrs
+    assert "side_of_street" in attrs
+    assert "confidence_score" in attrs
+
+
+@pytest.mark.ha_integration
+def test_next_move_time_sensor_borough_attribute_populated_from_coordinator_data() -> None:
+    """ASPNextMoveTimeSensor.extra_state_attributes['borough'] reads from
+    coordinator.data.borough (no longer hardcoded to None) per Phase 30 D-14.
+    """
+    data = ASPParkingData()
+    data.borough = "Manhattan"
+    data.schedule_result = _make_schedule_found()
+
+    attrs = sensor_extra_attributes(data)
+    assert attrs["borough"] == "Manhattan"
