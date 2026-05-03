@@ -95,9 +95,11 @@ async def _async_download_index(hass: HomeAssistant) -> None:
 
     try:
         await hass.async_add_executor_job(_sync_download)
+        hass.data.pop(_DOWNLOAD_TASK_KEY, None)
         pn_dismiss(hass, "asp_parking_index_download")
         logger.info("ASP Parking: spatial index downloaded to %s", _INDEX_DIR)
     except Exception as err:
+        hass.data.pop(_DOWNLOAD_TASK_KEY, None)
         pn_dismiss(hass, "asp_parking_index_download")
         pn_create(
             hass,
