@@ -335,6 +335,8 @@ class ASPCarNameSensor(_ASPDiagnosticSensor):
     @property
     def native_value(self) -> str | None:
         """Return the friendly name of the device_tracker entity."""
+        if self.hass is None:
+            return None
         state = self.hass.states.get(self._coordinator.device_tracker_entity)
         if state is None:
             return None
@@ -354,6 +356,8 @@ class ASPVINSensor(_ASPDiagnosticSensor):
     @property
     def native_value(self) -> str | None:
         """Return the VIN from device_tracker attributes."""
+        if self.hass is None:
+            return None
         state = self.hass.states.get(self._coordinator.device_tracker_entity)
         if state is None:
             return None
