@@ -78,11 +78,8 @@ async def async_get_config_entry_diagnostics(
     return {
         "config": config_section,
         "state": {
-            "last_resolved": last_resolved_iso,
             "confidence_score": data.confidence_score,
             "soda_level": data.soda_level,
-            "last_error": data.last_error,
-            "last_error_time": last_error_time_iso,
             "schedule_summary": schedule_summary,
         },
         "last_resolve": {
