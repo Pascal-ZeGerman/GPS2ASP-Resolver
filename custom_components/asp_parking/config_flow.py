@@ -19,7 +19,6 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_DEBUG_DATETIME,
-    CONF_DEBUG_ENABLED,
     CONF_DEBUG_LAT,
     CONF_DEBUG_LON,
     CONF_DEVICE_TRACKER,
@@ -279,8 +278,10 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 # Carry forward existing debug + parking options unchanged —
                 # debug step is bypassed in the options flow; parking values
                 # carry through so a re-save of init alone preserves them.
+                # NOTE: CONF_DEBUG_ENABLED is intentionally absent — the
+                # coordinator unconditionally resets _debug_enabled = False
+                # on async_start (D-02); writing it to options is misleading.
                 for key in (
-                    CONF_DEBUG_ENABLED,
                     CONF_DEBUG_LAT,
                     CONF_DEBUG_LON,
                     CONF_DEBUG_DATETIME,
