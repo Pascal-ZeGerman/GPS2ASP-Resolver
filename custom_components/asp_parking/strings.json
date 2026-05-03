@@ -68,21 +68,17 @@
         }
       },
       "debug": {
-        "title": "Debug Overrides",
-        "description": "Debug overrides — for testing only. Leave blank/disabled for normal operation.",
+        "title": "GPS & Time Overrides",
+        "description": "Override GPS coordinates and datetime for testing. Leave blank to use live device data.",
         "data": {
-          "debug_enabled": "Debug mode",
           "debug_lat": "Override latitude",
           "debug_lon": "Override longitude",
-          "debug_datetime": "Override current date/time",
-          "suppress_notifications": "Suppress push notifications"
+          "debug_datetime": "Override current date/time"
         },
         "data_description": {
-          "debug_enabled": "Master toggle. When off, all override fields are ignored even if set.",
           "debug_lat": "Fake GPS latitude for testing. Both lat and lon must be set together.",
           "debug_lon": "Fake GPS longitude for testing. Both lat and lon must be set together.",
-          "debug_datetime": "Replace the current date/time for schedule and suspension checks.",
-          "suppress_notifications": "Prevent push notifications while debug mode is active."
+          "debug_datetime": "Replace the current date/time for schedule and suspension checks."
         }
       },
       "parking_area": {
@@ -130,9 +126,6 @@
       "resolution_status": {
         "name": "Resolution Status"
       },
-      "debug_mode": {
-        "name": "Debug Mode"
-      },
       "confidence_score": {
         "name": "Confidence Score"
       },
@@ -149,6 +142,11 @@
     "binary_sensor": {
       "active_now": {
         "name": "ASP Active Now"
+      }
+    },
+    "switch": {
+      "debug_switch": {
+        "name": "Debug Mode"
       }
     }
   },
