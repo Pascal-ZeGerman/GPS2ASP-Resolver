@@ -149,6 +149,13 @@ def test_outside_nyc_main_loop_logs_warning_with_actionable_message():
     split across lines for readability — at runtime they concatenate. The
     test normalizes whitespace before substring matching so either layout
     is acceptable, but the *concatenated* phrase must be present.
+
+    NOTE (IN-03): This test uses source-text inspection rather than caplog-based
+    runtime assertions. Replacing it with caplog would require the full HA fixture
+    stack (hass, config_entry, coordinator startup, GPS resolution mocks) to trigger
+    the OutsideNYCError code path — significantly more complex than source inspection.
+    If the log message is refactored (e.g., moved to a helper or reformatted),
+    update the assertion strings here accordingly.
     """
     src_joined = _join_string_continuations(_coord_source())
     expected = (
@@ -173,7 +180,13 @@ def test_outside_nyc_main_loop_logs_warning_with_actionable_message():
 
 
 def test_no_segment_handler_logs_warning_with_actionable_message():
-    """D-11, D-13: NoSegmentFoundError/AmbiguousResolutionError emit WARNING with actionable text."""
+    """D-11, D-13: NoSegmentFoundError/AmbiguousResolutionError emit WARNING with actionable text.
+
+    NOTE (IN-03): Source-text inspection is used here for the same reason as
+    test_outside_nyc_main_loop_logs_warning_with_actionable_message — caplog-based
+    replacement would require the full HA fixture stack and is disproportionately
+    complex. Update assertion strings if log messages are refactored.
+    """
     src_joined = _join_string_continuations(_coord_source())
     expected = (
         "No street segment found at (%.4f, %.4f)"
