@@ -88,7 +88,7 @@ async def audit_fixture(fixture_path: Path, *, verbose: bool = False) -> list[di
             }
 
             # L3 diagnostic: only for non-L1/L2 results to avoid doubling API calls
-            if verbose and (result.soda_level >= 3 or result.soda_level == 0):
+            if verbose and entry["on_street"] and (result.soda_level >= 3 or result.soda_level == 0):
                 diag = await diagnose_l3(
                     entry["on_street"],
                     entry["side_of_street"],
