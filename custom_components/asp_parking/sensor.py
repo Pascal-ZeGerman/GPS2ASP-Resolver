@@ -222,12 +222,17 @@ class ASPNextMoveTimeSensor(SensorEntity):
                     ].index(d),
                 )
                 attrs["cleaning_days"] = day_names
-                if weekly.windows:
-                    first_window = weekly.windows[0]
-                    attrs["time_window_start"] = first_window.start_time.strftime(
-                        "%H:%M"
-                    )
-                    attrs["time_window_end"] = first_window.end_time.strftime("%H:%M")
+
+            # time_window_start/end: use next_window (the temporally-next window)
+            # rather than windows[0] (the day-sorted first window), so these
+            # attributes always reflect the window the user actually needs to act on.
+            if isinstance(schedule, ScheduleFound) and schedule.next_window is not None:
+                attrs["time_window_start"] = schedule.next_window.start_time.strftime(
+                    "%H:%M"
+                )
+                attrs["time_window_end"] = schedule.next_window.end_time.strftime(
+                    "%H:%M"
+                )
 
             attrs["schedule_summary"] = schedule.summary
 
