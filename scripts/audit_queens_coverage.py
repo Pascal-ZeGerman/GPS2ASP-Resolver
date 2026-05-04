@@ -139,7 +139,7 @@ def print_report(results: list[dict], fixture_name: str, *, verbose: bool = Fals
         else:
             counts[r["soda_level"]] = counts.get(r["soda_level"], 0) + 1
 
-    for level in [1, 2, 3, 4, 0]:
+    for level in sorted(counts.keys()):
         pct = counts[level] / total * 100 if total else 0
         label = f"Level {level}" if level > 0 else "No match (level 0)"
         print(f"  {label}: {counts[level]}/{total} ({pct:.1f}%)")
