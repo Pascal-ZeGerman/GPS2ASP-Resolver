@@ -635,7 +635,7 @@ class ASPParkingCoordinator:
                 )
 
             # Phase 3: Signs to schedule
-            schedule = compute_schedule(sign_result)
+            schedule = compute_schedule(sign_result, now=self._get_now())
 
             # Success: update all data fields
             self.data.schedule_result = schedule
