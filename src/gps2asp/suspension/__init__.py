@@ -49,7 +49,7 @@ BASE_DELAY = 1.0  # seconds
 # ---------------------------------------------------------------------------
 
 _REASON_PATTERN = re.compile(
-    r"Alternate Side Parking suspended for (.+?)\.\s",
+    r"Alternate Side Parking suspended for (.+?)\.",
     re.IGNORECASE,
 )
 
