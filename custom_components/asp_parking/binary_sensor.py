@@ -81,15 +81,14 @@ class ASPActiveNowBinarySensor(BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, str]:
-        """Return minimal attributes -- only current window times when active."""
+        """Return minimal attributes -- only current window times when active and not suspended."""
         schedule = self._coordinator.data.schedule_result
-        if isinstance(schedule, ASPActiveNow):
-            return {
-                "current_window_start": (
-                    schedule.active_window.start_datetime.isoformat()
-                ),
-                "current_window_end": (
-                    schedule.active_window.end_datetime.isoformat()
-                ),
-            }
-        return {}
+        if not isinstance(schedule, ASPActiveNow):
+            return {}
+        merged = apply_suspension(schedule, self._coordinator.data.suspension_state)
+        if not isinstance(merged, ASPActiveNow) or merged.suspended:
+            return {}
+        return {
+            "current_window_start": merged.active_window.start_datetime.isoformat(),
+            "current_window_end": merged.active_window.end_datetime.isoformat(),
+        }
