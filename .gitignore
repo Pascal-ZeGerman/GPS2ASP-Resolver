@@ -5,7 +5,11 @@ src/gps2asp/data/index/*.idx
 src/gps2asp/data/index/*.dat
 src/gps2asp/data/index/segments.json
 src/gps2asp/data/index/build_info.json
-custom_components/asp_parking/gps2asp/data/
+custom_components/asp_parking/gps2asp/data/index/segments.dat
+custom_components/asp_parking/gps2asp/data/index/segments.idx
+custom_components/asp_parking/gps2asp/data/index/segments.json
+custom_components/asp_parking/gps2asp/data/index/graph.json
+custom_components/asp_parking/gps2asp/data/index/build_info.json
 
 # Python
 __pycache__/
