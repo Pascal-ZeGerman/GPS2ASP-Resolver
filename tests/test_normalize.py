@@ -38,6 +38,24 @@ class TestNormalizeToSoda:
     def test_suffix_expansion_ter(self) -> None:
         assert normalize_to_soda("PARK TER") == "PARK TERRACE"
 
+    def test_suffix_expansion_ct(self) -> None:
+        assert normalize_to_soda("SUTPHIN CT") == "SUTPHIN COURT"
+
+    def test_suffix_expansion_pkwy(self) -> None:
+        assert normalize_to_soda("OCEAN PKWY") == "OCEAN PARKWAY"
+
+    def test_suffix_expansion_expy(self) -> None:
+        assert normalize_to_soda("GOWANUS EXPY") == "GOWANUS EXPRESSWAY"
+
+    def test_suffix_expansion_hwy(self) -> None:
+        assert normalize_to_soda("SUNRISE HWY") == "SUNRISE HIGHWAY"
+
+    def test_suffix_expansion_sq(self) -> None:
+        assert normalize_to_soda("HERALD SQ") == "HERALD SQUARE"
+
+    def test_suffix_expansion_cir(self) -> None:
+        assert normalize_to_soda("CADMAN CIR") == "CADMAN CIRCLE"
+
     def test_directional_expansion_east(self) -> None:
         # SODA uses fixed-width formatting: number right-justified in 5-char field.
         # "E  100 ST" -> "EAST  100 STREET" (2 spaces before 3-digit number).
@@ -199,6 +217,23 @@ class TestNormalizeToSoda:
     def test_lettered_avenue_does_not_affect_numbered(self) -> None:
         """3 AVE should still become 3 AVENUE (suffix expansion, not prefix)."""
         assert normalize_to_soda("3 AVE") == "3 AVENUE"
+
+    # Idempotency: already-expanded AVENUE [A-Z] must not re-expand (17-CR-01)
+    def test_lettered_avenue_idempotent_avenue_e(self) -> None:
+        """normalize_to_soda must not expand AVENUE E -> AVENUE EAST."""
+        assert normalize_to_soda("AVENUE E") == "AVENUE E"
+
+    def test_lettered_avenue_idempotent_avenue_n(self) -> None:
+        """normalize_to_soda must not expand AVENUE N -> AVENUE NORTH."""
+        assert normalize_to_soda("AVENUE N") == "AVENUE N"
+
+    def test_lettered_avenue_idempotent_avenue_s(self) -> None:
+        """normalize_to_soda must not expand AVENUE S -> AVENUE SOUTH."""
+        assert normalize_to_soda("AVENUE S") == "AVENUE S"
+
+    def test_lettered_avenue_idempotent_avenue_w(self) -> None:
+        """normalize_to_soda must not expand AVENUE W -> AVENUE WEST."""
+        assert normalize_to_soda("AVENUE W") == "AVENUE W"
 
 
 # ── name_variants ────────────────────────────────────────────────────
