@@ -43,12 +43,14 @@ def determine_side(
         point_x: State Plane X coordinate of the GPS point (feet).
         point_y: State Plane Y coordinate of the GPS point (feet).
         segment: Shapely LineString of the street centerline (State Plane).
-        nominaldir: Nominal compass direction from CSCL data (used as hint,
-            but geometry is authoritative for angle computation).
+        nominaldir: Nominal compass direction from CSCL data. Currently not used
+            in the computation — the geometry cross-product is the sole determinant.
+            The parameter is retained in the signature for future use as a tiebreaker.
 
     Returns:
         Compass direction side: "N", "S", "E", or "W".
     """
+    _ = nominaldir  # not currently used; geometry cross-product is sole determinant
     point = Point(point_x, point_y)
 
     # Project point onto segment to find the closest point on the line
