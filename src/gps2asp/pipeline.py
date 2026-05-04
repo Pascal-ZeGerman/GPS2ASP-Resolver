@@ -66,6 +66,7 @@ async def resolve_asp(
     Raises:
         OutsideNYCError: Coordinates are outside NYC bounding box.
         NoSegmentFoundError: No street segment found within 164ft.
+        IndexNotFoundError: Spatial index files are absent (index not built).
         SODAAPIError: SODA API returned errors after retries.
         IncompleteResultsError: SODA pagination was interrupted.
     """
