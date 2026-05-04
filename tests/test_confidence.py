@@ -212,11 +212,11 @@ class TestIsConfident:
     """Test the is_confident helper."""
 
     def test_above_default_threshold(self):
-        """Confidence above default threshold (0.6) should return True."""
+        """Confidence above default threshold (0.33) should return True."""
         assert is_confident(0.8) is True
 
     def test_below_default_threshold(self):
-        """Confidence below default threshold (0.6) should return False."""
+        """Confidence below default threshold (0.33) should return False."""
         assert is_confident(0.3) is False
 
     def test_at_default_threshold(self):
