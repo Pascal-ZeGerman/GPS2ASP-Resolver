@@ -100,6 +100,7 @@ FALLBACK_2026: dict[date, str] = {
     date(2026, 1, 1): "New Year's Day",
     date(2026, 1, 6): "Three Kings' Day",
     date(2026, 1, 19): "Martin Luther King Jr.'s Birthday",
+    date(2026, 1, 26): "Islamic New Year",
     date(2026, 1, 27): "International Holocaust Remembrance Day",
     date(2026, 2, 12): "Lincoln's Birthday",
     date(2026, 2, 16): "Washington's Birthday (Presidents' Day)",
@@ -135,7 +136,6 @@ FALLBACK_2026: dict[date, str] = {
     date(2026, 12, 12): "Hanukkah",
     date(2026, 12, 25): "Christmas Day",
     date(2026, 12, 26): "Kwanzaa",
-    date(2026, 1, 26): "Islamic New Year",
 }
 
 
