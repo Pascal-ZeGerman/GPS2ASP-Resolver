@@ -1153,16 +1153,20 @@ class TestSuspensionStartup:
 # Group 12: Config flow API key constants (SC5)
 # ===========================================================================
 
-CONF_NYC311_API_KEY = "nyc311_api_key"
-
-
 @pytest.mark.ha_integration
 class TestConfigFlowApiKey:
     """Test that config flow API key infrastructure is in place."""
 
-    def test_api_key_constant_value(self) -> None:
-        """CONF_NYC311_API_KEY has expected string value."""
-        assert CONF_NYC311_API_KEY == "nyc311_api_key"
+    def test_conf_nyc311_api_key_matches_canonical_const(self) -> None:
+        """CONF_NYC311_API_KEY in const.py has the expected string value.
+
+        Imports from the canonical source to ensure that renaming the string
+        in const.py is caught immediately, rather than testing a local copy.
+        """
+        from custom_components.asp_parking.const import (
+            CONF_NYC311_API_KEY as _CANONICAL_KEY,
+        )
+        assert _CANONICAL_KEY == "nyc311_api_key"
 
     def test_suspension_info_default_not_suspended(self) -> None:
         """Default SuspensionInfo is not suspended."""
@@ -1173,7 +1177,10 @@ class TestConfigFlowApiKey:
 
     def test_api_key_stored_separately_from_device_tracker(self) -> None:
         """API key constant is distinct from device_tracker constant."""
-        assert CONF_NYC311_API_KEY != "device_tracker"
+        from custom_components.asp_parking.const import (
+            CONF_NYC311_API_KEY as _CANONICAL_KEY,
+        )
+        assert _CANONICAL_KEY != "device_tracker"
 
 
 # ---------------------------------------------------------------------------
