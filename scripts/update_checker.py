@@ -11,7 +11,6 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import sys
@@ -36,7 +35,7 @@ def _setup_logging() -> None:
     logger.setLevel(logging.INFO)
 
 
-async def check_for_updates(
+def check_for_updates(
     current_build_info_path: Path | None = None,
 ) -> dict:
     """Check if the CSCL dataset has been updated since last build.
@@ -148,5 +147,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    result = asyncio.run(check_for_updates(current_build_info_path=args.build_info))
+    result = check_for_updates(current_build_info_path=args.build_info)
     print(json.dumps(result, indent=2))
