@@ -41,7 +41,7 @@ def apply_suspension(
     resolution_reason: str
     if info.source == 'holiday':
         resolution_reason = 'suspended_holiday'
-    elif info.source == 'emergency':
+    elif info.source in ('emergency', 'ha_nyc311'):
         resolution_reason = 'suspended_emergency'
     else:
         resolution_reason = 'suspended_holiday'  # fallback for unknown source
