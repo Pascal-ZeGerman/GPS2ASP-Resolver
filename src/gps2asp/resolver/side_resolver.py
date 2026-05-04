@@ -79,7 +79,11 @@ def determine_side(
     # Compute segment angle in degrees (0=East, 90=North, 180=West, 270=South)
     angle = math.degrees(math.atan2(dy, dx)) % 360
 
-    # Map cross product sign to compass direction based on segment orientation
+    # Map cross product sign to compass direction based on segment orientation.
+    # cross == 0: point is exactly on centerline; side is arbitrary here.
+    # The caller's confidence scoring returns 0.0 in this case and raises
+    # AmbiguousResolutionError upstream, so this code path is not reachable
+    # in normal operation.
     if 315 <= angle or angle < 45:
         # Segment runs roughly East: left=N, right=S
         return "N" if cross > 0 else "S"
