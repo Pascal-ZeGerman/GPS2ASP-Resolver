@@ -36,7 +36,7 @@ from .gps2asp.schedule.models import (
 )
 from .gps2asp.suspension import apply_suspension
 
-from .const import CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT, DOMAIN
+from .const import CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT, DOMAIN, VERSION
 from .coordinator import ASPParkingCoordinator
 
 
@@ -100,7 +100,7 @@ class ASPNextMoveTimeSensor(SensorEntity):
             name="ASP Parking Monitor",
             manufacturer="GPS2ASP",
             model="ASP Schedule Resolver",
-            sw_version="0.1.0",
+            sw_version=VERSION,
         )
 
     def _format_move_time(self, dt: datetime) -> str:
@@ -318,7 +318,7 @@ class _ASPDiagnosticSensor(SensorEntity):
             name="ASP Parking Monitor",
             manufacturer="GPS2ASP",
             model="ASP Schedule Resolver",
-            sw_version="0.1.0",
+            sw_version=VERSION,
         )
 
 
