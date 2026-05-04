@@ -383,10 +383,19 @@ class ASPParkingCoordinator:
             )
             self._listeners.append(unsub_bridge)
 
-            # D-10: Read current state immediately at startup
-            self.data.suspension_state = self._bridge_state_to_info(
+            # D-10: Read current state immediately at startup.
+            # Bridge is authoritative: "on" overrides holiday calendar, "off" clears any
+            # holiday suspension that was set above, "unavailable"/"unknown" fail open.
+            _bridge_info = self._bridge_state_to_info(
                 bridge_state.state, bridge_state.attributes
             )
+            if self.data.suspension_state.is_suspended and not _bridge_info.is_suspended:
+                logger.info(
+                    "ha-nyc311 bridge reported '%s' — overriding holiday suspension '%s'",
+                    bridge_state.state,
+                    self.data.suspension_state.reason,
+                )
+            self.data.suspension_state = _bridge_info
 
             # D-11: Log bridge active
             logger.debug(
