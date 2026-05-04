@@ -16,6 +16,9 @@ from __future__ import annotations
 
 from datetime import time as dtime, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
+
+NYC_TZ = ZoneInfo("America/New_York")
 
 import pytest
 
@@ -76,8 +79,8 @@ def _make_schedule_found() -> ScheduleFound:
         day=ASPDay.MONDAY,
         start_time=dtime(8, 0),
         end_time=dtime(9, 30),
-        start_datetime=datetime(2026, 3, 2, 8, 0),
-        end_datetime=datetime(2026, 3, 2, 9, 30),
+        start_datetime=datetime(2026, 3, 2, 8, 0, tzinfo=NYC_TZ),
+        end_datetime=datetime(2026, 3, 2, 9, 30, tzinfo=NYC_TZ),
         source_signs=["NO PARKING MON & THURS 8-9:30AM"],
     )
     return ScheduleFound(
