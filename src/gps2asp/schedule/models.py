@@ -6,7 +6,7 @@ ASPDay enum values match datetime.weekday() convention (Monday=0).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, time
 from enum import IntEnum
 from typing import Literal
