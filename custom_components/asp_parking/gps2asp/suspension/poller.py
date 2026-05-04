@@ -96,7 +96,16 @@ class NYC311Client:
                         self.API_URL, params=params, headers=headers
                     )
                     response.raise_for_status()
-                    return self._parse_response(response.json())
+                    try:
+                        return self._parse_response(response.json())
+                    except (ValueError, KeyError, TypeError) as exc:
+                        logger.warning(
+                            "311 API attempt %d/%d: unparseable response (%s), failing open",
+                            attempt + 1,
+                            self.MAX_RETRIES,
+                            exc,
+                        )
+                        return _NOT_SUSPENDED
 
                 except httpx.HTTPStatusError as exc:
                     status_code = exc.response.status_code
