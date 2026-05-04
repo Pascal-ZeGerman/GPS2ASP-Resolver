@@ -107,9 +107,13 @@ def normalize_to_soda(cscl_name: str) -> str:
     # Manhattan East Village uses "AVE A", "AVE B", etc. in CSCL but SODA
     # uses "AVENUE A", "AVENUE B". The suffix expansion (step 2) won't catch
     # this because "A"/"B" is the last word, not "AVE".
+    # Early return: a lettered avenue is a terminal name — the trailing letter
+    # is the avenue designator, not a directional marker, so no further
+    # expansion (steps 1–4) should apply. Without the early return, AVE E/N/S/W
+    # would fall through to step 3 and produce AVENUE EAST/NORTH/SOUTH/WEST.
     m_ave = _LETTERED_AVE_RE.match(name)
     if m_ave:
-        name = "AVENUE " + m_ave.group(1)
+        return "AVENUE " + m_ave.group(1)   # early return; no further expansion needed
 
     # Step 1: Expand directional prefix.
     # The "abbrev + space" guard ensures "ESSEX" (no space after E) and
