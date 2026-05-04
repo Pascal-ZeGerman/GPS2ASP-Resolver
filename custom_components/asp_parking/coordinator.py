@@ -968,6 +968,11 @@ class ASPParkingCoordinator:
         """
         lat = self._pending_lat if self._pending_lat is not None else self.data.last_lat
         lon = self._pending_lon if self._pending_lon is not None else self.data.last_lon
+        # In debug mode, fall back to debug coordinates if no real GPS available
+        if lat is None and self._debug_enabled and self._debug_lat is not None:
+            lat = self._debug_lat
+        if lon is None and self._debug_enabled and self._debug_lon is not None:
+            lon = self._debug_lon
         if lat is not None and lon is not None:
             self._pending_lat = lat
             self._pending_lon = lon
@@ -1008,11 +1013,18 @@ class ASPParkingCoordinator:
         Args:
             now: Current datetime (provided by async_track_time_interval).
         """
-        if self.data.last_lat is not None and self.data.last_lon is not None:
+        lat = self.data.last_lat
+        lon = self.data.last_lon
+        # In debug mode, fall back to debug coordinates if no real GPS available
+        if lat is None and self._debug_enabled and self._debug_lat is not None:
+            lat = self._debug_lat
+        if lon is None and self._debug_enabled and self._debug_lon is not None:
+            lon = self._debug_lon
+        if lat is not None and lon is not None:
             if self._pending_lat is None:
-                self._pending_lat = self.data.last_lat
+                self._pending_lat = lat
             if self._pending_lon is None:
-                self._pending_lon = self.data.last_lon
+                self._pending_lon = lon
             self.hass.async_create_task(self._debouncer.async_call())
         else:
             logger.debug("Periodic refresh skipped: no GPS coordinates yet")
