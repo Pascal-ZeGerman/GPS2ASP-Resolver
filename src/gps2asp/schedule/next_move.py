@@ -91,8 +91,8 @@ def find_next_window(
 ) -> CleaningWindow | None:
     """Find the next upcoming ASP cleaning window.
 
-    Looks ahead up to 7 days (today through 7 days from now) to find
-    the next window whose start time is strictly in the future.
+    Looks ahead up to 8 calendar days (today + 7) to find the next
+    window whose start time is strictly in the future.
 
     Args:
         schedule: The weekly ASP schedule to search.
@@ -101,7 +101,7 @@ def find_next_window(
 
     Returns:
         CleaningWindow for the next upcoming window, or None if no
-        window found within the 7-day lookahead.
+        window found within the 8-calendar-day lookahead.
     """
     if now is None:
         now = datetime.now(NYC_TZ)
@@ -141,5 +141,5 @@ def find_next_window(
                     source_signs=[window.source_sign],
                 )
 
-    logger.warning("No next window found within 7-day lookahead")
+    logger.warning("No next window found within 8-calendar-day lookahead")
     return None
