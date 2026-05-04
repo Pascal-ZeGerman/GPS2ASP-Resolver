@@ -81,6 +81,7 @@ class ASPParkingData:
     suspension_state: SuspensionInfo = field(
         default_factory=lambda: SuspensionInfo(is_suspended=False, reason=None, source='none')
     )
+    last_notified_window: CleaningWindow | None = None
 
 
 # ---------------------------------------------------------------------------
