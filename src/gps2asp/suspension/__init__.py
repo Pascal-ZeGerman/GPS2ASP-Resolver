@@ -232,6 +232,6 @@ class HolidayCalendar:
 
 
 from .merge import apply_suspension
-from .poller import NYC311Client
+from .poller import NYC311Client, NYC311AuthError
 
-__all__ = ["HolidayCalendar", "SuspensionInfo", "apply_suspension", "NYC311Client"]
+__all__ = ["HolidayCalendar", "SuspensionInfo", "apply_suspension", "NYC311Client", "NYC311AuthError"]
