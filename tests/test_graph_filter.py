@@ -12,39 +12,18 @@ BFS test validates span_distance on a filtered graph fixture.
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 
 import pytest
 import zstandard
 
+# Add scripts/ to sys.path so we can import build_index
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+
+from build_index import _filter_2hop_neighborhood
+
 from gps2asp.signs.graph import StreetGraph
-
-
-# ---------------------------------------------------------------------------
-# Reference implementation of _filter_2hop_neighborhood
-# (identical to what build_index.py will contain after Task 2)
-# ---------------------------------------------------------------------------
-
-def _filter_2hop_neighborhood(
-    adjacency: dict[int, set[int]],
-    asp_pids: set[int],
-) -> set[int]:
-    """Return PIDs reachable within 2 hops from any ASP segment."""
-    retained: set[int] = set()
-    seeds = asp_pids & set(adjacency.keys())
-    retained.update(seeds)
-
-    hop1_new: set[int] = set()
-    for pid in seeds:
-        for neighbor in adjacency.get(pid, set()):
-            if neighbor not in retained:
-                hop1_new.add(neighbor)
-    retained.update(hop1_new)
-
-    for pid in hop1_new:
-        for neighbor in adjacency.get(pid, set()):
-            retained.add(neighbor)
-
-    return retained
 
 
 # ---------------------------------------------------------------------------
