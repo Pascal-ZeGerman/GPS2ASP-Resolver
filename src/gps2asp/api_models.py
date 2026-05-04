@@ -73,7 +73,7 @@ class ASPDebugResult:
             point.
         state_plane_y: NY State Plane Y coordinate (feet) for the input GPS
             point.
-        soda_level: SODA fallback level that matched (1, 2, or 3). Set to 0
+        soda_level: SODA fallback level that matched (1, 2, 3, or 4). Set to 0
             if no SODA match was found or resolution failed.
         borocode: CSCL borough code as string ("1"=Manhattan…"5"=Staten Island), or None when resolution failed.
         perpendicular_distance_ft: Perpendicular distance from GPS point to segment centerline (feet), rounded to 2 decimals. None when resolution failed.
