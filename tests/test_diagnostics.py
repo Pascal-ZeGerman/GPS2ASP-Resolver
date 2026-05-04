@@ -177,7 +177,7 @@ async def test_diagnostics_passthrough(
 
     out = await async_get_config_entry_diagnostics(hass, entry)
 
-    assert out["config"]["notify_service"] == "notify.mobile_app_phone"
+    assert out["config"]["notify_service"] == "**REDACTED**"
     assert out["config"]["movement_threshold"] == 50
     assert out["config"]["parking_radius"] == 500
     assert out["config"]["notify_lead_time"] == 120
@@ -207,8 +207,8 @@ async def test_state_section_iso_datetime(
 
     out = await async_get_config_entry_diagnostics(hass, entry)
 
-    assert out["state"]["last_resolved"] == "2026-05-01T12:00:00+00:00"
-    assert out["state"]["last_error_time"] == "2026-05-01T13:30:00+00:00"
     assert out["state"]["confidence_score"] == 0.85
     assert out["state"]["soda_level"] == 2
-    assert out["state"]["last_error"] == "boom"
+    assert out["last_resolve"]["last_resolved"] == "2026-05-01T12:00:00+00:00"
+    assert out["last_error"]["last_error_time"] == "2026-05-01T13:30:00+00:00"
+    assert out["last_error"]["last_error"] == "boom"

@@ -1373,6 +1373,7 @@ class TestNotificationLogic:
         hass.services.async_call = AsyncMock()
 
         data = ASPParkingData()
+        from datetime import datetime as _datetime
         coord = SimpleNamespace(
             hass=hass,
             data=data,
@@ -1380,6 +1381,7 @@ class TestNotificationLogic:
             _debug_enabled=False,
             _debug_suppress_notifications=False,
             _notify_lead_time=lead_time,
+            _get_now=lambda: _datetime.now(tz=NYC_TZ),
         )
         return coord
 
