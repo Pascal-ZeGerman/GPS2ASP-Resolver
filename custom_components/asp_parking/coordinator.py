@@ -915,7 +915,8 @@ class ASPParkingCoordinator:
             return
 
         window = schedule.next_window
-        now_utc = dt_util.utcnow()
+        now_dt = self._get_now()
+        now_utc = dt_util.as_utc(now_dt)
         window_start_utc = dt_util.as_utc(window.start_datetime)
         seconds_until = (window_start_utc - now_utc).total_seconds()
 
