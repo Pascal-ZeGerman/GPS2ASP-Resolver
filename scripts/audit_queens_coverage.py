@@ -21,6 +21,7 @@ from pathlib import Path
 
 from gps2asp import resolve_asp
 from gps2asp.signs.client import SODAClient
+from gps2asp.signs.models import NoMatchFound
 from gps2asp.signs.normalize import normalize_to_soda
 
 # Default fixture paths
@@ -50,7 +51,11 @@ async def diagnose_l3(
     query = client.build_on_street_query(normalized_on, side)
     try:
         records = await client.fetch_signs(query)
-    except Exception:
+    except Exception as exc:
+        print(
+            f"  WARNING: diagnose_l3 SODA query failed for '{on_street}' {side}: {exc}",
+            file=sys.stderr,
+        )
         return []
 
     # Count unique (from_street, to_street) spans
@@ -68,13 +73,13 @@ async def diagnose_l3(
 
 async def audit_fixture(fixture_path: Path, *, verbose: bool = False) -> list[dict]:
     """Run resolve_asp(debug=True) on each location in the fixture file."""
-    with open(fixture_path) as f:
+    with open(fixture_path, encoding="utf-8") as f:
         locations = json.load(f)
 
     results = []
     for loc in locations:
-        desc = loc["description"]
         try:
+            desc = loc["description"]
             result = await resolve_asp(loc["lat"], loc["lon"], debug=True)
             # result is ASPDebugResult when debug=True
             entry: dict = {
@@ -87,8 +92,11 @@ async def audit_fixture(fixture_path: Path, *, verbose: bool = False) -> list[di
                 "status": "ok",
             }
 
-            # L3 diagnostic: only for non-L1/L2 results to avoid doubling API calls
-            if verbose and entry["on_street"] and (result.soda_level >= 3 or result.soda_level == 0):
+            # L3 diagnostic: only for NoMatchFound (soda_level==0) or high fallback
+            # levels (3+). Excludes NoASPSigns (soda_level==0 but SODA was found),
+            # which has no diagnostic value and would waste extra API calls.
+            is_no_match = isinstance(result.sign_result, NoMatchFound)
+            if verbose and entry["on_street"] and (result.soda_level >= 3 or is_no_match):
                 diag = await diagnose_l3(
                     entry["on_street"],
                     entry["side_of_street"],
@@ -102,7 +110,7 @@ async def audit_fixture(fixture_path: Path, *, verbose: bool = False) -> list[di
             results.append(entry)
         except Exception as e:
             results.append({
-                "description": desc,
+                "description": loc.get("description", "<unknown>"),
                 "soda_level": 0,
                 "on_street": "",
                 "from_street": "",
@@ -136,8 +144,10 @@ def print_report(results: list[dict], fixture_name: str, *, verbose: bool = Fals
     for r in results:
         if r["status"] != "ok":
             errors += 1
+        elif r["soda_level"] in counts:
+            counts[r["soda_level"]] += 1
         else:
-            counts[r["soda_level"]] = counts.get(r["soda_level"], 0) + 1
+            counts[r["soda_level"]] = 1  # unexpected level — surface it explicitly
 
     for level in sorted(counts.keys()):
         pct = counts[level] / total * 100 if total else 0
@@ -160,7 +170,7 @@ def print_report(results: list[dict], fixture_name: str, *, verbose: bool = Fals
         ]
         if diag_rows:
             print(f"\nL3 Diagnostics:")
-            print(f"\u2500" * 60)
+            print(f"─" * 60)
             for idx, r in diag_rows:
                 on = r["on_street"]
                 side = r.get("side_of_street", "?")
