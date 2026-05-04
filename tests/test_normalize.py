@@ -180,6 +180,22 @@ class TestNormalizeToSoda:
         """AVE D should become AVENUE D (Manhattan coverage fix)."""
         assert normalize_to_soda("AVE D") == "AVENUE D"
 
+    def test_lettered_avenue_ave_e(self) -> None:
+        """AVE E (Brooklyn) should become AVENUE E, not AVENUE EAST."""
+        assert normalize_to_soda("AVE E") == "AVENUE E"
+
+    def test_lettered_avenue_ave_n(self) -> None:
+        """AVE N (Brooklyn) should become AVENUE N, not AVENUE NORTH."""
+        assert normalize_to_soda("AVE N") == "AVENUE N"
+
+    def test_lettered_avenue_ave_s(self) -> None:
+        """AVE S (Brooklyn) should become AVENUE S, not AVENUE SOUTH."""
+        assert normalize_to_soda("AVE S") == "AVENUE S"
+
+    def test_lettered_avenue_ave_w(self) -> None:
+        """AVE W (Brooklyn) should become AVENUE W, not AVENUE WEST."""
+        assert normalize_to_soda("AVE W") == "AVENUE W"
+
     def test_lettered_avenue_does_not_affect_numbered(self) -> None:
         """3 AVE should still become 3 AVENUE (suffix expansion, not prefix)."""
         assert normalize_to_soda("3 AVE") == "3 AVENUE"
