@@ -922,7 +922,13 @@ class ASPParkingCoordinator:
 
         if not (0 < seconds_until <= self._notify_lead_time * 60):
             return
-        if window == self.data.last_notified_window:
+        prev = self.data.last_notified_window
+        if (
+            prev is not None
+            and window.day == prev.day
+            and window.start_time == prev.start_time
+            and window.start_datetime == prev.start_datetime
+        ):
             return
 
         # Format the notification message
