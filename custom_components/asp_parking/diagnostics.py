@@ -19,6 +19,7 @@ from homeassistant.core import HomeAssistant
 from .const import (
     CONF_DEBUG_LAT,
     CONF_DEBUG_LON,
+    CONF_NOTIFY_SERVICE,
     CONF_NYC311_API_KEY,
     CONF_PARKING_LAT,
     CONF_PARKING_LON,
@@ -30,6 +31,7 @@ TO_REDACT = {
     CONF_DEBUG_LAT,
     CONF_DEBUG_LON,
     CONF_NYC311_API_KEY,
+    CONF_NOTIFY_SERVICE,
 }
 
 
