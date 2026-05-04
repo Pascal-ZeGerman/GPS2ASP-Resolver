@@ -19,7 +19,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from gps2asp import resolve_asp, ASPDebugResult, AmbiguousResolutionError
+from gps2asp import resolve_asp
 from gps2asp.signs.client import SODAClient
 from gps2asp.signs.normalize import normalize_to_soda
 
