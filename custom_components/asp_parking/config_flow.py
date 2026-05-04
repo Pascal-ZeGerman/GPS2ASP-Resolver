@@ -269,9 +269,10 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     options[CONF_NYC311_ENTITY] = nyc311_entity
                 if api_key:
                     options[CONF_NYC311_API_KEY] = api_key
-                else:
-                    # User cleared the field — remove key so it is not re-read at startup
-                    options.pop(CONF_NYC311_API_KEY, None)
+                elif CONF_NYC311_API_KEY in self.config_entry.options:
+                    # Empty submission means "keep existing key unchanged"
+                    options[CONF_NYC311_API_KEY] = self.config_entry.options[CONF_NYC311_API_KEY]
+                # else: no key was set and none provided — omit from options
                 notify_svc = (user_input.get(CONF_NOTIFY_SERVICE) or "").strip()
                 options[CONF_NOTIFY_SERVICE] = notify_svc
                 lead_time_raw = user_input.get(CONF_NOTIFY_LEAD_TIME)
@@ -337,7 +338,7 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 }),
                 vol.Optional(
                     CONF_NYC311_API_KEY,
-                    default=self.config_entry.options.get(CONF_NYC311_API_KEY, ""),
+                    default="",
                 ): selector.TextSelector(
                     selector.TextSelectorConfig(
                         type=selector.TextSelectorType.PASSWORD,
