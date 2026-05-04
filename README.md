@@ -58,7 +58,7 @@ After installation, set up the integration from the HA UI — no YAML required.
 
 ## Known Limitations
 
-**Coverage varies by borough.** ASP Parking matches your GPS location against NYC's official sign database. Some blocks — especially in Queens, the Bronx, and Manhattan — may return "schedule not found" because the city's open-data records don't always include every block. Coverage is best in Brooklyn.
+**Coverage varies by borough.** ASP Parking matches your GPS location against NYC's official sign database. As of the current index build, approximate borough coverage is: Brooklyn ~74%, Manhattan ~58%, Bronx ~29%, Queens ~28%, Staten Island ~0%. Phase 11 (graph-based BFS mid-span matching) significantly improved coverage for mid-block locations that previously returned "schedule not found"; Phase 14 ships the index as a compressed `graph.json.zst` (~915 KB vs 8 MB uncompressed).
 
 **Staten Island** has very limited data in the city's sign database. Most Staten Island locations will show "no schedule found" through no fault of the integration.
 
