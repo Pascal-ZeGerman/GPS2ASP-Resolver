@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from gps2asp.resolver.confidence import (
     DEFAULT_CONFIDENCE_THRESHOLD,
+    _NEAR_INTERSECTION_THRESHOLD_FT,
     compute_confidence,
     is_confident,
     resolve_effective_width,
@@ -50,7 +51,7 @@ from gps2asp.resolver.spatial_index import SpatialIndex
 
 # Named constants for spatial search and ambiguity classification
 _MAX_SNAP_DISTANCE_FT: float = 164.0    # ~50m: maximum snap radius for spatial index
-_NEAR_INTERSECTION_THRESHOLD_FT: float = 30.0  # ~10m: block-face ambiguity zone
+# _NEAR_INTERSECTION_THRESHOLD_FT is imported from confidence.py (single source of truth)
 
 __all__ = [
     "resolve",
