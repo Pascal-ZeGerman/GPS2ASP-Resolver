@@ -67,7 +67,8 @@ class NYC311Client:
     BASE_DELAY = 1.0  # seconds
 
     def __init__(self, api_key: str | None = None) -> None:
-        self._api_key = api_key or os.environ.get("NYC_311_API_KEY")
+        resolved = api_key or os.environ.get("NYC_311_API_KEY")
+        self._api_key = resolved if resolved else None  # treat "" as None
 
     async def fetch_status(self) -> SuspensionInfo:
         """Fetch today's ASP suspension status from the 311 API.
