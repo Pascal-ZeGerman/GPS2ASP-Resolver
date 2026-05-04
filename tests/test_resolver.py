@@ -126,10 +126,8 @@ class TestResolveProspectHeights:
         self, spatial_index_dir, caplog,
     ):
         """Verify JSON debug output is emitted during resolution."""
-        from gps2asp.resolver.logging import configure_logging
-
-        configure_logging("DEBUG")
-
+        # Use caplog.at_level instead of configure_logging() to avoid
+        # permanently adding handlers to the logger across the test session.
         with caplog.at_level(logging.DEBUG, logger="gps2asp.resolver"):
             try:
                 await resolve(
