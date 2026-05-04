@@ -11,9 +11,10 @@ is event-driven (GPS updates), not polled.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE
 from homeassistant.core import (
@@ -453,7 +454,7 @@ class ASPParkingCoordinator:
 
     @staticmethod
     def _bridge_state_to_info(
-        state: str, attributes: dict | None = None
+        state: str, attributes: Mapping[str, Any] | None = None
     ) -> SuspensionInfo:
         """Convert ha-nyc311 entity state to SuspensionInfo (D-06).
 
