@@ -729,7 +729,10 @@ class ASPParkingCoordinator:
     async def _async_initial_311_fetch(self) -> None:
         """Startup 311 API fetch. Fail open on any error."""
         if self._nyc311_bridge_entity is not None:
-            return  # Bridge active, no need for direct 311 API fetch
+            bridge_state = self.hass.states.get(self._nyc311_bridge_entity)
+            if bridge_state is not None and bridge_state.state in ("on", "off"):
+                return  # Bridge healthy — no need for direct 311 API fetch
+            # Bridge unavailable/unknown at startup — fall through to direct 311 fetch
         try:
             info = await self._nyc311_client.fetch_status()
             if info.is_suspended:
