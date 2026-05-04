@@ -121,6 +121,14 @@ class TestFilter2HopNeighborhood:
 class TestStreetGraphLoad:
     """Test StreetGraph.load() with .zst and .json files."""
 
+    def setup_method(self) -> None:
+        """Reset StreetGraph singleton before each test to prevent cross-test contamination."""
+        StreetGraph._instance = None
+
+    def teardown_method(self) -> None:
+        """Reset StreetGraph singleton after each test to prevent cross-test contamination."""
+        StreetGraph._instance = None
+
     def test_load_zst(self, tmp_path: pytest.TempPathFactory) -> None:
         """StreetGraph.load() reads a .zst file created with zstandard."""
         graph_data = {
