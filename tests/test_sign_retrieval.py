@@ -315,6 +315,8 @@ def test_graph_get_is_singleton(tmp_path: Path) -> None:
             g1 = StreetGraph.get()
             g2 = StreetGraph.get()
 
+    assert g1 is g2, "StreetGraph.get() must return the same instance on repeated calls"
+
     # Reset after test
     StreetGraph._instance = None
 
