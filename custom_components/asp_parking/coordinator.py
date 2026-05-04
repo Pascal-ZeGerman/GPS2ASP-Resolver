@@ -212,7 +212,7 @@ class ASPParkingCoordinator:
         self._debug_lat: float | None = None
         self._debug_lon: float | None = None
         self._debug_datetime: datetime | None = None
-        self._suppress_notifications: bool = False
+        self._debug_suppress_notifications: bool = False
         self._notify_service: str = ""
         self._notify_lead_time: int = DEFAULT_NOTIFY_LEAD_TIME
 
@@ -303,7 +303,7 @@ class ASPParkingCoordinator:
                 self._debug_datetime = None
         elif isinstance(raw_dt, datetime):
             self._debug_datetime = raw_dt.astimezone(NYC_TZ) if raw_dt.tzinfo else raw_dt.replace(tzinfo=NYC_TZ)
-        self._suppress_notifications = self.entry.options.get(
+        self._debug_suppress_notifications = self.entry.options.get(
             CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
         )
         self._notify_service = self.entry.options.get(
@@ -894,7 +894,7 @@ class ASPParkingCoordinator:
         """
         if not self._notify_service:
             return
-        if self._debug_enabled and self._suppress_notifications:
+        if self._debug_enabled and self._debug_suppress_notifications:
             return
         if not isinstance(schedule, ScheduleFound):
             return
