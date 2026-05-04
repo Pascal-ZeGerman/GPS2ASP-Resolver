@@ -17,7 +17,6 @@ Produces:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import math
@@ -868,7 +867,7 @@ def _filter_2hop_neighborhood(
     return retained
 
 
-async def build_index(output_dir: Path | None = None) -> None:
+def build_index(output_dir: Path | None = None) -> None:
     """Build the spatial index from NYC CSCL data.
 
     Downloads CSCL data via the SODA GeoJSON API, filters to vehicular
@@ -1015,4 +1014,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    asyncio.run(build_index(output_dir=args.output_dir))
+    build_index(output_dir=args.output_dir)
