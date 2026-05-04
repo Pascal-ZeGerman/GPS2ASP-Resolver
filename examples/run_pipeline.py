@@ -6,7 +6,7 @@ are demonstrated in sequence.
 
 Requirements:
     pip install -e ".[dev]"  # install gps2asp package into current venv
-    python -m gps2asp.build.build_index  # build spatial index (if not already built)
+    python scripts/build_index.py  # build spatial index (if not already built)
 
 Usage:
     python examples/run_pipeline.py [lat] [lon]
