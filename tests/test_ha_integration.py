@@ -29,7 +29,7 @@ def _format_move_time(dt: datetime) -> str:
     """
     local_dt = dt.astimezone(NYC_TZ)
     seconds_until = (dt - datetime.now(tz=UTC_TZ)).total_seconds()
-    time_str = local_dt.strftime("%-I:%M %p")
+    time_str = local_dt.strftime("%I:%M %p").lstrip("0")
     if seconds_until < 12 * 3600:
         return f"\u26a0 Today {time_str}"
     day_str = local_dt.strftime("%a")

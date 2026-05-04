@@ -107,7 +107,7 @@ class ASPNextMoveTimeSensor(SensorEntity):
         """Return human-friendly move time string, with urgency prefix if <12h away."""
         local_dt = dt_util.as_local(dt)
         seconds_until = (dt_util.as_utc(dt) - dt_util.utcnow()).total_seconds()
-        time_str = local_dt.strftime("%-I:%M %p")  # e.g. "8:00 AM" (no leading zero)
+        time_str = local_dt.strftime("%I:%M %p").lstrip("0")  # e.g. "8:00 AM" (no leading zero, portable)
         if seconds_until < 12 * 3600:
             return f"\u26a0 Today {time_str}"
         day_str = local_dt.strftime("%a")  # "Mon", "Tue", etc.

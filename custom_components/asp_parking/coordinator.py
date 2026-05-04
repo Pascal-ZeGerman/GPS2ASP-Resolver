@@ -912,7 +912,7 @@ class ASPParkingCoordinator:
             return
 
         # Format the notification message
-        time_str = window.start_datetime.strftime("%-I:%M %p")
+        time_str = window.start_datetime.strftime("%I:%M %p").lstrip("0")
         street = schedule.on_street
         message = (
             f"ASP parking cleaning starts at {time_str} on {street}. "
