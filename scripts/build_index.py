@@ -934,6 +934,20 @@ def build_index(output_dir: Path | None = None) -> None:
             for pid in intersection_index.get((on_street, cs), set()):
                 asp_pids.add(pid)
 
+    # Supplement asp_pids with dead-end ASP segments not reachable via intersection_index
+    # (segments where both cross streets are empty strings miss the lookup above)
+    for _, row in gdf.iterrows():
+        pid = int(row["physicalid"])
+        if pid in asp_pids or pid not in adjacency:
+            continue
+        full_street_name = str(row.get("full_street_name", ""))
+        from_street, to_street = cross_streets.get(pid, ("", ""))
+        has_asp_left, has_asp_right = _check_has_asp(
+            full_street_name, from_street, to_street, asp_lookup,
+        )
+        if has_asp_left or has_asp_right:
+            asp_pids.add(pid)
+
     retained_pids = _filter_2hop_neighborhood(adjacency, asp_pids)
     logger.info(
         "Graph filter: %d -> %d segments (2-hop from %d ASP seeds)",
