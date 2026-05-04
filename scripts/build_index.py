@@ -997,6 +997,8 @@ def build_index(output_dir: Path | None = None) -> None:
         "index_file_sizes": stats["index_file_sizes"],
         "build_duration_seconds": round(elapsed, 1),
         "propagation_stats": propagation_stats,
+        "graph_json_zst_size": graph_path.stat().st_size,
+        "graph_segment_count": len(graph_adjacency),
     }
 
     build_info_path = output_dir / "build_info.json"
