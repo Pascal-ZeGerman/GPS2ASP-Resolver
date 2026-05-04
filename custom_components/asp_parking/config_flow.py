@@ -327,7 +327,7 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 **({
                     vol.Optional(
                         CONF_NYC311_ENTITY,
-                        default=self.config_entry.options[CONF_NYC311_ENTITY],
+                        default=self.config_entry.options.get(CONF_NYC311_ENTITY, ""),
                     ): selector.EntitySelector(
                         selector.EntitySelectorConfig(domain="binary_sensor")
                     ),
