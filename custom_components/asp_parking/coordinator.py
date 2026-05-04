@@ -695,6 +695,8 @@ class ASPParkingCoordinator:
             self.data.distance_ft = None
             self.data.street_width_ft = None
             self.data.segment_id = None
+            self.data.last_error = None  # clear stale errors on clean resolution failures
+            self.data.last_error_time = None
             # Retain last schedule_result per user decision
             logger.warning(
                 "GPS coordinates (%.4f, %.4f) are outside NYC coverage area"
@@ -713,6 +715,8 @@ class ASPParkingCoordinator:
             self.data.distance_ft = None
             self.data.street_width_ft = None
             self.data.segment_id = None
+            self.data.last_error = None  # clear stale errors on clean resolution failures
+            self.data.last_error_time = None
             # Retain last schedule_result per user decision
             logger.warning(
                 "No street segment found at (%.4f, %.4f)"
