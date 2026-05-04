@@ -15,7 +15,7 @@ from gps2asp.resolver.confidence import (
 class TestComputeConfidence:
     """Test confidence scoring for side-of-street determination."""
 
-    def test_near_centerline_below_threshold(self):
+    def test_near_centerline_above_threshold_returns_nonzero(self):
         """Point at 5ft on 30ft street: threshold=4.95ft; guard does NOT fire.
 
         5ft > new 4.95ft threshold (width-relative), so confidence is computed.
