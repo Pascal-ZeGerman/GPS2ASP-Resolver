@@ -1489,3 +1489,213 @@ class TestNotificationLogic:
         await ASPParkingCoordinator._async_maybe_send_notification(coord, schedule)
 
         assert coord.data.last_notified_window is None
+
+
+# ===========================================================================
+# Group 14: Phase 23 ha-nyc311 bridge code paths (WR-03)
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestNyc311Bridge:
+    """Test all Phase 23 ha-nyc311 bridge code paths.
+
+    Tests use SimpleNamespace to mock the coordinator's self, following the
+    same pattern as TestNotificationLogic. Static methods on
+    ASPParkingCoordinator are called directly without instantiation.
+    """
+
+    # ------------------------------------------------------------------
+    # _bridge_state_to_info mapping tests (tests 1-3)
+    # ------------------------------------------------------------------
+
+    def test_bridge_state_on_returns_suspended(self) -> None:
+        """_bridge_state_to_info('on', ...) -> is_suspended=True, source='ha_nyc311'."""
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        info = ASPParkingCoordinator._bridge_state_to_info(
+            "on", {"reason": "Snow emergency"}
+        )
+        assert info.is_suspended is True
+        assert info.reason == "Snow emergency"
+        assert info.source == "ha_nyc311"
+
+    def test_bridge_state_off_returns_not_suspended(self) -> None:
+        """_bridge_state_to_info('off', {}) -> is_suspended=False, source='ha_nyc311'."""
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        info = ASPParkingCoordinator._bridge_state_to_info("off", {})
+        assert info.is_suspended is False
+        assert info.reason is None
+        assert info.source == "ha_nyc311"
+
+    def test_bridge_state_unavailable_returns_fail_open(self, caplog) -> None:
+        """_bridge_state_to_info('unavailable', None) -> is_suspended=False, source='none',
+        and a warning is logged."""
+        import logging
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        with caplog.at_level(logging.WARNING):
+            info = ASPParkingCoordinator._bridge_state_to_info("unavailable", None)
+
+        assert info.is_suspended is False
+        assert info.source == "none"
+        assert any("unavailable" in record.message for record in caplog.records)
+
+    # ------------------------------------------------------------------
+    # _async_initial_311_fetch guard tests (tests 4-5, CR-01 regression)
+    # ------------------------------------------------------------------
+
+    async def test_initial_fetch_calls_api_when_bridge_unavailable(self) -> None:
+        """CR-01 regression: bridge entity in 'unavailable' state + api_key configured
+        -> 311 API IS called (not suppressed)."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        # Mock bridge state as 'unavailable'
+        mock_bridge_state = MagicMock()
+        mock_bridge_state.state = "unavailable"
+
+        mock_fetch = AsyncMock(
+            return_value=SuspensionInfo(is_suspended=False, reason=None, source="nyc311")
+        )
+        mock_client = MagicMock()
+        mock_client.fetch_status = mock_fetch
+
+        coord = SimpleNamespace(
+            hass=SimpleNamespace(
+                states=SimpleNamespace(
+                    get=MagicMock(return_value=mock_bridge_state)
+                )
+            ),
+            data=ASPParkingData(),
+            _nyc311_bridge_entity="binary_sensor.nyc311_asp_suspended",
+            _nyc311_client=mock_client,
+            _async_notify_entities=MagicMock(),
+        )
+
+        await ASPParkingCoordinator._async_initial_311_fetch(coord)
+
+        mock_fetch.assert_awaited_once()
+
+    async def test_initial_fetch_skips_api_when_bridge_on(self) -> None:
+        """Bridge entity in 'on' state -> 311 API is NOT called (bridge healthy)."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        mock_bridge_state = MagicMock()
+        mock_bridge_state.state = "on"
+
+        mock_fetch = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.fetch_status = mock_fetch
+
+        coord = SimpleNamespace(
+            hass=SimpleNamespace(
+                states=SimpleNamespace(
+                    get=MagicMock(return_value=mock_bridge_state)
+                )
+            ),
+            data=ASPParkingData(),
+            _nyc311_bridge_entity="binary_sensor.nyc311_asp_suspended",
+            _nyc311_client=mock_client,
+            _async_notify_entities=MagicMock(),
+        )
+
+        await ASPParkingCoordinator._async_initial_311_fetch(coord)
+
+        mock_fetch.assert_not_awaited()
+
+    # ------------------------------------------------------------------
+    # _async_update_suspension bridge short-circuit tests (tests 6-7)
+    # ------------------------------------------------------------------
+
+    async def test_update_suspension_returns_early_when_bridge_on(self) -> None:
+        """_async_update_suspension with bridge 'on' -> returns early, 311 API not called."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        from datetime import date
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        mock_bridge_state = MagicMock()
+        mock_bridge_state.state = "on"
+        mock_bridge_state.attributes = {"reason": "Snow emergency"}
+
+        mock_fetch = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.fetch_status = mock_fetch
+
+        mock_holiday = MagicMock()
+        mock_holiday.is_suspended = MagicMock(
+            return_value=SuspensionInfo(is_suspended=False, reason=None, source="none")
+        )
+
+        coord = SimpleNamespace(
+            hass=SimpleNamespace(
+                states=SimpleNamespace(
+                    get=MagicMock(return_value=mock_bridge_state)
+                )
+            ),
+            data=ASPParkingData(),
+            _nyc311_bridge_entity="binary_sensor.nyc311_asp_suspended",
+            _nyc311_client=mock_client,
+            _holiday_calendar=mock_holiday,
+            _async_notify_entities=MagicMock(),
+            _get_now=MagicMock(return_value=MagicMock(date=MagicMock(return_value=date.today()))),
+            _bridge_state_to_info=staticmethod(ASPParkingCoordinator._bridge_state_to_info),
+        )
+
+        await ASPParkingCoordinator._async_update_suspension(coord)
+
+        # Bridge was healthy ('on'), so 311 API must NOT be called
+        mock_fetch.assert_not_awaited()
+        # Holiday calendar must NOT be called either (bridge short-circuit)
+        mock_holiday.is_suspended.assert_not_called()
+        # Suspension state set from bridge
+        assert coord.data.suspension_state.is_suspended is True
+        assert coord.data.suspension_state.source == "ha_nyc311"
+
+    async def test_update_suspension_falls_through_when_bridge_unavailable(self) -> None:
+        """_async_update_suspension with bridge 'unavailable' -> falls through to 311 API."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        from datetime import date
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        mock_bridge_state = MagicMock()
+        mock_bridge_state.state = "unavailable"
+
+        mock_fetch = AsyncMock(
+            return_value=SuspensionInfo(is_suspended=True, reason="Emergency", source="nyc311")
+        )
+        mock_client = MagicMock()
+        mock_client.fetch_status = mock_fetch
+
+        mock_holiday = MagicMock()
+        mock_holiday.is_suspended = MagicMock(
+            return_value=SuspensionInfo(is_suspended=False, reason=None, source="none")
+        )
+
+        coord = SimpleNamespace(
+            hass=SimpleNamespace(
+                states=SimpleNamespace(
+                    get=MagicMock(return_value=mock_bridge_state)
+                )
+            ),
+            data=ASPParkingData(),
+            _nyc311_bridge_entity="binary_sensor.nyc311_asp_suspended",
+            _nyc311_client=mock_client,
+            _holiday_calendar=mock_holiday,
+            _async_notify_entities=MagicMock(),
+            _get_now=MagicMock(return_value=MagicMock(date=MagicMock(return_value=date.today()))),
+            _bridge_state_to_info=staticmethod(ASPParkingCoordinator._bridge_state_to_info),
+        )
+
+        await ASPParkingCoordinator._async_update_suspension(coord)
+
+        # Bridge was 'unavailable' so holiday calendar IS checked
+        mock_holiday.is_suspended.assert_called_once()
+        # And 311 API IS called (holiday returned not_suspended)
+        mock_fetch.assert_awaited_once()
