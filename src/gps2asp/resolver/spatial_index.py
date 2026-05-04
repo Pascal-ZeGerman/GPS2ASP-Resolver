@@ -40,7 +40,7 @@ class SpatialIndex:
     """
 
     _instance: ClassVar[SpatialIndex | None] = None  # singleton; cleared by reset()
-    _lock: ClassVar[asyncio.Lock] = asyncio.Lock()
+    _lock: ClassVar[asyncio.Lock | None] = None  # lazily created to avoid pre-loop init
 
     # Instance vars — assigned in __init__ and _load()
     _index: rtree_index.Index | None
@@ -76,6 +76,8 @@ class SpatialIndex:
         """
         if cls._instance is not None:
             return cls._instance
+        if cls._lock is None:
+            cls._lock = asyncio.Lock()
         async with cls._lock:
             if cls._instance is None:
                 instance = cls(index_dir=index_dir)
@@ -92,6 +94,7 @@ class SpatialIndex:
         if cls._instance is not None and cls._instance._index is not None:
             cls._instance._index.close()
         cls._instance = None
+        cls._lock = None
 
     async def _load(self) -> None:
         """Load the R-tree index and segment metadata from disk.
