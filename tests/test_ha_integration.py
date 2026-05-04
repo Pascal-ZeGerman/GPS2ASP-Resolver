@@ -1340,3 +1340,145 @@ def test_next_move_time_sensor_borough_attribute_populated_from_coordinator_data
 
     attrs = sensor_extra_attributes(data)
     assert attrs["borough"] == "Manhattan"
+
+
+# ===========================================================================
+# Group 13: Notification logic (_async_maybe_send_notification)
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestNotificationLogic:
+    """Test _async_maybe_send_notification business logic with mocked hass.services.
+
+    NOTE: The coordinator's isinstance checks use the vendored copy of ScheduleFound
+    and CleaningWindow under custom_components.asp_parking.gps2asp.*. Tests here
+    import from the vendored path to ensure isinstance() passes correctly.
+    """
+
+    def _make_coord(self, notify_service: str = "notify.mobile_app", lead_time: int = 60):
+        """Return a minimal namespace that satisfies _async_maybe_send_notification."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        hass = SimpleNamespace()
+        hass.services = SimpleNamespace()
+        hass.services.async_call = AsyncMock()
+
+        data = ASPParkingData()
+        coord = SimpleNamespace(
+            hass=hass,
+            data=data,
+            _notify_service=notify_service,
+            _debug_enabled=False,
+            _debug_suppress_notifications=False,
+            _notify_lead_time=lead_time,
+        )
+        return coord
+
+    def _make_vendored_schedule_found(self, start_dt: datetime) -> object:
+        """Build a ScheduleFound using the vendored (coordinator-facing) models."""
+        from custom_components.asp_parking.gps2asp.schedule.models import (
+            ASPDay as VASPDay,
+            CleaningWindow as VCleaningWindow,
+            ScheduleFound as VScheduleFound,
+            WeeklySchedule as VWeeklySchedule,
+            TimeWindow as VTimeWindow,
+        )
+        from datetime import time as _time
+        end_dt = start_dt + timedelta(hours=1)
+        window = VCleaningWindow(
+            day=VASPDay.MONDAY,
+            start_time=_time(start_dt.hour, start_dt.minute),
+            end_time=_time(end_dt.hour, end_dt.minute),
+            start_datetime=start_dt,
+            end_datetime=end_dt,
+            source_signs=["NO PARKING 8:30AM-10AM MON"],
+        )
+        tw = VTimeWindow(
+            day=VASPDay.MONDAY,
+            start_time=_time(start_dt.hour, start_dt.minute),
+            end_time=_time(end_dt.hour, end_dt.minute),
+            source_sign="NO PARKING 8:30AM-10AM MON",
+        )
+        schedule = VScheduleFound(
+            status="schedule_found",
+            next_window=window,
+            weekly_schedule=VWeeklySchedule(windows=(tw,)),
+            on_street="PROSPECT PLACE",
+            from_street="VANDERBILT AVENUE",
+            to_street="UNDERHILL AVENUE",
+            side_of_street="N",
+            source_signs=["NO PARKING 8:30AM-10AM MON"],
+            summary="Mon 8:30-10am",
+            parse_failures=[],
+        )
+        return schedule, window
+
+    async def test_notification_fires_within_lead_time(self) -> None:
+        """Notification fires when 0 < seconds_until <= notify_lead_time * 60."""
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        coord = self._make_coord(lead_time=60)
+        # Window starts 30 minutes from now (within 60-minute lead time)
+        future_dt = datetime.now(tz=NYC_TZ) + timedelta(minutes=30)
+        schedule, window = self._make_vendored_schedule_found(future_dt)
+
+        await ASPParkingCoordinator._async_maybe_send_notification(coord, schedule)
+
+        coord.hass.services.async_call.assert_awaited_once()
+        assert coord.data.last_notified_window == window
+
+    async def test_notification_skipped_when_window_past(self) -> None:
+        """Notification skipped when seconds_until <= 0 (window already started/past)."""
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        coord = self._make_coord(lead_time=60)
+        # Window started 5 minutes ago (past)
+        past_dt = datetime.now(tz=NYC_TZ) - timedelta(minutes=5)
+        schedule, _window = self._make_vendored_schedule_found(past_dt)
+
+        await ASPParkingCoordinator._async_maybe_send_notification(coord, schedule)
+
+        coord.hass.services.async_call.assert_not_awaited()
+        assert coord.data.last_notified_window is None
+
+    async def test_notification_skipped_when_already_notified(self) -> None:
+        """Notification skipped when window == last_notified_window (dedup)."""
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        coord = self._make_coord(lead_time=60)
+        future_dt = datetime.now(tz=NYC_TZ) + timedelta(minutes=30)
+        schedule, window = self._make_vendored_schedule_found(future_dt)
+        # Pre-set last_notified_window to the same window (already notified)
+        coord.data.last_notified_window = window
+
+        await ASPParkingCoordinator._async_maybe_send_notification(coord, schedule)
+
+        coord.hass.services.async_call.assert_not_awaited()
+
+    async def test_last_notified_window_set_after_delivery(self) -> None:
+        """last_notified_window is set only after confirmed delivery."""
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        coord = self._make_coord(lead_time=60)
+        future_dt = datetime.now(tz=NYC_TZ) + timedelta(minutes=30)
+        schedule, window = self._make_vendored_schedule_found(future_dt)
+
+        assert coord.data.last_notified_window is None
+        await ASPParkingCoordinator._async_maybe_send_notification(coord, schedule)
+        assert coord.data.last_notified_window == window
+
+    async def test_last_notified_window_not_set_when_async_call_raises(self) -> None:
+        """last_notified_window is NOT set when async_call raises."""
+        from unittest.mock import AsyncMock
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        coord = self._make_coord(lead_time=60)
+        coord.hass.services.async_call = AsyncMock(side_effect=Exception("service unavailable"))
+        future_dt = datetime.now(tz=NYC_TZ) + timedelta(minutes=30)
+        schedule, _window = self._make_vendored_schedule_found(future_dt)
+
+        await ASPParkingCoordinator._async_maybe_send_notification(coord, schedule)
+
+        assert coord.data.last_notified_window is None
