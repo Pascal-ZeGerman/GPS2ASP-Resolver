@@ -135,11 +135,10 @@ class ScheduleFound:
         suspended: v3 suspension layer flag. Set to True when ASP is suspended.
         suspension_reason: Human-readable reason for suspension (e.g. "MLK Day").
             None when not suspended.
-        resolution_reason: Machine-readable resolution state. One of:
-            'active' (ASP in effect), 'suspended_holiday' (holiday suspension),
-            'suspended_emergency' (emergency/weather suspension),
-            'no_asp_on_block', 'no_data_for_block', 'unknown'. None when
-            not yet annotated by apply_suspension().
+        resolution_reason: Machine-readable suspension classification. One of:
+            'suspended_holiday' (holiday suspension),
+            'suspended_emergency' (emergency/weather suspension).
+            None when not suspended / not yet annotated by apply_suspension().
     """
 
     status: Literal["schedule_found"]
@@ -156,12 +155,8 @@ class ScheduleFound:
     suspended: bool = False
     suspension_reason: str | None = None
     resolution_reason: Literal[
-        'active',
         'suspended_holiday',
         'suspended_emergency',
-        'no_asp_on_block',
-        'no_data_for_block',
-        'unknown',
     ] | None = None
 
 
@@ -181,11 +176,10 @@ class ASPActiveNow:
         suspended: v3 suspension layer flag. Set to True when ASP is suspended.
         suspension_reason: Human-readable reason for suspension (e.g. "MLK Day").
             None when not suspended.
-        resolution_reason: Machine-readable resolution state. One of:
-            'active' (ASP in effect), 'suspended_holiday' (holiday suspension),
-            'suspended_emergency' (emergency/weather suspension),
-            'no_asp_on_block', 'no_data_for_block', 'unknown'. None when
-            not yet annotated by apply_suspension().
+        resolution_reason: Machine-readable suspension classification. One of:
+            'suspended_holiday' (holiday suspension),
+            'suspended_emergency' (emergency/weather suspension).
+            None when not suspended / not yet annotated by apply_suspension().
     """
 
     status: Literal["asp_active_now"]
@@ -200,12 +194,8 @@ class ASPActiveNow:
     suspended: bool = False
     suspension_reason: str | None = None
     resolution_reason: Literal[
-        'active',
         'suspended_holiday',
         'suspended_emergency',
-        'no_asp_on_block',
-        'no_data_for_block',
-        'unknown',
     ] | None = None
 
 
