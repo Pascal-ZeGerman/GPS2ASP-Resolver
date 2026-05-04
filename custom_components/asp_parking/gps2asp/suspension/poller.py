@@ -116,28 +116,42 @@ class NYC311Client:
                         ) from exc
                     # Transient server error — retry
                     delay = self.BASE_DELAY * (2**attempt)
-                    logger.warning(
-                        "311 API attempt %d/%d failed: HTTP %d (retry in %.1fs)",
-                        attempt + 1,
-                        self.MAX_RETRIES,
-                        status_code,
-                        delay,
-                    )
                     if attempt < self.MAX_RETRIES - 1:
+                        logger.warning(
+                            "311 API attempt %d/%d failed: HTTP %d (retry in %.1fs)",
+                            attempt + 1,
+                            self.MAX_RETRIES,
+                            status_code,
+                            delay,
+                        )
                         await asyncio.sleep(delay)
+                    else:
+                        logger.warning(
+                            "311 API attempt %d/%d failed: HTTP %d (no more retries, failing open)",
+                            attempt + 1,
+                            self.MAX_RETRIES,
+                            status_code,
+                        )
 
                 except httpx.TransportError as exc:
                     # D-09: network errors — retry, then fail open
                     delay = self.BASE_DELAY * (2**attempt)
-                    logger.warning(
-                        "311 API attempt %d/%d failed: %s (retry in %.1fs)",
-                        attempt + 1,
-                        self.MAX_RETRIES,
-                        exc,
-                        delay,
-                    )
                     if attempt < self.MAX_RETRIES - 1:
+                        logger.warning(
+                            "311 API attempt %d/%d failed: %s (retry in %.1fs)",
+                            attempt + 1,
+                            self.MAX_RETRIES,
+                            exc,
+                            delay,
+                        )
                         await asyncio.sleep(delay)
+                    else:
+                        logger.warning(
+                            "311 API attempt %d/%d failed: %s (no more retries, failing open)",
+                            attempt + 1,
+                            self.MAX_RETRIES,
+                            exc,
+                        )
 
         # All retries exhausted — fail open
         logger.warning("311 API all %d attempts exhausted, failing open", self.MAX_RETRIES)
