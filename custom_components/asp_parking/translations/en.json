@@ -73,7 +73,8 @@
         "data": {
           "debug_lat": "Override latitude",
           "debug_lon": "Override longitude",
-          "debug_datetime": "Override current date/time"
+          "debug_datetime": "Override current date/time",
+          "suppress_notifications": "Suppress notifications in debug mode"
         },
         "data_description": {
           "debug_lat": "Fake GPS latitude for testing. Both lat and lon must be set together.",
