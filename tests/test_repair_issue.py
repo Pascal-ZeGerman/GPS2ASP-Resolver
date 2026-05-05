@@ -57,7 +57,7 @@ async def test_import_error_logs_actionable(
     with (
         patch(
             "custom_components.asp_parking._async_ensure_index",
-            new=AsyncMock(),
+            new_callable=AsyncMock,
         ),
         patch(
             "custom_components.asp_parking.ASPParkingCoordinator",
@@ -85,7 +85,7 @@ async def test_import_error_creates_repair(hass, enable_custom_integrations) -> 
     with (
         patch(
             "custom_components.asp_parking._async_ensure_index",
-            new=AsyncMock(),
+            new_callable=AsyncMock,
         ),
         patch(
             "custom_components.asp_parking.ASPParkingCoordinator",

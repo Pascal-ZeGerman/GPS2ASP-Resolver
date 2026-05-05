@@ -18,6 +18,21 @@ from datetime import datetime, time, timedelta, timezone
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
+from gps2asp.schedule.models import (
+    ASPActiveNow,
+    ASPDay,
+    AllUnparseable,
+    CleaningWindow,
+    NoASPSchedule,
+    NoMatchSchedule,
+    ParseFailure,
+    ScheduleFound,
+    ScheduleResult,
+    TimeWindow,
+    WeeklySchedule,
+)
+from gps2asp.suspension import SuspensionInfo, apply_suspension  # noqa: E402
+
 NYC_TZ = ZoneInfo("America/New_York")
 UTC_TZ = timezone.utc
 
@@ -34,22 +49,6 @@ def _format_move_time(dt: datetime) -> str:
         return f"\u26a0 Today {time_str}"
     day_str = local_dt.strftime("%a")
     return f"{day_str} {time_str}"
-
-
-from gps2asp.schedule.models import (  # noqa: E402
-    ASPActiveNow,
-    ASPDay,
-    AllUnparseable,
-    CleaningWindow,
-    NoASPSchedule,
-    NoMatchSchedule,
-    ParseFailure,
-    ScheduleFound,
-    ScheduleResult,
-    TimeWindow,
-    WeeklySchedule,
-)
-from gps2asp.suspension import SuspensionInfo, apply_suspension  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

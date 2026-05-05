@@ -453,7 +453,7 @@ class ASPParkingCoordinator:
             unsub()
         self._listeners.clear()
         self._entity_update_callbacks.clear()
-        await self._debouncer.async_cancel()  # type: ignore[misc]
+        self._debouncer.async_cancel()
         logger.info("ASP Parking coordinator stopped")
 
     # ------------------------------------------------------------------

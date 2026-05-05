@@ -56,6 +56,7 @@ __all__ = [
     "convert",
     "resolve_segment",
     "ResolutionResult",
+    "SegmentCandidate",
     "ResolutionError",
     "SegmentCandidate",
     "OutsideNYCError",

@@ -123,13 +123,12 @@ class SODAClient:
                 return response.json()
             except httpx.HTTPStatusError as exc:
                 last_error = exc
-                status_code = exc.response.status_code
                 delay = self.BASE_DELAY * (2**attempt)
                 logger.warning(
                     "SODA API attempt %d/%d failed: HTTP %d (retry in %.1fs)",
                     attempt + 1,
                     self.MAX_RETRIES,
-                    status_code,
+                    exc.response.status_code,
                     delay,
                 )
                 if attempt < self.MAX_RETRIES - 1:
