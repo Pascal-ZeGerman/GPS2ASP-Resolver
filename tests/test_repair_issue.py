@@ -54,9 +54,15 @@ async def test_import_error_logs_actionable(
 
     entry = _make_entry(hass)
 
-    with patch(
-        "custom_components.asp_parking.ASPParkingCoordinator",
-        side_effect=ImportError("simulated missing gps2asp.signs"),
+    with (
+        patch(
+            "custom_components.asp_parking._async_ensure_index",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "custom_components.asp_parking.ASPParkingCoordinator",
+            side_effect=ImportError("simulated missing gps2asp.signs"),
+        ),
     ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -76,9 +82,15 @@ async def test_import_error_creates_repair(hass, enable_custom_integrations) -> 
 
     entry = _make_entry(hass)
 
-    with patch(
-        "custom_components.asp_parking.ASPParkingCoordinator",
-        side_effect=ImportError("simulated"),
+    with (
+        patch(
+            "custom_components.asp_parking._async_ensure_index",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "custom_components.asp_parking.ASPParkingCoordinator",
+            side_effect=ImportError("simulated"),
+        ),
     ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
