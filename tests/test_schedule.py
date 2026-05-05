@@ -10,7 +10,6 @@ from __future__ import annotations
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
-import pytest
 
 from gps2asp.schedule import (
     AllUnparseable,
@@ -26,7 +25,7 @@ from gps2asp.schedule import (
     format_summary,
     merge_windows,
 )
-from gps2asp.schedule.models import ParseFailure, TimeWindow, WeeklySchedule
+from gps2asp.schedule.models import TimeWindow, WeeklySchedule
 from gps2asp.signs.models import (
     NoASPSigns,
     NoMatchFound,
@@ -233,9 +232,7 @@ class TestFindActiveWindow:
 
     def _tue_schedule(self) -> WeeklySchedule:
         """Create a TUE 8:30-10AM schedule."""
-        return WeeklySchedule(
-            windows=(_tw(ASPDay.TUESDAY, 8, 30, 10, 0),)
-        )
+        return WeeklySchedule(windows=(_tw(ASPDay.TUESDAY, 8, 30, 10, 0),))
 
     def test_inside_window_returns_cleaning_window(self) -> None:
         """Tuesday 9AM inside TUE 8:30-10AM -> returns active CleaningWindow."""
@@ -310,9 +307,7 @@ class TestFormatSummary:
 
     def test_single_day(self) -> None:
         """Single day just shows day name + time."""
-        schedule = WeeklySchedule(
-            windows=(_tw(ASPDay.TUESDAY, 11, 30, 13, 0),)
-        )
+        schedule = WeeklySchedule(windows=(_tw(ASPDay.TUESDAY, 11, 30, 13, 0),))
         result = format_summary(schedule)
         assert "TUE" in result
         assert "11:30" in result
@@ -339,18 +334,14 @@ class TestFormatSummary:
 
     def test_same_meridiem_simplification(self) -> None:
         """Same-meridiem times simplify: '8 - 9:30 AM' not '8 AM - 9:30 AM'."""
-        schedule = WeeklySchedule(
-            windows=(_tw(ASPDay.TUESDAY, 8, 0, 9, 30),)
-        )
+        schedule = WeeklySchedule(windows=(_tw(ASPDay.TUESDAY, 8, 0, 9, 30),))
         result = format_summary(schedule)
         # Should NOT have "AM" twice.
         assert result.count("AM") == 1
 
     def test_cross_meridiem_both_shown(self) -> None:
         """Cross-meridiem shows both: '11:30 AM - 1 PM'."""
-        schedule = WeeklySchedule(
-            windows=(_tw(ASPDay.TUESDAY, 11, 30, 13, 0),)
-        )
+        schedule = WeeklySchedule(windows=(_tw(ASPDay.TUESDAY, 11, 30, 13, 0),))
         result = format_summary(schedule)
         assert "AM" in result
         assert "PM" in result

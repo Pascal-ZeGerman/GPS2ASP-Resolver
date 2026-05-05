@@ -39,7 +39,8 @@ class TestOutsideNYC:
             await resolve(40.5, -74.5, index_dir=spatial_index_dir)
 
     async def test_outside_nyc_error_contains_coordinates(
-        self, spatial_index_dir,
+        self,
+        spatial_index_dir,
     ):
         """OutsideNYCError should include the original coordinates."""
         with pytest.raises(OutsideNYCError) as exc_info:
@@ -68,6 +69,7 @@ class TestAmbiguousResolution:
 
         # Project onto segment to find nearest point on centerline
         from shapely.geometry import Point
+
         dist_along = best.geometry.project(Point(x, y))
         nearest_on_line = best.geometry.interpolate(dist_along)
 
@@ -78,7 +80,8 @@ class TestAmbiguousResolution:
 
         with pytest.raises(AmbiguousResolutionError):
             await resolve_segment(
-                centerline_x, centerline_y,
+                centerline_x,
+                centerline_y,
                 index_dir=spatial_index_dir,
             )
 
@@ -111,13 +114,14 @@ class TestAmbiguousResolution:
         # low confidence due to intersection proximity
         try:
             result = await resolve_segment(
-                test_x, test_y, index_dir=spatial_index_dir,
+                test_x,
+                test_y,
+                index_dir=spatial_index_dir,
             )
             # If it resolves, confidence should be low
             # (near intersection penalty <30ft)
             assert result.confidence <= 0.7, (
-                f"Expected low confidence near intersection, "
-                f"got {result.confidence}"
+                f"Expected low confidence near intersection, got {result.confidence}"
             )
         except (AmbiguousResolutionError, NoSegmentFoundError):
             # Expected -- near-intersection raises ambiguous,
@@ -128,7 +132,8 @@ class TestAmbiguousResolution:
         """A very high threshold should make most resolutions ambiguous."""
         with pytest.raises(AmbiguousResolutionError) as exc_info:
             await resolve(
-                40.6778, -73.9690,
+                40.6778,
+                -73.9690,
                 confidence_threshold=0.99,
                 index_dir=spatial_index_dir,
             )
@@ -149,7 +154,9 @@ class TestNoSegment:
         # Deep inside Prospect Park (Long Meadow area)
         try:
             result = await resolve(
-                40.6602, -73.9690, index_dir=spatial_index_dir,
+                40.6602,
+                -73.9690,
+                index_dir=spatial_index_dir,
             )
             # If it resolves, it should be to a park road
             # (reasonable fallback behavior)
@@ -173,7 +180,9 @@ class TestDividedRoads:
         # This should resolve to the service road, not the main road
         try:
             result = await resolve(
-                40.6710, -73.9620, index_dir=spatial_index_dir,
+                40.6710,
+                -73.9620,
+                index_dir=spatial_index_dir,
             )
             # The result should be a street near Eastern Parkway
             # We don't assert exact street name since GPS coordinates
@@ -193,7 +202,9 @@ class TestMultipleBoroughs:
         # 5th Ave and 42nd St area
         try:
             result = await resolve(
-                40.7539, -73.9822, index_dir=spatial_index_dir,
+                40.7539,
+                -73.9822,
+                index_dir=spatial_index_dir,
             )
             assert isinstance(result.on_street, str)
             assert result.side_of_street in ("N", "S", "E", "W")
@@ -205,7 +216,9 @@ class TestMultipleBoroughs:
         # Steinway Street in Astoria
         try:
             result = await resolve(
-                40.7635, -73.9165, index_dir=spatial_index_dir,
+                40.7635,
+                -73.9165,
+                index_dir=spatial_index_dir,
             )
             assert isinstance(result.on_street, str)
         except (AmbiguousResolutionError, NoSegmentFoundError):
@@ -216,7 +229,9 @@ class TestMultipleBoroughs:
         # Grand Concourse area
         try:
             result = await resolve(
-                40.8288, -73.9235, index_dir=spatial_index_dir,
+                40.8288,
+                -73.9235,
+                index_dir=spatial_index_dir,
             )
             assert isinstance(result.on_street, str)
         except (AmbiguousResolutionError, NoSegmentFoundError):

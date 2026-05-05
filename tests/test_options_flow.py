@@ -75,9 +75,7 @@ async def test_parking_area_empty_submission_saves_without_parking_keys(
         result["flow_id"], _INIT_INPUT
     )
     # Submit empty parking_area form
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {}
-    )
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     assert CONF_PARKING_LAT not in entry.options
@@ -129,9 +127,7 @@ async def test_init_step_preserves_parking_keys_when_unchanged(
         result["flow_id"], _INIT_INPUT
     )
     # Accept the parking_area defaults (which were pre-seeded from entry.options)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], pre
-    )
+    result = await hass.config_entries.options.async_configure(result["flow_id"], pre)
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     assert entry.options[CONF_PARKING_LAT] == pytest.approx(40.6778)

@@ -121,9 +121,7 @@ async def test_diagnostics_shape(hass, enable_custom_integrations) -> None:
     assert set(out.keys()) == {"config", "state", "last_resolve", "last_error"}
 
 
-async def test_diagnostics_redacts_lat_lon(
-    hass, enable_custom_integrations
-) -> None:
+async def test_diagnostics_redacts_lat_lon(hass, enable_custom_integrations) -> None:
     """All five sensitive option keys redact to the literal ``**REDACTED**`` token.
 
     Token is HA's standard substitution from ``async_redact_data`` (Assumption A2).
@@ -155,9 +153,7 @@ async def test_diagnostics_redacts_lat_lon(
     assert out["config"]["movement_threshold"] == 50
 
 
-async def test_diagnostics_passthrough(
-    hass, enable_custom_integrations
-) -> None:
+async def test_diagnostics_passthrough(hass, enable_custom_integrations) -> None:
     """Non-sensitive options pass through unchanged."""
     from custom_components.asp_parking.diagnostics import (
         async_get_config_entry_diagnostics,
@@ -185,9 +181,7 @@ async def test_diagnostics_passthrough(
     assert out["config"]["refresh_interval"] == 8
 
 
-async def test_state_section_iso_datetime(
-    hass, enable_custom_integrations
-) -> None:
+async def test_state_section_iso_datetime(hass, enable_custom_integrations) -> None:
     """``state`` section serialises datetimes to ISO 8601 strings."""
     from custom_components.asp_parking.diagnostics import (
         async_get_config_entry_diagnostics,

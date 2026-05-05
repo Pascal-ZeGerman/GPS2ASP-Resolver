@@ -21,7 +21,8 @@ class TestQueryRadius:
     """Bounded-radius enumeration via SpatialIndex.query_radius()."""
 
     async def test_query_radius_returns_segments_within_radius_ft(
-        self, spatial_index_dir,
+        self,
+        spatial_index_dir,
     ):
         """query_radius returns at least one segment with distance_ft <= radius_ft."""
         cx_ft, cy_ft = convert(PROSPECT_HEIGHTS_LAT, PROSPECT_HEIGHTS_LON)
@@ -29,7 +30,9 @@ class TestQueryRadius:
 
         results = idx.query_radius(cx_ft, cy_ft, 500.0)
 
-        assert len(results) > 0, "Prospect Heights with 500ft radius should return segments"
+        assert len(results) > 0, (
+            "Prospect Heights with 500ft radius should return segments"
+        )
         assert all(c.distance_ft <= 500.0 for c in results), (
             "All returned segments must be within radius_ft"
         )
@@ -52,7 +55,8 @@ class TestQueryRadius:
         )
 
     async def test_query_radius_returns_empty_list_for_zero_radius(
-        self, spatial_index_dir,
+        self,
+        spatial_index_dir,
     ):
         """Zero radius returns [] (does NOT raise).
 
@@ -71,7 +75,8 @@ class TestQueryRadius:
         assert results == [], "Zero-radius query must return [] (no raise)"
 
     async def test_query_radius_returns_empty_list_far_from_nyc(
-        self, spatial_index_dir,
+        self,
+        spatial_index_dir,
     ):
         """A point far from NYC (origin of State Plane) returns [] (no raise)."""
         idx = await SpatialIndex.get(index_dir=spatial_index_dir)
@@ -81,7 +86,8 @@ class TestQueryRadius:
         assert results == [], "Origin-of-State-Plane query must return [] (no raise)"
 
     async def test_query_radius_results_sorted_closest_first(
-        self, spatial_index_dir,
+        self,
+        spatial_index_dir,
     ):
         """Results must be sorted by distance_ft ascending."""
         cx_ft, cy_ft = convert(PROSPECT_HEIGHTS_LAT, PROSPECT_HEIGHTS_LON)
@@ -95,7 +101,8 @@ class TestQueryRadius:
         )
 
     async def test_query_radius_returns_segment_candidate_with_required_fields(
-        self, spatial_index_dir,
+        self,
+        spatial_index_dir,
     ):
         """Each returned candidate exposes the SegmentCandidate contract fields."""
         cx_ft, cy_ft = convert(PROSPECT_HEIGHTS_LAT, PROSPECT_HEIGHTS_LON)

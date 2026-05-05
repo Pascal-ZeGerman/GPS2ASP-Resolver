@@ -106,4 +106,6 @@ class ResolutionDebugInfo:
     confidence: float = 0.0
     side: str | None = None
     outcome: str = "no_segment"
-    street_width_ft: float | None = None    # effective width used in confidence calc (post-fallback)
+    street_width_ft: float | None = (
+        None  # effective width used in confidence calc (post-fallback)
+    )

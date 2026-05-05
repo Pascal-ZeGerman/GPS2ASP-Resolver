@@ -154,10 +154,13 @@ class ScheduleFound:
     # v3 suspension merge fields
     suspended: bool = False
     suspension_reason: str | None = None
-    resolution_reason: Literal[
-        'suspended_holiday',
-        'suspended_emergency',
-    ] | None = None
+    resolution_reason: (
+        Literal[
+            "suspended_holiday",
+            "suspended_emergency",
+        ]
+        | None
+    ) = None
 
 
 @dataclass(frozen=True)
@@ -193,10 +196,13 @@ class ASPActiveNow:
     # v3 suspension merge fields
     suspended: bool = False
     suspension_reason: str | None = None
-    resolution_reason: Literal[
-        'suspended_holiday',
-        'suspended_emergency',
-    ] | None = None
+    resolution_reason: (
+        Literal[
+            "suspended_holiday",
+            "suspended_emergency",
+        ]
+        | None
+    ) = None
 
 
 @dataclass(frozen=True)

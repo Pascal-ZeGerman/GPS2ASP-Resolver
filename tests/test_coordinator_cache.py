@@ -23,11 +23,11 @@ import pytest
 
 from custom_components.asp_parking.const import (
     CONF_DEVICE_TRACKER,
-    CONF_PARKING_LAT,
-    CONF_PARKING_LON,
-    CONF_PARKING_RADIUS,
 )
-from custom_components.asp_parking.coordinator import ASPParkingCoordinator, _METRES_TO_FEET
+from custom_components.asp_parking.coordinator import (
+    ASPParkingCoordinator,
+    _METRES_TO_FEET,
+)
 from custom_components.asp_parking.gps2asp.resolver.exceptions import OutsideNYCError
 
 
@@ -223,9 +223,7 @@ async def test_resolve_pipeline_uses_cache_on_hit(make_coordinator):
     """A populated cache short-circuits retrieve_signs in the resolve pipeline."""
     coord, _hass, _entry = make_coordinator()
     cache_key = ("PROSPECT PL", "VANDERBILT AVE", "UNDERHILL AVE", "N")
-    cached_records = [
-        {"sign_description": "SANITATION BROOM 8AM-9:30AM MON THU"}
-    ]
+    cached_records = [{"sign_description": "SANITATION BROOM 8AM-9:30AM MON THU"}]
     coord._sign_cache = {cache_key: cached_records}
 
     coord._pending_lat = 40.6778

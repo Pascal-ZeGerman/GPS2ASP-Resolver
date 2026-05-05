@@ -35,8 +35,8 @@ _SUFFIX_EXPANSIONS: dict[str, str] = {
     "HWY": "HIGHWAY",
     "SQ": "SQUARE",
     "CIR": "CIRCLE",
-    "TPKE": "TURNPIKE",    # Queens: UNION TPKE -> UNION TURNPIKE
-    "CRES": "CRESCENT",    # Queens: 72 CRES -> 72 CRESCENT
+    "TPKE": "TURNPIKE",  # Queens: UNION TPKE -> UNION TURNPIKE
+    "CRES": "CRESCENT",  # Queens: 72 CRES -> 72 CRESCENT
 }
 
 # Directional prefix mappings: CSCL abbreviation -> SODA full word
@@ -58,9 +58,7 @@ _SODA_NUMBERED_WIDTH = 5  # SODA right-justifies the number in a 5-char field
 _LETTERED_AVE_RE = re.compile(r"^(?:AVE|AVENUE) ([A-Z])$")
 
 # Regex: expanded directional word, one+ spaces, digits, one+ spaces, rest
-_DIR_NUMBERED_RE = re.compile(
-    r"^(EAST|WEST|NORTH|SOUTH)\s+(\d+)\s+(.+)$"
-)
+_DIR_NUMBERED_RE = re.compile(r"^(EAST|WEST|NORTH|SOUTH)\s+(\d+)\s+(.+)$")
 
 
 def normalize_to_soda(cscl_name: str) -> str:
@@ -128,7 +126,7 @@ def normalize_to_soda(cscl_name: str) -> str:
     # would fall through to step 3 and produce AVENUE EAST/NORTH/SOUTH/WEST.
     m_ave = _LETTERED_AVE_RE.match(name)
     if m_ave:
-        return "AVENUE " + m_ave.group(1)   # early return; no further expansion needed
+        return "AVENUE " + m_ave.group(1)  # early return; no further expansion needed
 
     # Step 1: Expand directional prefix.
     # The "abbrev + space" guard ensures "ESSEX" (no space after E) and
@@ -136,8 +134,8 @@ def normalize_to_soda(cscl_name: str) -> str:
     for abbrev, full in _DIRECTIONAL_EXPANSIONS.items():
         prefix = abbrev + " "
         if name.startswith(prefix):
-            rest = name[len(prefix):]
-            if rest:                     # rest cannot have leading spaces post-normalization
+            rest = name[len(prefix) :]
+            if rest:  # rest cannot have leading spaces post-normalization
                 name = full + " " + rest
                 break
 

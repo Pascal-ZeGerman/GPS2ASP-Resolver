@@ -16,8 +16,6 @@ import inspect
 import re
 from pathlib import Path
 
-import pytest
-
 
 COORD_PATH = (
     Path(__file__).parent.parent
@@ -168,15 +166,17 @@ def test_outside_nyc_main_loop_logs_warning_with_actionable_message():
     )
     # And the legacy info-level line must be gone:
     src = _coord_source()
-    assert "logger.info(\"GPS outside NYC coverage area" not in src, (
-        "Legacy `logger.info(\"GPS outside NYC coverage area ...\")` must be replaced "
+    assert 'logger.info("GPS outside NYC coverage area' not in src, (
+        'Legacy `logger.info("GPS outside NYC coverage area ...")` must be replaced '
         "with logger.warning(...) per D-10."
     )
     # The new line must be a logger.warning call (search the immediate window).
     assert re.search(
         r"logger\.warning\(\s*\n?\s*\"GPS coordinates \(%\.4f, %\.4f\) are outside NYC coverage area\"",
         src,
-    ), "OutsideNYCError handler must use logger.warning(...) for the actionable message."
+    ), (
+        "OutsideNYCError handler must use logger.warning(...) for the actionable message."
+    )
 
 
 def test_no_segment_handler_logs_warning_with_actionable_message():
@@ -198,14 +198,16 @@ def test_no_segment_handler_logs_warning_with_actionable_message():
         "missing or differs from spec (D-11, D-13)."
     )
     src = _coord_source()
-    assert "logger.info(\"No street match at" not in src, (
-        "Legacy `logger.info(\"No street match ...\")` must be replaced with "
+    assert 'logger.info("No street match at' not in src, (
+        'Legacy `logger.info("No street match ...")` must be replaced with '
         "logger.warning(...) per D-11."
     )
     assert re.search(
         r"logger\.warning\(\s*\n?\s*\"No street segment found at \(%\.4f, %\.4f\)\"",
         src,
-    ), "NoSegment/Ambiguous handler must use logger.warning(...) for the actionable message."
+    ), (
+        "NoSegment/Ambiguous handler must use logger.warning(...) for the actionable message."
+    )
 
 
 def test_preseeder_outside_nyc_warning_unchanged():

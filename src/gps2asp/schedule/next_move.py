@@ -67,12 +67,8 @@ def find_active_window(
     for window in schedule.windows_for_day(today_day):
         # Start is inclusive, end is exclusive.
         if window.start_time <= current_time < window.end_time:
-            start_dt = datetime.combine(
-                now.date(), window.start_time, tzinfo=NYC_TZ
-            )
-            end_dt = datetime.combine(
-                now.date(), window.end_time, tzinfo=NYC_TZ
-            )
+            start_dt = datetime.combine(now.date(), window.start_time, tzinfo=NYC_TZ)
+            end_dt = datetime.combine(now.date(), window.end_time, tzinfo=NYC_TZ)
             return CleaningWindow(
                 day=today_day,
                 start_time=window.start_time,

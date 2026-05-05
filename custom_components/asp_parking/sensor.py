@@ -47,20 +47,22 @@ async def async_setup_entry(
 ) -> None:
     """Set up the ASP Parking sensor from a config entry."""
     coordinator: ASPParkingCoordinator = entry.runtime_data
-    async_add_entities([
-        ASPNextMoveTimeSensor(coordinator),
-        ASPCarNameSensor(coordinator),
-        ASPVINSensor(coordinator),
-        ASPLatitudeSensor(coordinator),
-        ASPLongitudeSensor(coordinator),
-        ASPResolvedStreetSensor(coordinator),
-        ASPResolutionStatusSensor(coordinator),
-        # DIAG-04 (Phase 27): four diagnostic sensors surfacing coordinator state
-        ASPConfidenceScoreSensor(coordinator),
-        ASPSODALevelSensor(coordinator),
-        ASPLastResolvedSensor(coordinator),
-        ASPLastErrorSensor(coordinator),
-    ])
+    async_add_entities(
+        [
+            ASPNextMoveTimeSensor(coordinator),
+            ASPCarNameSensor(coordinator),
+            ASPVINSensor(coordinator),
+            ASPLatitudeSensor(coordinator),
+            ASPLongitudeSensor(coordinator),
+            ASPResolvedStreetSensor(coordinator),
+            ASPResolutionStatusSensor(coordinator),
+            # DIAG-04 (Phase 27): four diagnostic sensors surfacing coordinator state
+            ASPConfidenceScoreSensor(coordinator),
+            ASPSODALevelSensor(coordinator),
+            ASPLastResolvedSensor(coordinator),
+            ASPLastErrorSensor(coordinator),
+        ]
+    )
 
 
 class ASPNextMoveTimeSensor(SensorEntity):
@@ -107,7 +109,9 @@ class ASPNextMoveTimeSensor(SensorEntity):
         """Return human-friendly move time string, with urgency prefix if <12h away."""
         local_dt = dt_util.as_local(dt)
         seconds_until = (dt_util.as_utc(dt) - dt_util.utcnow()).total_seconds()
-        time_str = local_dt.strftime("%I:%M %p").lstrip("0")  # e.g. "8:00 AM" (no leading zero, portable)
+        time_str = local_dt.strftime("%I:%M %p").lstrip(
+            "0"
+        )  # e.g. "8:00 AM" (no leading zero, portable)
         if seconds_until < 12 * 3600:
             return f"\u26a0 Today {time_str}"
         day_str = local_dt.strftime("%a")  # "Mon", "Tue", etc.
@@ -243,7 +247,9 @@ class ASPNextMoveTimeSensor(SensorEntity):
             elif isinstance(schedule, ASPActiveNow):
                 _move_dt = schedule.active_window.end_datetime
             if _move_dt is not None:
-                seconds_until = (dt_util.as_utc(_move_dt) - dt_util.utcnow()).total_seconds()
+                seconds_until = (
+                    dt_util.as_utc(_move_dt) - dt_util.utcnow()
+                ).total_seconds()
                 attrs["urgency"] = "high" if seconds_until < 12 * 3600 else "normal"
 
             # --- Location group ---
@@ -277,7 +283,9 @@ class ASPNextMoveTimeSensor(SensorEntity):
             data.last_resolved.isoformat() if data.last_resolved else None
         )
         attrs["confidence_score"] = data.confidence_score
-        attrs["borough"] = data.borough          # Phase 30 — always present (None when unresolved)
+        attrs["borough"] = (
+            data.borough
+        )  # Phase 30 — always present (None when unresolved)
         attrs["sign_count"] = data.sign_count
         attrs["parse_failures"] = data.parse_failures
         attrs["soda_level"] = data.soda_level

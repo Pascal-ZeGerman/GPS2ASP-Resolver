@@ -93,8 +93,11 @@ class TestFetchAspSignsFilter:
         captured_params = {}
 
         class MockResponse:
-            def raise_for_status(self): pass
-            def json(self): return []  # empty list stops the loop
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return []  # empty list stops the loop
 
         def mock_get(url, params=None, headers=None, timeout=None):
             captured_params.update(params or {})
@@ -111,6 +114,7 @@ class TestFetchAspSignsFilter:
 # ---------------------------------------------------------------------------
 # Phase 11: Graph construction and BFS propagation tests
 # ---------------------------------------------------------------------------
+
 
 class TestBuildStreetAdjacency:
     """Tests for _build_street_adjacency()."""
@@ -133,8 +137,12 @@ class TestBuildStreetAdjacency:
         assert 1 in adj.get(2, set()), "Segment 2 should be adjacent to segment 1"
         assert 3 in adj.get(2, set()), "Segment 2 should be adjacent to segment 3"
         assert 2 in adj.get(3, set()), "Segment 3 should be adjacent to segment 2"
-        assert 3 not in adj.get(1, set()), "Segment 1 should NOT be adjacent to segment 3"
-        assert 1 not in adj.get(3, set()), "Segment 3 should NOT be adjacent to segment 1"
+        assert 3 not in adj.get(1, set()), (
+            "Segment 1 should NOT be adjacent to segment 3"
+        )
+        assert 1 not in adj.get(3, set()), (
+            "Segment 3 should NOT be adjacent to segment 1"
+        )
 
     def test_different_street_names_not_connected(self):
         """Segments at the same node with different street names are NOT connected."""
@@ -143,8 +151,12 @@ class TestBuildStreetAdjacency:
         }
         adj = _build_street_adjacency(node_lookup)
 
-        assert 20 not in adj.get(10, set()), "Different street names should not be connected"
-        assert 10 not in adj.get(20, set()), "Different street names should not be connected"
+        assert 20 not in adj.get(10, set()), (
+            "Different street names should not be connected"
+        )
+        assert 10 not in adj.get(20, set()), (
+            "Different street names should not be connected"
+        )
 
     def test_3x3_neighborhood_tolerance(self):
         """Segments at (100,200) and (101,200) on same street should be connected."""
@@ -157,8 +169,12 @@ class TestBuildStreetAdjacency:
         }
         adj = _build_street_adjacency(node_lookup)
 
-        assert 12 in adj.get(11, set()), "Segments at (100,200) and (101,200) should connect"
-        assert 11 in adj.get(12, set()), "Segments at (100,200) and (101,200) should connect"
+        assert 12 in adj.get(11, set()), (
+            "Segments at (100,200) and (101,200) should connect"
+        )
+        assert 11 in adj.get(12, set()), (
+            "Segments at (100,200) and (101,200) should connect"
+        )
 
     def test_single_segment_has_empty_or_no_adjacency(self):
         """A single segment with no neighbors has no adjacent segments."""
@@ -253,7 +269,9 @@ class TestBfsBetween:
         )
         # With max_depth=1, BFS only expands one hop from start.
         # Since end_pid=4 is never reached, must return empty set.
-        assert result == set(), "BFS that doesn't reach end_pids should return empty set"
+        assert result == set(), (
+            "BFS that doesn't reach end_pids should return empty set"
+        )
 
     def test_unreachable_endpoint_returns_empty_set(self):
         """BFS that never reaches any end_pid should return empty set."""
@@ -279,7 +297,9 @@ class TestBfsBetween:
             12: {11, 13},
             13: {12},
         }
-        result = _bfs_between(start_pids={10, 11}, end_pids={12, 13}, adjacency=adjacency)
+        result = _bfs_between(
+            start_pids={10, 11}, end_pids={12, 13}, adjacency=adjacency
+        )
         # Should reach 12 and/or 13 from the start set
         assert len(result) > 0
         assert result.issubset({10, 11, 12, 13})
@@ -329,7 +349,9 @@ class TestPropagateAspToInteriorBlocks:
 
     def test_interior_blocks_added_to_asp_lookup(self):
         """BFS spanning 3 blocks should add interior block tuples to asp_lookup."""
-        cross_streets, gdf_street_names, adjacency, intersection_index = self._make_fixtures()
+        cross_streets, gdf_street_names, adjacency, intersection_index = (
+            self._make_fixtures()
+        )
 
         # SODA span covers entire BROADWAY from 72nd to 75th on both sides
         asp_lookup = {
@@ -351,11 +373,15 @@ class TestPropagateAspToInteriorBlocks:
         # (it was already in asp_lookup or gets re-added)
         # More specifically: interior segment 2 (73 ST - 74 ST) should appear
         interior_tuples = {t for t in expanded if "73 STREET" in t or "74 STREET" in t}
-        assert len(interior_tuples) > 0, "Interior block 73rd-74th should be in expanded asp_lookup"
+        assert len(interior_tuples) > 0, (
+            "Interior block 73rd-74th should be in expanded asp_lookup"
+        )
 
     def test_bfs_failure_does_not_add_tuples(self):
         """When BFS can't reach endpoint, no tuples should be added."""
-        cross_streets, gdf_street_names, adjacency, intersection_index = self._make_fixtures()
+        cross_streets, gdf_street_names, adjacency, intersection_index = (
+            self._make_fixtures()
+        )
 
         # Span references a cross street that doesn't exist in intersection_index
         asp_lookup = {
@@ -371,7 +397,9 @@ class TestPropagateAspToInteriorBlocks:
 
     def test_propagation_stats_returned(self):
         """Stats dict should contain expected keys."""
-        cross_streets, gdf_street_names, adjacency, intersection_index = self._make_fixtures()
+        cross_streets, gdf_street_names, adjacency, intersection_index = (
+            self._make_fixtures()
+        )
         asp_lookup = {("BROADWAY", "72 STREET", "75 STREET", "N")}
 
         _, stats = _propagate_asp_to_interior_blocks(
@@ -385,7 +413,9 @@ class TestPropagateAspToInteriorBlocks:
 
     def test_propagate_asp_left_side_only(self):
         """When asp_lookup has only one side, interior blocks get only that side."""
-        cross_streets, gdf_street_names, adjacency, intersection_index = self._make_fixtures()
+        cross_streets, gdf_street_names, adjacency, intersection_index = (
+            self._make_fixtures()
+        )
 
         # Only North side in asp_lookup
         asp_lookup = {("BROADWAY", "72 STREET", "75 STREET", "N")}
@@ -409,8 +439,6 @@ class TestGraphJson:
         """graph.json should have adjacency, segment_streets, segment_cross_streets keys."""
         import json
 
-        from build_index import _build_intersection_index, _build_street_adjacency
-
         # Build a minimal adjacency and cross_streets to produce graph.json content
         adjacency = {1: {2}, 2: {1, 3}, 3: {2}}
         cross_streets = {
@@ -423,10 +451,11 @@ class TestGraphJson:
         # Simulate what build_index() will write
         graph_data = {
             "adjacency": {
-                str(pid): sorted(neighbors)
-                for pid, neighbors in adjacency.items()
+                str(pid): sorted(neighbors) for pid, neighbors in adjacency.items()
             },
-            "segment_streets": {str(pid): name for pid, name in gdf_street_names.items()},
+            "segment_streets": {
+                str(pid): name for pid, name in gdf_street_names.items()
+            },
             "segment_cross_streets": {
                 str(pid): list(cs) for pid, cs in cross_streets.items()
             },
@@ -446,7 +475,9 @@ class TestGraphJson:
 
         # Adjacency values should be lists (JSON arrays)
         for pid_str, neighbors in loaded["adjacency"].items():
-            assert isinstance(neighbors, list), f"Neighbors for {pid_str} should be list"
+            assert isinstance(neighbors, list), (
+                f"Neighbors for {pid_str} should be list"
+            )
 
         # Segment streets should be strings
         for pid_str, name in loaded["segment_streets"].items():

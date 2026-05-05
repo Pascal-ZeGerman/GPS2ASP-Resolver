@@ -33,10 +33,7 @@ def spatial_index_dir():
     Returns the path to the index directory.
     """
     if not _index_exists():
-        pytest.skip(
-            "Spatial index not built. "
-            "Run: python scripts/build_index.py"
-        )
+        pytest.skip("Spatial index not built. Run: python scripts/build_index.py")
     return str(INDEX_DIR)
 
 
@@ -60,6 +57,7 @@ def reset_street_graph():
     leaking into subsequent tests that expect a fresh singleton.
     """
     from gps2asp.signs.graph import StreetGraph
+
     StreetGraph._instance = None
     yield
     StreetGraph._instance = None

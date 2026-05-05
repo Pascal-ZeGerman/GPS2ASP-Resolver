@@ -269,8 +269,13 @@ async def retrieve_signs(
     )
     result = await _try_query(
         client,
-        on_variants[0], from_variants[0], to_variants[0], side_of_street,
-        on_street, from_street, to_street,
+        on_variants[0],
+        from_variants[0],
+        to_variants[0],
+        side_of_street,
+        on_street,
+        from_street,
+        to_street,
         soda_level=1,
     )
     if result is not None:
@@ -301,8 +306,13 @@ async def retrieve_signs(
         )
         result = await _try_query(
             client,
-            on_var, from_var, to_var, side_of_street,
-            on_street, from_street, to_street,
+            on_var,
+            from_var,
+            to_var,
+            side_of_street,
+            on_street,
+            from_street,
+            to_street,
             soda_level=2,
         )
         if result is not None:
@@ -333,9 +343,7 @@ async def retrieve_signs(
             any_soda_results = True
             # Client-side cross-street filtering
             filtered = [
-                r
-                for r in records
-                if _cross_streets_match(r, from_street, to_street)
+                r for r in records if _cross_streets_match(r, from_street, to_street)
             ]
             logger.debug(
                 "Level 3: %d records after cross-street filtering", len(filtered)
@@ -344,8 +352,13 @@ async def retrieve_signs(
             if filtered:
                 result = await _try_query(
                     client,
-                    on_var, from_variants[0], to_variants[0], side_of_street,
-                    on_street, from_street, to_street,
+                    on_var,
+                    from_variants[0],
+                    to_variants[0],
+                    side_of_street,
+                    on_street,
+                    from_street,
+                    to_street,
                     soda_level=3,
                     prefetched_records=filtered,
                 )
@@ -395,14 +408,17 @@ async def retrieve_signs(
 
                 if records:
                     any_soda_results = True
-                    span_count = len({
-                        (r.get("from_street", ""), r.get("to_street", ""))
-                        for r in records
-                    })
+                    span_count = len(
+                        {
+                            (r.get("from_street", ""), r.get("to_street", ""))
+                            for r in records
+                        }
+                    )
                     # Local import: _find_best_covering_span is a private
                     # implementation detail of signs.graph; importing here
                     # keeps it off the package's public namespace.
                     from .graph import _find_best_covering_span  # noqa: PLC0415
+
                     best_span = _find_best_covering_span(
                         records, from_street, to_street, graph
                     )
@@ -418,8 +434,13 @@ async def retrieve_signs(
                         )
                         result = await _try_query(
                             client,
-                            on_var, from_variants[0], to_variants[0], side_of_street,
-                            on_street, from_street, to_street,
+                            on_var,
+                            from_variants[0],
+                            to_variants[0],
+                            side_of_street,
+                            on_street,
+                            from_street,
+                            to_street,
                             soda_level=4,
                             prefetched_records=best_span,
                         )

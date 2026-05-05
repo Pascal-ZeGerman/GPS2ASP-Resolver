@@ -186,7 +186,7 @@ async def test_env_var_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with patch("gps2asp.suspension.poller.httpx.AsyncClient", return_value=mock_client):
         client = NYC311Client(api_key=None)
-        result = await client.fetch_status()
+        await client.fetch_status()
 
     # Verify the HTTP call was made (key was resolved from env)
     mock_client.get.assert_called_once()
@@ -380,6 +380,7 @@ async def test_empty_days() -> None:
 def test_nyc311client_canonical_import() -> None:
     """NYC311Client is importable via the canonical path gps2asp.suspension."""
     from gps2asp.suspension import NYC311Client as _NYC311Client  # noqa: PLC0415
+
     assert isinstance(_NYC311Client, type), (
         "NYC311Client imported from gps2asp.suspension must be a class"
     )
@@ -388,6 +389,7 @@ def test_nyc311client_canonical_import() -> None:
 def test_nyc311autherror_importable() -> None:
     """NYC311AuthError is importable from gps2asp.suspension.poller."""
     from gps2asp.suspension.poller import NYC311AuthError as _NYC311AuthError  # noqa: PLC0415
+
     assert isinstance(_NYC311AuthError, type), (
         "NYC311AuthError imported from gps2asp.suspension.poller must be a class"
     )

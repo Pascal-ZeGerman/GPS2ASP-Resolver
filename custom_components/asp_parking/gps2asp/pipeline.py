@@ -100,7 +100,11 @@ async def resolve_asp(
         schedule = apply_suspension(schedule, suspension_status)
 
     if debug:
-        soda_level = sign_result.soda_level if isinstance(sign_result, SignRetrievalSuccess) else 0
+        soda_level = (
+            sign_result.soda_level
+            if isinstance(sign_result, SignRetrievalSuccess)
+            else 0
+        )
         return ASPDebugResult.from_resolution(
             resolution=resolution,
             sign_result=sign_result,
@@ -114,5 +118,7 @@ async def resolve_asp(
         schedule=schedule,
         resolution_failed=False,
         resolution_error=None,
-        soda_level=sign_result.soda_level if isinstance(sign_result, SignRetrievalSuccess) else 0,
+        soda_level=sign_result.soda_level
+        if isinstance(sign_result, SignRetrievalSuccess)
+        else 0,
     )

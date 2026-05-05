@@ -202,12 +202,10 @@ def parse_sign(sign_description: str) -> list[TimeWindow] | None:
     # Step 1: Strip prefix (NIGHT REGULATION + NO PARKING + MOON & STARS).
     prefix_match = _PREFIX_RE.match(sign_description)
     if not prefix_match:
-        logger.warning(
-            "Unrecognized prefix, rejecting sign: %r", original
-        )
+        logger.warning("Unrecognized prefix, rejecting sign: %r", original)
         return None
 
-    text = sign_description[prefix_match.end():]
+    text = sign_description[prefix_match.end() :]
 
     # Step 2: Strip suffix (arrows + SUPERSEDES).
     text = _SUFFIX_RE.sub("", text)
@@ -215,9 +213,7 @@ def parse_sign(sign_description: str) -> list[TimeWindow] | None:
     # Step 3: Extract time window.
     time_match = _TIME_RE.search(text)
     if not time_match:
-        logger.warning(
-            "No time window found in sign: %r", original
-        )
+        logger.warning("No time window found in sign: %r", original)
         return None
 
     # Step 4: Parse time tokens.
@@ -225,16 +221,13 @@ def parse_sign(sign_description: str) -> list[TimeWindow] | None:
         start_time = parse_time_token(time_match.group(1))
         end_time = parse_time_token(time_match.group(2))
     except ValueError as exc:
-        logger.warning(
-            "Failed to parse time tokens in sign %r: %s", original, exc
-        )
+        logger.warning("Failed to parse time tokens in sign %r: %s", original, exc)
         return None
 
     # Step 5: Validate same-day window (end > start).
     if end_time <= start_time:
         logger.warning(
-            "Invalid time window (end <= start) in sign: %r "
-            "(start=%s, end=%s)",
+            "Invalid time window (end <= start) in sign: %r (start=%s, end=%s)",
             original,
             start_time,
             end_time,
@@ -242,15 +235,13 @@ def parse_sign(sign_description: str) -> list[TimeWindow] | None:
         return None
 
     # Step 6: Remove time match from text, extract days from remainder.
-    day_text = text[:time_match.start()] + text[time_match.end():]
+    day_text = text[: time_match.start()] + text[time_match.end() :]
     days = extract_days(day_text)
 
     if not days:
         # Check if there's an EXCEPT clause in the full remaining text
         # (extract_days already handles this, but double-check).
-        logger.warning(
-            "No days found in sign: %r", original
-        )
+        logger.warning("No days found in sign: %r", original)
         return None
 
     # Step 7: Build TimeWindow objects.

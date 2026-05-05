@@ -155,7 +155,9 @@ class NYC311Client:
                         )
 
         # All retries exhausted — fail open
-        logger.warning("311 API all %d attempts exhausted, failing open", self.MAX_RETRIES)
+        logger.warning(
+            "311 API all %d attempts exhausted, failing open", self.MAX_RETRIES
+        )
         return _NOT_SUSPENDED
 
     @staticmethod

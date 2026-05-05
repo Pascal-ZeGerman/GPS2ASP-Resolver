@@ -28,9 +28,7 @@ CSCL_METADATA_URL = "https://data.cityofnewyork.us/api/views/3mf9-qshr.json"
 def _setup_logging() -> None:
     """Configure build logging to stdout."""
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    )
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
@@ -95,9 +93,7 @@ def check_for_updates(
             "update_available": False,
             "current_build": current_build_ts,
             "latest_data": "fetch_failed",
-            "days_since_build": (
-                datetime.now(timezone.utc) - current_build_dt
-            ).days,
+            "days_since_build": (datetime.now(timezone.utc) - current_build_dt).days,
         }
 
     # Extract rowsUpdatedAt (Unix timestamp in seconds)
@@ -121,11 +117,13 @@ def check_for_updates(
     if update_available:
         logger.info(
             "Update available! Data updated %s, build is %d days old.",
-            latest_data_ts, days_since_build,
+            latest_data_ts,
+            days_since_build,
         )
     else:
         logger.info(
-            "Index is up to date. Build is %d days old.", days_since_build,
+            "Index is up to date. Build is %d days old.",
+            days_since_build,
         )
 
     return result

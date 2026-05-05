@@ -31,7 +31,7 @@ class SuspensionInfo:
 
     is_suspended: bool
     reason: str | None
-    source: Literal['holiday', 'emergency', 'ha_nyc311', 'none'] = 'none'
+    source: Literal["holiday", "emergency", "ha_nyc311", "none"] = "none"
 
 
 # ---------------------------------------------------------------------------
@@ -227,11 +227,17 @@ class HolidayCalendar:
         return SuspensionInfo(
             is_suspended=reason is not None,
             reason=reason,
-            source='holiday' if reason is not None else 'none',
+            source="holiday" if reason is not None else "none",
         )
 
 
 from .merge import apply_suspension
 from .poller import NYC311Client, NYC311AuthError
 
-__all__ = ["HolidayCalendar", "SuspensionInfo", "apply_suspension", "NYC311Client", "NYC311AuthError"]
+__all__ = [
+    "HolidayCalendar",
+    "SuspensionInfo",
+    "apply_suspension",
+    "NYC311Client",
+    "NYC311AuthError",
+]

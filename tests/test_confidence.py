@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from gps2asp.resolver.confidence import (
     DEFAULT_CONFIDENCE_THRESHOLD,
@@ -27,7 +26,9 @@ class TestComputeConfidence:
             distance_to_nearest_intersection_ft=200.0,
         )
         assert result > 0.0
-        assert result < 0.4  # 0.333... is low confidence (close to parking-lane threshold)
+        assert (
+            result < 0.4
+        )  # 0.333... is low confidence (close to parking-lane threshold)
 
     def test_near_intersection_returns_zero(self):
         """Point near intersection (20ft < 30ft threshold) -> 0.0.
@@ -109,12 +110,16 @@ class TestComputeConfidence:
         """Confidence should always be between 0.0 and 1.0."""
         # Test various inputs
         test_cases = [
-            (5.0, 30.0, 200.0),   # above width-relative guard, below confidence threshold
-            (15.0, 30.0, 20.0),   # near intersection
+            (
+                5.0,
+                30.0,
+                200.0,
+            ),  # above width-relative guard, below confidence threshold
+            (15.0, 30.0, 20.0),  # near intersection
             (18.0, 30.0, 200.0),  # high confidence
-            (12.0, 30.0, 80.0),   # medium confidence
+            (12.0, 30.0, 80.0),  # medium confidence
             (50.0, 60.0, 500.0),  # very confident
-            (11.0, 30.0, 31.0),   # just above both thresholds
+            (11.0, 30.0, 31.0),  # just above both thresholds
         ]
         for perp, width, intersection in test_cases:
             result = compute_confidence(perp, width, intersection)
@@ -159,7 +164,7 @@ class TestComputeConfidence:
 
         resolve_effective_width resolves the fallback; result matches explicit 30ft.
         """
-        width_from_nan = resolve_effective_width(float('nan'), rw_type=1)
+        width_from_nan = resolve_effective_width(float("nan"), rw_type=1)
         result_nan = compute_confidence(
             perp_distance_ft=9.2,
             effective_width_ft=width_from_nan,

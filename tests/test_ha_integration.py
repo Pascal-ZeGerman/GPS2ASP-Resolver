@@ -35,6 +35,7 @@ def _format_move_time(dt: datetime) -> str:
     day_str = local_dt.strftime("%a")
     return f"{day_str} {time_str}"
 
+
 from gps2asp.schedule.models import (
     ASPActiveNow,
     ASPDay,
@@ -79,7 +80,9 @@ class ASPParkingData:
     street_width_ft: float | None = None
     segment_id: int | None = None
     suspension_state: SuspensionInfo = field(
-        default_factory=lambda: SuspensionInfo(is_suspended=False, reason=None, source='none')
+        default_factory=lambda: SuspensionInfo(
+            is_suspended=False, reason=None, source="none"
+        )
     )
     last_notified_window: CleaningWindow | None = None
 
@@ -156,8 +159,13 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
             day_names = sorted(
                 {w.day.name.title() for w in weekly.windows},
                 key=lambda d: [
-                    "Monday", "Tuesday", "Wednesday", "Thursday",
-                    "Friday", "Saturday", "Sunday",
+                    "Monday",
+                    "Tuesday",
+                    "Wednesday",
+                    "Thursday",
+                    "Friday",
+                    "Saturday",
+                    "Sunday",
                 ].index(d),
             )
             attrs["cleaning_days"] = day_names
@@ -191,9 +199,7 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
         attrs["current_window_start"] = (
             schedule.active_window.start_datetime.isoformat()
         )
-        attrs["current_window_end"] = (
-            schedule.active_window.end_datetime.isoformat()
-        )
+        attrs["current_window_end"] = schedule.active_window.end_datetime.isoformat()
 
     if isinstance(schedule, (ScheduleFound, ASPActiveNow)) and schedule.suspended:
         attrs["suspension_reason"] = schedule.suspension_reason
@@ -203,7 +209,7 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
         data.last_resolved.isoformat() if data.last_resolved else None
     )
     attrs["confidence_score"] = data.confidence_score
-    attrs["borough"] = data.borough          # Phase 30 — always present (None when unresolved)
+    attrs["borough"] = data.borough  # Phase 30 — always present (None when unresolved)
     attrs["sign_count"] = data.sign_count
     attrs["parse_failures"] = data.parse_failures
     attrs["soda_level"] = data.soda_level
@@ -499,8 +505,10 @@ class TestSensorAttributes:
         now = datetime.now(tz=NYC_TZ)
         window = _make_cleaning_window(
             day=ASPDay.MONDAY,
-            start_h=8, start_m=30,
-            end_h=10, end_m=0,
+            start_h=8,
+            start_m=30,
+            end_h=10,
+            end_m=0,
             start_dt=now.replace(hour=8, minute=30, second=0, microsecond=0),
             end_dt=now.replace(hour=10, minute=0, second=0, microsecond=0),
         )
@@ -622,9 +630,7 @@ class TestStaleTimeout:
     def test_stale_at_exact_boundary(self) -> None:
         """GPS update exactly at boundary -> should still be available."""
         # 8 hours minus 1 second should be available
-        almost_stale = datetime.now(tz=ZoneInfo("UTC")) - timedelta(
-            hours=8, seconds=-1
-        )
+        almost_stale = datetime.now(tz=ZoneInfo("UTC")) - timedelta(hours=8, seconds=-1)
         data = ASPParkingData(last_gps_update=almost_stale)
         assert sensor_available(data, stale_timeout_hours=8) is True
 
@@ -635,9 +641,7 @@ class TestStaleTimeout:
 
 
 # Pattern for normal case: "Mon 8:00 AM" (abbreviated day + no-leading-zero 12h time)
-_NORMAL_FORMAT_RE = re.compile(
-    r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2}:\d{2} (AM|PM)$"
-)
+_NORMAL_FORMAT_RE = re.compile(r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2}:\d{2} (AM|PM)$")
 
 # Pattern for urgent case: "⚠ Today 8:00 AM"
 _URGENT_FORMAT_RE = re.compile(r"^\u26a0 Today \d{1,2}:\d{2} (AM|PM)$")
@@ -896,6 +900,7 @@ class TestSodaLevelAttribute:
 # Group 8: Suspension sensor state (SC1)
 # ===========================================================================
 
+
 @pytest.mark.ha_integration
 class TestSuspensionSensorState:
     """Test sensor native_value returns 'Suspended' when suspension is active."""
@@ -905,7 +910,9 @@ class TestSuspensionSensorState:
         data = ASPParkingData(
             schedule_result=_make_schedule_found(),
             suspension_state=SuspensionInfo(
-                is_suspended=True, reason="Martin Luther King Jr.'s Birthday", source='holiday'
+                is_suspended=True,
+                reason="Martin Luther King Jr.'s Birthday",
+                source="holiday",
             ),
         )
         assert sensor_native_value(data) == "Suspended"
@@ -915,7 +922,7 @@ class TestSuspensionSensorState:
         data = ASPParkingData(
             schedule_result=_make_schedule_found(),
             suspension_state=SuspensionInfo(
-                is_suspended=True, reason="Snow Day", source='emergency'
+                is_suspended=True, reason="Snow Day", source="emergency"
             ),
         )
         assert sensor_native_value(data) == "Suspended"
@@ -932,7 +939,7 @@ class TestSuspensionSensorState:
         data = ASPParkingData(
             schedule_result=_make_schedule_found(),
             suspension_state=SuspensionInfo(
-                is_suspended=True, reason="Memorial Day", source='holiday'
+                is_suspended=True, reason="Memorial Day", source="holiday"
             ),
         )
         attrs = sensor_extra_attributes(data)
@@ -951,7 +958,7 @@ class TestSuspensionSensorState:
         data = ASPParkingData(
             schedule_result=_make_schedule_found(),
             suspension_state=SuspensionInfo(
-                is_suspended=True, reason="Christmas Day", source='holiday'
+                is_suspended=True, reason="Christmas Day", source="holiday"
             ),
         )
         attrs = sensor_extra_attributes(data)
@@ -967,6 +974,7 @@ class TestSuspensionSensorState:
 # Group 9: Suspension binary sensor (SC2)
 # ===========================================================================
 
+
 @pytest.mark.ha_integration
 class TestSuspensionBinarySensor:
     """Test binary sensor is_on returns False during suspended active windows."""
@@ -976,7 +984,7 @@ class TestSuspensionBinarySensor:
         data = ASPParkingData(
             schedule_result=_make_asp_active_now(),
             suspension_state=SuspensionInfo(
-                is_suspended=True, reason="Snow Day", source='emergency'
+                is_suspended=True, reason="Snow Day", source="emergency"
             ),
         )
         assert binary_sensor_is_on(data) is False
@@ -991,7 +999,7 @@ class TestSuspensionBinarySensor:
         data = ASPParkingData(
             schedule_result=_make_schedule_found(),
             suspension_state=SuspensionInfo(
-                is_suspended=True, reason="Memorial Day", source='holiday'
+                is_suspended=True, reason="Memorial Day", source="holiday"
             ),
         )
         assert binary_sensor_is_on(data) is False
@@ -1005,7 +1013,9 @@ import pathlib as _pathlib
 
 _COORDINATOR_SRC = (
     _pathlib.Path(__file__).parent.parent
-    / "custom_components" / "asp_parking" / "coordinator.py"
+    / "custom_components"
+    / "asp_parking"
+    / "coordinator.py"
 )
 
 
@@ -1056,7 +1066,7 @@ class TestSuspensionPoll:
         assert poll_start != -1
         assert update_start != -1
         # Extract _async_update_suspension body and verify no GPS gate
-        update_body = src[update_start: update_start + 600]
+        update_body = src[update_start : update_start + 600]
         assert "last_lat" not in update_body, (
             "_async_update_suspension should not gate on last_lat (GPS-independent)"
         )
@@ -1111,6 +1121,7 @@ class TestSuspensionStartup:
             HolidayCalendar,
             SuspensionInfo as _SuspensionInfo,
         )
+
         cal = HolidayCalendar()
         cal._holidays = dict(FALLBACK_2026)
         cal._loaded = True
@@ -1136,6 +1147,7 @@ class TestSuspensionStartup:
             FALLBACK_2026,
             HolidayCalendar,
         )
+
         cal = HolidayCalendar()
         cal._holidays = dict(FALLBACK_2026)
         cal._loaded = True
@@ -1153,6 +1165,7 @@ class TestSuspensionStartup:
 # Group 12: Config flow API key constants (SC5)
 # ===========================================================================
 
+
 @pytest.mark.ha_integration
 class TestConfigFlowApiKey:
     """Test that config flow API key infrastructure is in place."""
@@ -1166,20 +1179,22 @@ class TestConfigFlowApiKey:
         from custom_components.asp_parking.const import (
             CONF_NYC311_API_KEY as _CANONICAL_KEY,
         )
+
         assert _CANONICAL_KEY == "nyc311_api_key"
 
     def test_suspension_info_default_not_suspended(self) -> None:
         """Default SuspensionInfo is not suspended."""
-        info = SuspensionInfo(is_suspended=False, reason=None, source='none')
+        info = SuspensionInfo(is_suspended=False, reason=None, source="none")
         assert not info.is_suspended
         assert info.reason is None
-        assert info.source == 'none'
+        assert info.source == "none"
 
     def test_api_key_stored_separately_from_device_tracker(self) -> None:
         """API key constant is distinct from device_tracker constant."""
         from custom_components.asp_parking.const import (
             CONF_NYC311_API_KEY as _CANONICAL_KEY,
         )
+
         assert _CANONICAL_KEY != "device_tracker"
 
 
@@ -1258,6 +1273,7 @@ def test_diag04_sensor_classes_exist() -> None:
         ASPLastResolvedSensor,
         ASPSODALevelSensor,
     )
+
     # Subclass check — they must inherit from _ASPDiagnosticSensor
     from custom_components.asp_parking.sensor import _ASPDiagnosticSensor
 
@@ -1283,6 +1299,7 @@ def test_resolved_street_sensor_exposes_phase_30_diagnostic_attributes() -> None
     from unittest.mock import MagicMock
 
     from custom_components.asp_parking.sensor import ASPResolvedStreetSensor
+
     # The sensor imports ScheduleFound from the VENDORED copy under
     # custom_components.asp_parking.gps2asp.*; the canonical src/ ScheduleFound
     # used elsewhere in this file is a DIFFERENT class object — isinstance()
@@ -1337,7 +1354,9 @@ def test_resolved_street_sensor_exposes_phase_30_diagnostic_attributes() -> None
 
 
 @pytest.mark.ha_integration
-def test_next_move_time_sensor_borough_attribute_populated_from_coordinator_data() -> None:
+def test_next_move_time_sensor_borough_attribute_populated_from_coordinator_data() -> (
+    None
+):
     """ASPNextMoveTimeSensor.extra_state_attributes['borough'] reads from
     coordinator.data.borough (no longer hardcoded to None) per Phase 30 D-14.
     """
@@ -1363,7 +1382,9 @@ class TestNotificationLogic:
     import from the vendored path to ensure isinstance() passes correctly.
     """
 
-    def _make_coord(self, notify_service: str = "notify.mobile_app", lead_time: int = 60):
+    def _make_coord(
+        self, notify_service: str = "notify.mobile_app", lead_time: int = 60
+    ):
         """Return a minimal namespace that satisfies _async_maybe_send_notification."""
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
@@ -1374,6 +1395,7 @@ class TestNotificationLogic:
 
         data = ASPParkingData()
         from datetime import datetime as _datetime
+
         coord = SimpleNamespace(
             hass=hass,
             data=data,
@@ -1395,6 +1417,7 @@ class TestNotificationLogic:
             TimeWindow as VTimeWindow,
         )
         from datetime import time as _time
+
         end_dt = start_dt + timedelta(hours=1)
         window = VCleaningWindow(
             day=VASPDay.MONDAY,
@@ -1484,7 +1507,9 @@ class TestNotificationLogic:
         from custom_components.asp_parking.coordinator import ASPParkingCoordinator
 
         coord = self._make_coord(lead_time=60)
-        coord.hass.services.async_call = AsyncMock(side_effect=Exception("service unavailable"))
+        coord.hass.services.async_call = AsyncMock(
+            side_effect=Exception("service unavailable")
+        )
         future_dt = datetime.now(tz=NYC_TZ) + timedelta(minutes=30)
         schedule, _window = self._make_vendored_schedule_found(future_dt)
 
@@ -1560,16 +1585,16 @@ class TestNyc311Bridge:
         mock_bridge_state.state = "unavailable"
 
         mock_fetch = AsyncMock(
-            return_value=SuspensionInfo(is_suspended=False, reason=None, source="nyc311")
+            return_value=SuspensionInfo(
+                is_suspended=False, reason=None, source="nyc311"
+            )
         )
         mock_client = MagicMock()
         mock_client.fetch_status = mock_fetch
 
         coord = SimpleNamespace(
             hass=SimpleNamespace(
-                states=SimpleNamespace(
-                    get=MagicMock(return_value=mock_bridge_state)
-                )
+                states=SimpleNamespace(get=MagicMock(return_value=mock_bridge_state))
             ),
             data=ASPParkingData(),
             _nyc311_bridge_entity="binary_sensor.nyc311_asp_suspended",
@@ -1596,9 +1621,7 @@ class TestNyc311Bridge:
 
         coord = SimpleNamespace(
             hass=SimpleNamespace(
-                states=SimpleNamespace(
-                    get=MagicMock(return_value=mock_bridge_state)
-                )
+                states=SimpleNamespace(get=MagicMock(return_value=mock_bridge_state))
             ),
             data=ASPParkingData(),
             _nyc311_bridge_entity="binary_sensor.nyc311_asp_suspended",
@@ -1636,17 +1659,19 @@ class TestNyc311Bridge:
 
         coord = SimpleNamespace(
             hass=SimpleNamespace(
-                states=SimpleNamespace(
-                    get=MagicMock(return_value=mock_bridge_state)
-                )
+                states=SimpleNamespace(get=MagicMock(return_value=mock_bridge_state))
             ),
             data=ASPParkingData(),
             _nyc311_bridge_entity="binary_sensor.nyc311_asp_suspended",
             _nyc311_client=mock_client,
             _holiday_calendar=mock_holiday,
             _async_notify_entities=MagicMock(),
-            _get_now=MagicMock(return_value=MagicMock(date=MagicMock(return_value=date.today()))),
-            _bridge_state_to_info=staticmethod(ASPParkingCoordinator._bridge_state_to_info),
+            _get_now=MagicMock(
+                return_value=MagicMock(date=MagicMock(return_value=date.today()))
+            ),
+            _bridge_state_to_info=staticmethod(
+                ASPParkingCoordinator._bridge_state_to_info
+            ),
         )
 
         await ASPParkingCoordinator._async_update_suspension(coord)
@@ -1659,7 +1684,9 @@ class TestNyc311Bridge:
         assert coord.data.suspension_state.is_suspended is True
         assert coord.data.suspension_state.source == "ha_nyc311"
 
-    async def test_update_suspension_falls_through_when_bridge_unavailable(self) -> None:
+    async def test_update_suspension_falls_through_when_bridge_unavailable(
+        self,
+    ) -> None:
         """_async_update_suspension with bridge 'unavailable' -> falls through to 311 API."""
         from types import SimpleNamespace
         from unittest.mock import AsyncMock, MagicMock
@@ -1670,7 +1697,9 @@ class TestNyc311Bridge:
         mock_bridge_state.state = "unavailable"
 
         mock_fetch = AsyncMock(
-            return_value=SuspensionInfo(is_suspended=True, reason="Emergency", source="nyc311")
+            return_value=SuspensionInfo(
+                is_suspended=True, reason="Emergency", source="nyc311"
+            )
         )
         mock_client = MagicMock()
         mock_client.fetch_status = mock_fetch
@@ -1682,17 +1711,19 @@ class TestNyc311Bridge:
 
         coord = SimpleNamespace(
             hass=SimpleNamespace(
-                states=SimpleNamespace(
-                    get=MagicMock(return_value=mock_bridge_state)
-                )
+                states=SimpleNamespace(get=MagicMock(return_value=mock_bridge_state))
             ),
             data=ASPParkingData(),
             _nyc311_bridge_entity="binary_sensor.nyc311_asp_suspended",
             _nyc311_client=mock_client,
             _holiday_calendar=mock_holiday,
             _async_notify_entities=MagicMock(),
-            _get_now=MagicMock(return_value=MagicMock(date=MagicMock(return_value=date.today()))),
-            _bridge_state_to_info=staticmethod(ASPParkingCoordinator._bridge_state_to_info),
+            _get_now=MagicMock(
+                return_value=MagicMock(date=MagicMock(return_value=date.today()))
+            ),
+            _bridge_state_to_info=staticmethod(
+                ASPParkingCoordinator._bridge_state_to_info
+            ),
         )
 
         await ASPParkingCoordinator._async_update_suspension(coord)

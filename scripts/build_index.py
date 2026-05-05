@@ -31,7 +31,6 @@ import requests
 import zstandard
 from pyproj import Transformer
 from rtree import index as rtree_index
-from shapely.geometry import MultiLineString, shape
 
 from gps2asp.signs.normalize import normalize_to_soda
 
@@ -39,15 +38,11 @@ logger = logging.getLogger("gps2asp.build")
 
 # NYC Open Data SODA GeoJSON endpoint for the Centerline dataset.
 # Dataset inkn-q76z is the actual data table (3mf9-qshr is just the map view).
-CSCL_GEOJSON_URL = (
-    "https://data.cityofnewyork.us/resource/inkn-q76z.geojson"
-)
+CSCL_GEOJSON_URL = "https://data.cityofnewyork.us/resource/inkn-q76z.geojson"
 # Metadata URL uses the map view identifier (works for rowsUpdatedAt).
 CSCL_METADATA_URL = "https://data.cityofnewyork.us/api/views/3mf9-qshr.json"
 
-PARKING_SIGNS_SODA_URL = (
-    "https://data.cityofnewyork.us/resource/nfid-uabd.json"
-)
+PARKING_SIGNS_SODA_URL = "https://data.cityofnewyork.us/resource/nfid-uabd.json"
 
 # Vehicular road types to include
 VEHICULAR_RW_TYPES = {1, 2, 3, 4, 5}
@@ -58,6 +53,7 @@ SIGNS_BATCH_SIZE = 50000
 
 # WGS84 to EPSG:2263 transformer for reprojecting GeoJSON (which arrives in WGS84)
 _transformer = Transformer.from_crs("EPSG:4326", "EPSG:2263", always_xy=True)
+
 
 def _normalize_street_name(name: str) -> str:
     """Normalize a street name by expanding abbreviations and directional prefixes.
@@ -78,9 +74,7 @@ def _normalize_street_name(name: str) -> str:
 def _setup_logging() -> None:
     """Configure build logging to stdout."""
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    )
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
@@ -129,14 +123,16 @@ def _download_cscl_geojson() -> gpd.GeoDataFrame:
 
         # Filter out features with no geometry or no properties
         valid = [
-            f for f in features
-            if f.get("geometry") is not None and f.get("properties")
+            f for f in features if f.get("geometry") is not None and f.get("properties")
         ]
         all_features.extend(valid)
 
         logger.info(
             "Downloaded %d features (offset=%d, valid=%d, total so far=%d)",
-            len(features), offset, len(valid), len(all_features),
+            len(features),
+            offset,
+            len(valid),
+            len(all_features),
         )
 
         if len(features) < CSCL_BATCH_SIZE:
@@ -189,6 +185,7 @@ def _filter_and_reproject(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         if geom.geom_type == "MultiLineString":
             # Merge multi-part into single line by concatenating coords
             from shapely.ops import linemerge
+
             merged = linemerge(geom)
             return merged
         return geom
@@ -203,7 +200,9 @@ def _filter_and_reproject(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     filtered_count = len(gdf)
     logger.info(
         "Filtered to %d vehicular segments (from %d total, %.1f%% retained)",
-        filtered_count, total_count, 100 * filtered_count / total_count,
+        filtered_count,
+        total_count,
+        100 * filtered_count / total_count,
     )
 
     return gdf
@@ -357,10 +356,7 @@ def _compute_cross_streets(
         count += 1
 
     logger.info("Computed cross streets for %d segments", count)
-    dead_end_count = sum(
-        1 for fs, ts in cross_streets.values()
-        if fs == "" or ts == ""
-    )
+    dead_end_count = sum(1 for fs, ts in cross_streets.values() if fs == "" or ts == "")
     logger.info(
         "Dead ends: %d segments have at least one dead-end node",
         dead_end_count,
@@ -412,7 +408,7 @@ def _build_street_adjacency(
         for _street, pids in by_street.items():
             unique_pids = list(dict.fromkeys(pids))  # deduplicate, preserve order
             for i, pid_a in enumerate(unique_pids):
-                for pid_b in unique_pids[i + 1:]:
+                for pid_b in unique_pids[i + 1 :]:
                     pair = frozenset((pid_a, pid_b))
                     if pair not in processed_pairs:
                         processed_pairs.add(pair)
@@ -590,7 +586,9 @@ def _propagate_asp_to_interior_blocks(
 
     logger.info(
         "ASP propagation: %d spans processed, %d resolved, %d interior blocks added",
-        spans_processed, spans_resolved, interior_blocks_added,
+        spans_processed,
+        spans_resolved,
+        interior_blocks_added,
     )
 
     stats = {
@@ -638,7 +636,9 @@ def _fetch_asp_signs() -> set[tuple[str, str, str, str]]:
             response.raise_for_status()
         except requests.RequestException as e:
             logger.warning(
-                "Failed to fetch ASP signs (offset=%d): %s", offset, e,
+                "Failed to fetch ASP signs (offset=%d): %s",
+                offset,
+                e,
             )
             logger.warning(
                 "Continuing without ASP data -- has_asp will default to False"
@@ -664,7 +664,9 @@ def _fetch_asp_signs() -> set[tuple[str, str, str, str]]:
 
         logger.info(
             "Fetched %d ASP records (offset=%d, batch=%d)",
-            len(records), offset, SIGNS_BATCH_SIZE,
+            len(records),
+            offset,
+            SIGNS_BATCH_SIZE,
         )
 
         if len(records) < SIGNS_BATCH_SIZE:
@@ -776,7 +778,10 @@ def _build_rtree_and_metadata(
 
         # ASP flags
         has_asp_left, has_asp_right = _check_has_asp(
-            full_street_name, from_street, to_street, asp_lookup,
+            full_street_name,
+            from_street,
+            to_street,
+            asp_lookup,
         )
         if has_asp_left or has_asp_right:
             asp_count += 1
@@ -813,7 +818,8 @@ def _build_rtree_and_metadata(
     idx.close()
     logger.info(
         "R-tree index built with %d segments (skipped %d)",
-        insert_count, skipped,
+        insert_count,
+        skipped,
     )
 
     # Save segment metadata as JSON
@@ -830,7 +836,8 @@ def _build_rtree_and_metadata(
     dat_size = (output_dir / "segments.dat").stat().st_size
     logger.info(
         "R-tree files: segments.idx=%.1f MB, segments.dat=%.1f MB",
-        idx_size / (1024 * 1024), dat_size / (1024 * 1024),
+        idx_size / (1024 * 1024),
+        dat_size / (1024 * 1024),
     )
 
     return {
@@ -917,12 +924,19 @@ def build_index(output_dir: Path | None = None) -> None:
         len(intersection_index),
     )
     asp_lookup, propagation_stats = _propagate_asp_to_interior_blocks(
-        asp_lookup, adjacency, intersection_index, cross_streets, gdf_street_names,
+        asp_lookup,
+        adjacency,
+        intersection_index,
+        cross_streets,
+        gdf_street_names,
     )
 
     # Step E + F: Build R-tree and save metadata (using expanded asp_lookup)
     stats = _build_rtree_and_metadata(
-        gdf, cross_streets, asp_lookup, output_dir,
+        gdf,
+        cross_streets,
+        asp_lookup,
+        output_dir,
     )
 
     # Step F2: Write graph.json.zst (2-hop filtered + zstandard compressed)
@@ -943,7 +957,10 @@ def build_index(output_dir: Path | None = None) -> None:
         full_street_name = str(row.get("full_street_name", ""))
         from_street, to_street = cross_streets.get(pid, ("", ""))
         has_asp_left, has_asp_right = _check_has_asp(
-            full_street_name, from_street, to_street, asp_lookup,
+            full_street_name,
+            from_street,
+            to_street,
+            asp_lookup,
         )
         if has_asp_left or has_asp_right:
             asp_pids.add(pid)
@@ -951,7 +968,9 @@ def build_index(output_dir: Path | None = None) -> None:
     retained_pids = _filter_2hop_neighborhood(adjacency, asp_pids)
     logger.info(
         "Graph filter: %d -> %d segments (2-hop from %d ASP seeds)",
-        len(adjacency), len(retained_pids), len(asp_pids & set(adjacency.keys())),
+        len(adjacency),
+        len(retained_pids),
+        len(asp_pids & set(adjacency.keys())),
     )
 
     graph_adjacency: dict[str, list[int]] = {}
@@ -981,7 +1000,11 @@ def build_index(output_dir: Path | None = None) -> None:
         f.write(compressed)
 
     graph_size_mb = graph_path.stat().st_size / (1024 * 1024)
-    logger.info("graph.json.zst written: %.2f MB (%d segments)", graph_size_mb, len(graph_adjacency))
+    logger.info(
+        "graph.json.zst written: %.2f MB (%d segments)",
+        graph_size_mb,
+        len(graph_adjacency),
+    )
     if graph_size_mb > 4.0:
         logger.warning("graph.json.zst exceeds 4 MB target: %.2f MB", graph_size_mb)
 
@@ -989,7 +1012,8 @@ def build_index(output_dir: Path | None = None) -> None:
     elapsed = time.time() - start_time
     build_info = {
         "build_timestamp": time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(),
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(),
         ),
         "cscl_row_count": total_cscl_rows,
         "filtered_count": stats["filtered_count"],
@@ -1008,7 +1032,8 @@ def build_index(output_dir: Path | None = None) -> None:
     logger.info("Build complete in %.1f seconds", elapsed)
     logger.info(
         "Segments: %d, ASP segments: %d",
-        stats["filtered_count"], stats["asp_segments_count"],
+        stats["filtered_count"],
+        stats["asp_segments_count"],
     )
     logger.info("Build info saved to %s", build_info_path)
 
@@ -1023,10 +1048,7 @@ if __name__ == "__main__":
         "--output-dir",
         type=Path,
         default=None,
-        help=(
-            "Output directory for index files "
-            "(default: src/gps2asp/data/index/)"
-        ),
+        help=("Output directory for index files (default: src/gps2asp/data/index/)"),
     )
     args = parser.parse_args()
 

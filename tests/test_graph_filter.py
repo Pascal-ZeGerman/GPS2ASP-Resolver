@@ -54,6 +54,7 @@ ASP_PIDS = {1}
 # Filter correctness tests
 # ---------------------------------------------------------------------------
 
+
 class TestFilter2HopNeighborhood:
     """Test the 2-hop BFS filter function."""
 
@@ -86,10 +87,11 @@ class TestFilter2HopNeighborhood:
         for pid in retained:
             neighbors = ADJACENCY.get(pid, set())
             pruned = {n for n in neighbors if n in retained}
-            dangling = {n for n in neighbors if n in excluded}
             # When building the filtered graph, dangling refs must be removed
             for n in pruned:
-                assert n in retained, f"Neighbor {n} of PID {pid} is not in retained set"
+                assert n in retained, (
+                    f"Neighbor {n} of PID {pid} is not in retained set"
+                )
             # Verify that excluded PIDs exist (the filter actually excluded something)
             assert len(excluded) > 0, "Expected some PIDs to be excluded"
 
@@ -119,6 +121,7 @@ class TestFilter2HopNeighborhood:
 # ---------------------------------------------------------------------------
 # StreetGraph .zst loading tests
 # ---------------------------------------------------------------------------
+
 
 class TestStreetGraphLoad:
     """Test StreetGraph.load() with .zst and .json files."""
@@ -172,6 +175,7 @@ class TestStreetGraphLoad:
 # ---------------------------------------------------------------------------
 # BFS on filtered graph
 # ---------------------------------------------------------------------------
+
 
 class TestBFSOnFilteredGraph:
     """Test BFS span_distance on a StreetGraph built from filtered data."""

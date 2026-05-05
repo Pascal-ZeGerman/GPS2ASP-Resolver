@@ -4,6 +4,7 @@ Annotates ScheduleFound or ASPActiveNow with suspension metadata when
 ASP is suspended. Non-schedule results (NoASPSchedule, NoMatchSchedule,
 AllUnparseable) pass through unchanged.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -39,12 +40,12 @@ def apply_suspension(
         return schedule
 
     resolution_reason: str
-    if info.source == 'holiday':
-        resolution_reason = 'suspended_holiday'
-    elif info.source in ('emergency', 'ha_nyc311'):
-        resolution_reason = 'suspended_emergency'
+    if info.source == "holiday":
+        resolution_reason = "suspended_holiday"
+    elif info.source in ("emergency", "ha_nyc311"):
+        resolution_reason = "suspended_emergency"
     else:
-        resolution_reason = 'suspended_holiday'  # fallback for unknown source
+        resolution_reason = "suspended_holiday"  # fallback for unknown source
 
     return dataclasses.replace(
         schedule,
