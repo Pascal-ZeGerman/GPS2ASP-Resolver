@@ -79,12 +79,10 @@ from .const import (
     DEFAULT_NOTIFY_SERVICE,
     DEFAULT_NYC311_BRIDGE_ENTITY,
     DEFAULT_NYC311_ENTITY,
-    DEFAULT_PARKING_RADIUS,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STALE_TIMEOUT,
     DEFAULT_SUPPRESS_NOTIFICATIONS,
     DEFAULT_SUSPENSION_INTERVAL,
-    DOMAIN,
     GPS_DEBOUNCE_COOLDOWN,
 )
 
@@ -153,7 +151,9 @@ class ASPParkingData:
     street_width_ft: float | None = None
     segment_id: int | None = None
     suspension_state: SuspensionInfo = field(
-        default_factory=lambda: SuspensionInfo(is_suspended=False, reason=None, source='none')
+        default_factory=lambda: SuspensionInfo(
+            is_suspended=False, reason=None, source="none"
+        )
     )
     last_notified_window: CleaningWindow | None = None
 
@@ -196,7 +196,9 @@ class ASPParkingCoordinator:
         # Suspension state
         self._holiday_calendar: HolidayCalendar | None = None
         self._nyc311_client: NYC311Client | None = None
-        self._nyc311_bridge_entity: str | None = None  # ha-nyc311 entity ID if bridge active
+        self._nyc311_bridge_entity: str | None = (
+            None  # ha-nyc311 entity ID if bridge active
+        )
 
         # Cleanup callables for event subscriptions
         self._listeners: list[CALLBACK_TYPE] = []
@@ -255,9 +257,7 @@ class ASPParkingCoordinator:
     @property
     def refresh_interval(self) -> int:
         """Return the periodic refresh interval in hours."""
-        return self.entry.options.get(
-            CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL
-        )
+        return self.entry.options.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL)
 
     @property
     def stale_timeout(self) -> int:
@@ -303,7 +303,11 @@ class ASPParkingCoordinator:
             except (ValueError, TypeError):
                 self._debug_datetime = None
         elif isinstance(raw_dt, datetime):
-            self._debug_datetime = raw_dt.astimezone(NYC_TZ) if raw_dt.tzinfo else raw_dt.replace(tzinfo=NYC_TZ)
+            self._debug_datetime = (
+                raw_dt.astimezone(NYC_TZ)
+                if raw_dt.tzinfo
+                else raw_dt.replace(tzinfo=NYC_TZ)
+            )
         self._debug_suppress_notifications = self.entry.options.get(
             CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
         )
@@ -311,9 +315,7 @@ class ASPParkingCoordinator:
             CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE
         )
         self._notify_lead_time = int(
-            self.entry.options.get(
-                CONF_NOTIFY_LEAD_TIME, DEFAULT_NOTIFY_LEAD_TIME
-            )
+            self.entry.options.get(CONF_NOTIFY_LEAD_TIME, DEFAULT_NOTIFY_LEAD_TIME)
         )
 
         # Phase 26: parking area + sign cache config
@@ -390,7 +392,10 @@ class ASPParkingCoordinator:
             _bridge_info = self._bridge_state_to_info(
                 bridge_state.state, bridge_state.attributes
             )
-            if self.data.suspension_state.is_suspended and not _bridge_info.is_suspended:
+            if (
+                self.data.suspension_state.is_suspended
+                and not _bridge_info.is_suspended
+            ):
                 logger.info(
                     "ha-nyc311 bridge reported '%s' — overriding holiday suspension '%s'",
                     bridge_state.state,
@@ -428,7 +433,9 @@ class ASPParkingCoordinator:
             logger.debug(
                 "Phase 26: parking area not configured (lat=%s, lon=%s, radius=%s); "
                 "sign cache pre-seed skipped (D-07 fallback)",
-                self._parking_lat, self._parking_lon, self._parking_radius_m,
+                self._parking_lat,
+                self._parking_lon,
+                self._parking_radius_m,
             )
 
         logger.info(
@@ -465,13 +472,9 @@ class ASPParkingCoordinator:
         """
         if state == "on":
             reason = (attributes or {}).get("reason")
-            return SuspensionInfo(
-                is_suspended=True, reason=reason, source="ha_nyc311"
-            )
+            return SuspensionInfo(is_suspended=True, reason=reason, source="ha_nyc311")
         if state == "off":
-            return SuspensionInfo(
-                is_suspended=False, reason=None, source="ha_nyc311"
-            )
+            return SuspensionInfo(is_suspended=False, reason=None, source="ha_nyc311")
         # "unavailable", "unknown", or any other state: fail open
         logger.warning(
             "ha-nyc311 entity state is '%s' -- failing open (no suspension assumed)",
@@ -595,7 +598,11 @@ class ASPParkingCoordinator:
         lon = self._pending_lon
 
         # Debug coordinate override (D-06)
-        if self._debug_enabled and self._debug_lat is not None and self._debug_lon is not None:
+        if (
+            self._debug_enabled
+            and self._debug_lat is not None
+            and self._debug_lon is not None
+        ):
             lat = self._debug_lat
             lon = self._debug_lon
 
@@ -695,13 +702,16 @@ class ASPParkingCoordinator:
             self.data.distance_ft = None
             self.data.street_width_ft = None
             self.data.segment_id = None
-            self.data.last_error = None  # clear stale errors on clean resolution failures
+            self.data.last_error = (
+                None  # clear stale errors on clean resolution failures
+            )
             self.data.last_error_time = None
             # Retain last schedule_result per user decision
             logger.warning(
                 "GPS coordinates (%.4f, %.4f) are outside NYC coverage area"
                 " -- check that your device tracker is reporting a valid NYC location",
-                lat, lon,
+                lat,
+                lon,
             )
 
         except (NoSegmentFoundError, AmbiguousResolutionError) as err:
@@ -715,14 +725,18 @@ class ASPParkingCoordinator:
             self.data.distance_ft = None
             self.data.street_width_ft = None
             self.data.segment_id = None
-            self.data.last_error = None  # clear stale errors on clean resolution failures
+            self.data.last_error = (
+                None  # clear stale errors on clean resolution failures
+            )
             self.data.last_error_time = None
             # Retain last schedule_result per user decision
             logger.warning(
                 "No street segment found at (%.4f, %.4f)"
                 " -- check that your device tracker is reporting accurate"
                 " coordinates within a mapped NYC street: %s",
-                lat, lon, err,
+                lat,
+                lon,
+                err,
             )
 
         except Exception as err:  # noqa: BLE001
@@ -730,9 +744,7 @@ class ASPParkingCoordinator:
             # Fall back to last known state -- do NOT clear schedule or special_state
             self.data.last_error = str(err)
             self.data.last_error_time = dt_util.utcnow()
-            logger.warning(
-                "Pipeline error at (%.4f, %.4f): %s", lat, lon, err
-            )
+            logger.warning("Pipeline error at (%.4f, %.4f): %s", lat, lon, err)
 
         self._async_notify_entities()
 
@@ -778,7 +790,9 @@ class ASPParkingCoordinator:
             logger.warning(
                 "Phase 26: pre-seed skipped — parking area not configured "
                 "(lat=%s, lon=%s, radius=%s)",
-                lat, lon, radius_m,
+                lat,
+                lon,
+                radius_m,
             )
             return
 
@@ -790,7 +804,8 @@ class ASPParkingCoordinator:
             logger.warning(
                 "Phase 26: parking area (%s, %s) is outside NYC; "
                 "pre-seed skipped — resolutions will use on-demand SODA calls",
-                lat, lon,
+                lat,
+                lon,
             )
             return
         except Exception:  # noqa: BLE001
@@ -805,13 +820,17 @@ class ASPParkingCoordinator:
             idx = await SpatialIndex.get()
             candidates = idx.query_radius(cx_ft, cy_ft, radius_ft)
         except Exception:  # noqa: BLE001
-            logger.warning("Phase 26: spatial query failed during pre-seed", exc_info=True)
+            logger.warning(
+                "Phase 26: spatial query failed during pre-seed", exc_info=True
+            )
             return
 
         if not candidates:
             logger.info(
                 "Phase 26: pre-seed found 0 segments within %d m of (%s, %s)",
-                radius_m, lat, lon,
+                radius_m,
+                lat,
+                lon,
             )
             self._sign_cache = {}
             return
@@ -837,7 +856,10 @@ class ASPParkingCoordinator:
                 except Exception:  # noqa: BLE001
                     logger.debug(
                         "Phase 26: pre-seed fetch failed for %s/%s/%s/%s",
-                        cand.full_street_name, cand.from_street, cand.to_street, side,
+                        cand.full_street_name,
+                        cand.from_street,
+                        cand.to_street,
+                        side,
                         exc_info=True,
                     )
                     continue
@@ -857,7 +879,8 @@ class ASPParkingCoordinator:
         logger.info(
             "Phase 26: pre-seed complete — %d (segment, side) entries cached "
             "for %d-segment parking area",
-            len(new_cache), len(candidates),
+            len(new_cache),
+            len(candidates),
         )
 
     @callback
@@ -894,14 +917,12 @@ class ASPParkingCoordinator:
                 info = await self._nyc311_client.fetch_status()
             except Exception:  # noqa: BLE001
                 logger.warning("311 suspension poll failed, failing open")
-                info = SuspensionInfo(is_suspended=False, reason=None, source='none')
+                info = SuspensionInfo(is_suspended=False, reason=None, source="none")
 
         self.data.suspension_state = info
         self._async_notify_entities()
 
-    async def _async_maybe_send_notification(
-        self, schedule: ScheduleResult
-    ) -> None:
+    async def _async_maybe_send_notification(self, schedule: ScheduleResult) -> None:
         """Send push notification if next ASP window is within self._notify_lead_time minutes.
 
         Guards:
@@ -945,7 +966,7 @@ class ASPParkingCoordinator:
 
         service_name = self._notify_service
         if service_name.startswith("notify."):
-            service_name = service_name[len("notify."):]
+            service_name = service_name[len("notify.") :]
         try:
             await self.hass.services.async_call(
                 "notify",
@@ -953,10 +974,12 @@ class ASPParkingCoordinator:
                 {"message": message, "title": "ASP Parking"},
                 blocking=True,
             )
-            self.data.last_notified_window = window   # only set on confirmed delivery
+            self.data.last_notified_window = window  # only set on confirmed delivery
             logger.info("ASP notification sent for window at %s", time_str)
         except Exception:  # noqa: BLE001
-            logger.warning("Failed to send ASP notification via %s", self._notify_service)
+            logger.warning(
+                "Failed to send ASP notification via %s", self._notify_service
+            )
 
     # ------------------------------------------------------------------
     # Manual and periodic triggers

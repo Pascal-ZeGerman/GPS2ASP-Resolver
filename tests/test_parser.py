@@ -310,8 +310,7 @@ class TestParseSign:
     def test_noon_time_token(self) -> None:
         """NOON as end time."""
         result = parse_sign(
-            "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY "
-            "10:30AM-NOON <->"
+            "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY 10:30AM-NOON <->"
         )
         assert result is not None
         assert len(result) == 2
@@ -320,9 +319,7 @@ class TestParseSign:
 
     def test_unidirectional_arrow(self) -> None:
         """Unidirectional arrow (-->) stripped correctly."""
-        result = parse_sign(
-            "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY 8AM-9AM -->"
-        )
+        result = parse_sign("NO PARKING (SANITATION BROOM SYMBOL) TUESDAY 8AM-9AM -->")
         assert result is not None
         assert len(result) == 1
         assert result[0].day == ASPDay.TUESDAY
@@ -332,9 +329,9 @@ class TestParseSign:
     def test_template_sign_returns_none(self) -> None:
         """Template/placeholder sign must return None."""
         result = parse_sign(
-            'NO PARKING <----> SANITATION BROOM (SYMBOL) XYY-XYY '
+            "NO PARKING <----> SANITATION BROOM (SYMBOL) XYY-XYY "
             '"DAY" THRU "DAY" (TIMES & DAYS TO BE SPECIFIED) '
-            '(FOR CIRCULAR BUS SIGNS)'
+            "(FOR CIRCULAR BUS SIGNS)"
         )
         assert result is None
 
@@ -352,26 +349,19 @@ class TestParseSign:
 
     def test_days_but_no_time_returns_none(self) -> None:
         """Days present but no time window must return None."""
-        result = parse_sign(
-            "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY <->"
-        )
+        result = parse_sign("NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY <->")
         assert result is None
 
     def test_time_but_no_days_returns_none(self) -> None:
         """Time present but no days and no EXCEPT clause must return None."""
-        result = parse_sign(
-            "NO PARKING (SANITATION BROOM SYMBOL) 8AM-9AM <->"
-        )
+        result = parse_sign("NO PARKING (SANITATION BROOM SYMBOL) 8AM-9AM <->")
         assert result is None
 
     # --- Source tracking and structural verification ---
 
     def test_source_sign_tracking(self) -> None:
         """Returned TimeWindow objects track the original sign text."""
-        original = (
-            "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY "
-            "11:30AM-1PM <->"
-        )
+        original = "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY 11:30AM-1PM <->"
         result = parse_sign(original)
         assert result is not None
         for window in result:
@@ -380,8 +370,7 @@ class TestParseSign:
     def test_day_count_two_days(self) -> None:
         """Two days in sign produces exactly 2 TimeWindow objects."""
         result = parse_sign(
-            "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY "
-            "11:30AM-1PM <->"
+            "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY 11:30AM-1PM <->"
         )
         assert result is not None
         assert len(result) == 2
@@ -401,8 +390,7 @@ class TestParseSign:
     def test_all_windows_share_same_times(self) -> None:
         """All windows from a single sign have the same time range."""
         result = parse_sign(
-            "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY "
-            "11:30AM-1PM <->"
+            "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 11:30AM-1PM <->"
         )
         assert result is not None
         for window in result:
@@ -412,8 +400,7 @@ class TestParseSign:
     def test_except_sunday_30min_windows(self) -> None:
         """EXCEPT SUNDAY with short (30min) window."""
         result = parse_sign(
-            "NO PARKING (SANITATION BROOM SYMBOL) 7:30AM-8AM "
-            "EXCEPT SUNDAY <->"
+            "NO PARKING (SANITATION BROOM SYMBOL) 7:30AM-8AM EXCEPT SUNDAY <->"
         )
         assert result is not None
         assert len(result) == 6

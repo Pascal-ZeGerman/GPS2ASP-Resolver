@@ -98,7 +98,9 @@ def test_apply_suspension_emergency_on_schedule_found(
     schedule_found: ScheduleFound,
 ) -> None:
     """Emergency suspension annotates ScheduleFound with suspended_emergency."""
-    info = SuspensionInfo(is_suspended=True, reason="Snow Emergency", source="emergency")
+    info = SuspensionInfo(
+        is_suspended=True, reason="Snow Emergency", source="emergency"
+    )
     result = apply_suspension(schedule_found, info)
     assert isinstance(result, ScheduleFound)
     assert result.suspended is True

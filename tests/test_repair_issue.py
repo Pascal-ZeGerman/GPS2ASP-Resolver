@@ -70,9 +70,7 @@ async def test_import_error_logs_actionable(
 # ---------------------------------------------------------------------------
 
 
-async def test_import_error_creates_repair(
-    hass, enable_custom_integrations
-) -> None:
+async def test_import_error_creates_repair(hass, enable_custom_integrations) -> None:
     """ImportError during setup creates the gps2asp_import_error repair issue."""
     from homeassistant.helpers import issue_registry as ir
 
@@ -99,9 +97,7 @@ async def test_import_error_creates_repair(
 # ---------------------------------------------------------------------------
 
 
-async def test_setup_dismisses_repair(
-    hass, enable_custom_integrations
-) -> None:
+async def test_setup_dismisses_repair(hass, enable_custom_integrations) -> None:
     """A pre-existing repair issue is removed when setup succeeds (D-07)."""
     from homeassistant.helpers import issue_registry as ir
 
@@ -117,8 +113,7 @@ async def test_setup_dismisses_repair(
         translation_key="gps2asp_import_error",
     )
     assert (
-        ir.async_get(hass).async_get_issue(DOMAIN, "gps2asp_import_error")
-        is not None
+        ir.async_get(hass).async_get_issue(DOMAIN, "gps2asp_import_error") is not None
     )
 
     # Now run a successful setup. Patch the index-ensure helper to a no-op so
@@ -130,19 +125,20 @@ async def test_setup_dismisses_repair(
     fake_coordinator = MagicMock()
     fake_coordinator.async_start = AsyncMock()
     fake_coordinator.async_stop = AsyncMock()
-    with patch(
-        "custom_components.asp_parking._async_ensure_index",
-        new=AsyncMock(),
-    ), patch(
-        "custom_components.asp_parking.ASPParkingCoordinator",
-        return_value=fake_coordinator,
-    ), patch.object(
-        hass.config_entries, "async_forward_entry_setups", new=AsyncMock()
+    with (
+        patch(
+            "custom_components.asp_parking._async_ensure_index",
+            new=AsyncMock(),
+        ),
+        patch(
+            "custom_components.asp_parking.ASPParkingCoordinator",
+            return_value=fake_coordinator,
+        ),
+        patch.object(
+            hass.config_entries, "async_forward_entry_setups", new=AsyncMock()
+        ),
     ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    assert (
-        ir.async_get(hass).async_get_issue(DOMAIN, "gps2asp_import_error")
-        is None
-    )
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "gps2asp_import_error") is None

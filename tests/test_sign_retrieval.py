@@ -67,9 +67,9 @@ async def test_retrieve_signs_known_asp_block() -> None:
 
     # Verify at least one sign mentions broom
     descriptions = [s.sign_description for s in result.signs]
-    assert any(
-        "BROOM" in desc.upper() for desc in descriptions
-    ), f"No broom sign found in: {descriptions}"
+    assert any("BROOM" in desc.upper() for desc in descriptions), (
+        f"No broom sign found in: {descriptions}"
+    )
 
 
 # ── Name normalization fallback ──────────────────────────────────────
@@ -245,6 +245,7 @@ _SYNTHETIC_GRAPH = {
 def _make_graph():
     """Return a StreetGraph loaded from _SYNTHETIC_GRAPH (no file I/O)."""
     from gps2asp.signs.graph import StreetGraph
+
     return StreetGraph(
         adjacency=_SYNTHETIC_GRAPH["adjacency"],
         segment_streets=_SYNTHETIC_GRAPH["segment_streets"],
@@ -261,6 +262,7 @@ def test_graph_load_reads_graph_json(tmp_path: Path) -> None:
     graph_file.write_text(json.dumps(_SYNTHETIC_GRAPH))
 
     from gps2asp.signs.graph import StreetGraph
+
     graph = StreetGraph.load(index_dir=tmp_path)
 
     assert graph is not None
@@ -272,6 +274,7 @@ def test_graph_load_reads_graph_json(tmp_path: Path) -> None:
 def test_graph_load_returns_none_when_missing(tmp_path: Path) -> None:
     """StreetGraph.load() returns None when graph.json does not exist."""
     from gps2asp.signs.graph import StreetGraph
+
     graph = StreetGraph.load(index_dir=tmp_path)
     assert graph is None
 
@@ -286,6 +289,7 @@ def test_graph_load_normalizes_street_names(tmp_path: Path) -> None:
     (tmp_path / "graph.json").write_text(json.dumps(data))
 
     from gps2asp.signs.graph import StreetGraph
+
     graph = StreetGraph.load(index_dir=tmp_path)
 
     assert graph is not None
@@ -304,7 +308,6 @@ def test_graph_get_is_singleton(tmp_path: Path) -> None:
     graph_file = tmp_path / "graph.json"
     graph_file.write_text(json.dumps(_SYNTHETIC_GRAPH))
 
-    from gps2asp.signs import graph as graph_module
     from gps2asp.signs.graph import StreetGraph
 
     # Reset singleton state for test isolation
@@ -439,9 +442,21 @@ def test_find_best_covering_span_groups_records_by_span() -> None:
 
     # Same span, multiple sign records (simulating multi-sign posts on same block)
     records = [
-        {"from_street": "72 STREET", "to_street": "73 STREET", "sign_description": "SIGN A"},
-        {"from_street": "72 STREET", "to_street": "73 STREET", "sign_description": "SIGN B"},
-        {"from_street": "73 STREET", "to_street": "74 STREET", "sign_description": "SIGN C"},
+        {
+            "from_street": "72 STREET",
+            "to_street": "73 STREET",
+            "sign_description": "SIGN A",
+        },
+        {
+            "from_street": "72 STREET",
+            "to_street": "73 STREET",
+            "sign_description": "SIGN B",
+        },
+        {
+            "from_street": "73 STREET",
+            "to_street": "74 STREET",
+            "sign_description": "SIGN C",
+        },
     ]
 
     best = _find_best_covering_span(records, "72 STREET", "73 STREET", graph)
@@ -494,11 +509,13 @@ async def test_level_4_activates_when_levels_1_2_3_return_nothing() -> None:
     mock_client.build_block_query.return_value = "mock_block_query"
     mock_client.build_on_street_query.return_value = "mock_broad_query"
     # fetch_signs: empty for block queries (Levels 1+2), records for broad query (Level 3+4)
-    mock_client.fetch_signs = AsyncMock(side_effect=[
-        [],          # Level 1 block query
-        [],          # Level 3 broad query (Level 2 has no extra combos for single-variant names)
-        broad_records,  # Level 4 broad query
-    ])
+    mock_client.fetch_signs = AsyncMock(
+        side_effect=[
+            [],  # Level 1 block query
+            [],  # Level 3 broad query (Level 2 has no extra combos for single-variant names)
+            broad_records,  # Level 4 broad query
+        ]
+    )
 
     with (
         patch("gps2asp.signs.SODAClient", return_value=mock_client),
@@ -589,11 +606,13 @@ async def test_level_4_returns_all_records_including_non_broom() -> None:
     mock_client = MagicMock()
     mock_client.build_block_query.return_value = "mock_block_query"
     mock_client.build_on_street_query.return_value = "mock_broad_query"
-    mock_client.fetch_signs = AsyncMock(side_effect=[
-        [],                 # Level 1 block query
-        [],                 # Level 3 broad query
-        non_broom_records,  # Level 4 broad query
-    ])
+    mock_client.fetch_signs = AsyncMock(
+        side_effect=[
+            [],  # Level 1 block query
+            [],  # Level 3 broad query
+            non_broom_records,  # Level 4 broad query
+        ]
+    )
 
     with (
         patch("gps2asp.signs.SODAClient", return_value=mock_client),
@@ -633,11 +652,13 @@ async def test_level_4_returns_no_match_when_best_span_is_none() -> None:
     mock_client = MagicMock()
     mock_client.build_block_query.return_value = "mock_block_query"
     mock_client.build_on_street_query.return_value = "mock_broad_query"
-    mock_client.fetch_signs = AsyncMock(side_effect=[
-        [],                # Level 1
-        [],                # Level 3 broad
-        unreachable_records,  # Level 4 broad
-    ])
+    mock_client.fetch_signs = AsyncMock(
+        side_effect=[
+            [],  # Level 1
+            [],  # Level 3 broad
+            unreachable_records,  # Level 4 broad
+        ]
+    )
 
     with (
         patch("gps2asp.signs.SODAClient", return_value=mock_client),
@@ -671,11 +692,13 @@ async def test_l4_entry_logged_once_before_loop() -> None:
     mock_client = MagicMock()
     mock_client.build_block_query.return_value = "mock_block_query"
     mock_client.build_on_street_query.return_value = "mock_broad_query"
-    mock_client.fetch_signs = AsyncMock(side_effect=[
-        [],            # Level 1 block query
-        [],            # Level 3 broad query
-        broad_records, # Level 4 broad query
-    ])
+    mock_client.fetch_signs = AsyncMock(
+        side_effect=[
+            [],  # Level 1 block query
+            [],  # Level 3 broad query
+            broad_records,  # Level 4 broad query
+        ]
+    )
 
     log_handler = _CapturingHandler()
     signs_logger = logging.getLogger("gps2asp.signs")
@@ -697,7 +720,9 @@ async def test_l4_entry_logged_once_before_loop() -> None:
         signs_logger.removeHandler(log_handler)
         signs_logger.setLevel(original_level)
 
-    entry_records = [r for r in log_handler.records if "l4_event=l4_entry" in r.getMessage()]
+    entry_records = [
+        r for r in log_handler.records if "l4_event=l4_entry" in r.getMessage()
+    ]
     assert len(entry_records) == 1, (
         f"Expected exactly 1 l4_event=l4_entry record, got {len(entry_records)}: "
         f"{[r.getMessage() for r in log_handler.records]}"
@@ -712,11 +737,13 @@ async def test_l4_match_log_includes_span_fields() -> None:
     mock_client = MagicMock()
     mock_client.build_block_query.return_value = "mock_block_query"
     mock_client.build_on_street_query.return_value = "mock_broad_query"
-    mock_client.fetch_signs = AsyncMock(side_effect=[
-        [],
-        [],
-        broad_records,
-    ])
+    mock_client.fetch_signs = AsyncMock(
+        side_effect=[
+            [],
+            [],
+            broad_records,
+        ]
+    )
 
     log_handler = _CapturingHandler()
     signs_logger = logging.getLogger("gps2asp.signs")
@@ -738,7 +765,9 @@ async def test_l4_match_log_includes_span_fields() -> None:
         signs_logger.removeHandler(log_handler)
         signs_logger.setLevel(original_level)
 
-    match_records = [r for r in log_handler.records if "l4_event=l4_match" in r.getMessage()]
+    match_records = [
+        r for r in log_handler.records if "l4_event=l4_match" in r.getMessage()
+    ]
     assert len(match_records) == 1, (
         f"Expected 1 l4_event=l4_match record, got {len(match_records)}: "
         f"{[r.getMessage() for r in log_handler.records]}"
@@ -765,11 +794,13 @@ async def test_l4_no_span_log_includes_span_candidates() -> None:
     mock_client = MagicMock()
     mock_client.build_block_query.return_value = "mock_block_query"
     mock_client.build_on_street_query.return_value = "mock_broad_query"
-    mock_client.fetch_signs = AsyncMock(side_effect=[
-        [],
-        [],
-        unreachable_records,
-    ])
+    mock_client.fetch_signs = AsyncMock(
+        side_effect=[
+            [],
+            [],
+            unreachable_records,
+        ]
+    )
 
     log_handler = _CapturingHandler()
     signs_logger = logging.getLogger("gps2asp.signs")
@@ -791,7 +822,9 @@ async def test_l4_no_span_log_includes_span_candidates() -> None:
         signs_logger.removeHandler(log_handler)
         signs_logger.setLevel(original_level)
 
-    no_span_records = [r for r in log_handler.records if "l4_event=l4_no_span" in r.getMessage()]
+    no_span_records = [
+        r for r in log_handler.records if "l4_event=l4_no_span" in r.getMessage()
+    ]
     assert len(no_span_records) >= 1, (
         f"Expected l4_event=l4_no_span record, got none: "
         f"{[r.getMessage() for r in log_handler.records]}"
@@ -807,11 +840,13 @@ async def test_l4_no_records_logged_when_broad_query_empty() -> None:
     mock_client = MagicMock()
     mock_client.build_block_query.return_value = "mock_block_query"
     mock_client.build_on_street_query.return_value = "mock_broad_query"
-    mock_client.fetch_signs = AsyncMock(side_effect=[
-        [],  # Level 1 block query
-        [],  # Level 3 broad query
-        [],  # Level 4 broad query — empty
-    ])
+    mock_client.fetch_signs = AsyncMock(
+        side_effect=[
+            [],  # Level 1 block query
+            [],  # Level 3 broad query
+            [],  # Level 4 broad query — empty
+        ]
+    )
 
     log_handler = _CapturingHandler()
     signs_logger = logging.getLogger("gps2asp.signs")
@@ -833,13 +868,17 @@ async def test_l4_no_records_logged_when_broad_query_empty() -> None:
         signs_logger.removeHandler(log_handler)
         signs_logger.setLevel(original_level)
 
-    no_rec_records = [r for r in log_handler.records if "l4_event=l4_no_records" in r.getMessage()]
+    no_rec_records = [
+        r for r in log_handler.records if "l4_event=l4_no_records" in r.getMessage()
+    ]
     assert len(no_rec_records) >= 1, (
         f"Expected l4_event=l4_no_records record, got none: "
         f"{[r.getMessage() for r in log_handler.records]}"
     )
     msg = no_rec_records[0].getMessage()
-    assert "span_candidates=" not in msg, f"l4_no_records should NOT contain span_candidates=: {msg}"
+    assert "span_candidates=" not in msg, (
+        f"l4_no_records should NOT contain span_candidates=: {msg}"
+    )
 
 
 async def test_all_l4_events_share_common_prefix() -> None:
@@ -851,8 +890,12 @@ async def test_all_l4_events_share_common_prefix() -> None:
     graph = _make_graph()
     broad_records = [dict(_BROOM_SIGN_RECORD)]
     unreachable_records = [
-        {"from_street": "ALPHA STREET", "to_street": "BETA STREET",
-         "sign_description": "SANITATION BROOM UP", "side_of_street": "N"}
+        {
+            "from_street": "ALPHA STREET",
+            "to_street": "BETA STREET",
+            "sign_description": "SANITATION BROOM UP",
+            "side_of_street": "N",
+        }
     ]
 
     log_handler = _CapturingHandler()
@@ -902,7 +945,9 @@ async def test_all_l4_events_share_common_prefix() -> None:
 
     # Must find all four variants
     variants = {"l4_entry", "l4_match", "l4_no_span", "l4_no_records"}
-    found_variants = {v for v in variants if any(f"l4_event={v}" in m for m in l4_event_msgs)}
+    found_variants = {
+        v for v in variants if any(f"l4_event={v}" in m for m in l4_event_msgs)
+    }
     assert found_variants == variants, (
         f"Missing l4_event variants: {variants - found_variants}. "
         f"Found messages: {l4_event_msgs}"

@@ -116,7 +116,9 @@ async def test_resolve_segment_populates_new_fields_from_best_candidate() -> Non
     # confidence ~0.67 — comfortably above the 0.33 threshold.
     query_x, query_y = 987700.0, 178442.0
     expected_perp = compute_perpendicular_distance(
-        query_x, query_y, candidate.geometry,
+        query_x,
+        query_y,
+        candidate.geometry,
     )
     expected_width = resolve_effective_width(30.0, 1)
 

@@ -19,6 +19,7 @@ Examples:
     python examples/run_pipeline.py 40.677629 -73.968527
     python examples/run_pipeline.py 40.7580 -73.9855
 """
+
 from __future__ import annotations
 
 import argparse

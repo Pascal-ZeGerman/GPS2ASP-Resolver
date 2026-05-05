@@ -3,12 +3,11 @@
 Tests exercise print_report() and related helpers with synthetic data.
 No network access required.
 """
+
 from __future__ import annotations
 
-import io
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -115,15 +114,21 @@ class TestPrintReport:
         captured = capsys.readouterr()
         assert "Queens" in captured.out
 
-    def test_missing_description_key_handled(self, capsys: pytest.CaptureFixture) -> None:
+    def test_missing_description_key_handled(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
         """Results with missing description still render (loc.get fallback)."""
         result = _make_ok_result(1)
-        result["description"] = "<unknown>"  # simulate loc.get("description", "<unknown>")
+        result["description"] = (
+            "<unknown>"  # simulate loc.get("description", "<unknown>")
+        )
         print_report([result], "Test Fixture")
         captured = capsys.readouterr()
         assert "<unknown>" in captured.out
 
-    def test_unexpected_soda_level_surfaced(self, capsys: pytest.CaptureFixture) -> None:
+    def test_unexpected_soda_level_surfaced(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
         """An unexpected soda_level (e.g., 5) appears in output rather than silently dropped."""
         results = [_make_ok_result(5)]
         print_report(results, "Test Fixture")

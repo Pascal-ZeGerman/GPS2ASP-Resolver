@@ -50,7 +50,7 @@ from gps2asp.resolver.side_resolver import (
 from gps2asp.resolver.spatial_index import SpatialIndex
 
 # Named constants for spatial search and ambiguity classification
-_MAX_SNAP_DISTANCE_FT: float = 164.0    # ~50m: maximum snap radius for spatial index
+_MAX_SNAP_DISTANCE_FT: float = 164.0  # ~50m: maximum snap radius for spatial index
 # _NEAR_INTERSECTION_THRESHOLD_FT is imported from confidence.py (single source of truth)
 
 __all__ = [
@@ -58,6 +58,7 @@ __all__ = [
     "convert",
     "resolve_segment",
     "ResolutionResult",
+    "SegmentCandidate",
     "ResolutionError",
     "OutsideNYCError",
     "NoSegmentFoundError",
@@ -110,7 +111,8 @@ async def resolve(
 
     # Step 2-5: Delegate to resolve_segment
     return await resolve_segment(
-        x, y,
+        x,
+        y,
         confidence_threshold=confidence_threshold,
         index_dir=index_dir,
         parking_lane_fraction=parking_lane_fraction,
@@ -204,7 +206,8 @@ async def resolve_segment(
             confidence=round(confidence, 4),
             side=side,
             outcome=(
-                "resolved" if is_confident(confidence, confidence_threshold)
+                "resolved"
+                if is_confident(confidence, confidence_threshold)
                 else _classify_ambiguity(perp_distance, dist_to_endpoints)
             ),
             street_width_ft=effective_width,

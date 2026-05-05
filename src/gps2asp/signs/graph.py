@@ -81,7 +81,8 @@ class StreetGraph:
                 data = json.load(fh)
         else:
             logger.debug(
-                "No graph file found at %s -- Level 4 unavailable", index_dir,
+                "No graph file found at %s -- Level 4 unavailable",
+                index_dir,
             )
             return None
 
@@ -90,7 +91,9 @@ class StreetGraph:
         raw_cross: dict[str, list[str]] = data.get("segment_cross_streets", {})
 
         # Normalize all street names to SODA format at load time.
-        segment_streets = {pid: normalize_to_soda(name) for pid, name in raw_streets.items()}
+        segment_streets = {
+            pid: normalize_to_soda(name) for pid, name in raw_streets.items()
+        }
         segment_cross_streets = {
             pid: [normalize_to_soda(cs) for cs in cross_list]
             for pid, cross_list in raw_cross.items()

@@ -33,13 +33,9 @@ from .const import (
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
     CONF_SUPPRESS_NOTIFICATIONS,
-    DEFAULT_DEBUG_DATETIME,
-    DEFAULT_DEBUG_LAT,
-    DEFAULT_DEBUG_LON,
     DEFAULT_MOVEMENT_THRESHOLD,
     DEFAULT_NOTIFY_LEAD_TIME,
     DEFAULT_NOTIFY_SERVICE,
-    DEFAULT_NYC311_ENTITY,
     DEFAULT_PARKING_RADIUS,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STALE_TIMEOUT,
@@ -114,9 +110,7 @@ def _validate_settings(
     refresh_interval = int(
         user_input.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL)
     )
-    stale_timeout = int(
-        user_input.get(CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT)
-    )
+    stale_timeout = int(user_input.get(CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT))
 
     if movement_threshold < 1:
         errors[CONF_MOVEMENT_THRESHOLD] = "movement_threshold_too_small"
@@ -214,13 +208,17 @@ class ASPParkingConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="api_keys",
-            data_schema=vol.Schema({
-                vol.Optional(CONF_NYC311_API_KEY, default=""): selector.TextSelector(
-                    selector.TextSelectorConfig(
-                        type=selector.TextSelectorType.PASSWORD,
-                    )
-                ),
-            }),
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_NYC311_API_KEY, default=""
+                    ): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD,
+                        )
+                    ),
+                }
+            ),
             errors=errors,
         )
 
@@ -271,12 +269,18 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     options[CONF_NYC311_API_KEY] = api_key
                 elif CONF_NYC311_API_KEY in self.config_entry.options:
                     # Empty submission means "keep existing key unchanged"
-                    options[CONF_NYC311_API_KEY] = self.config_entry.options[CONF_NYC311_API_KEY]
+                    options[CONF_NYC311_API_KEY] = self.config_entry.options[
+                        CONF_NYC311_API_KEY
+                    ]
                 # else: no key was set and none provided — omit from options
                 notify_svc = (user_input.get(CONF_NOTIFY_SERVICE) or "").strip()
                 options[CONF_NOTIFY_SERVICE] = notify_svc
                 lead_time_raw = user_input.get(CONF_NOTIFY_LEAD_TIME)
-                options[CONF_NOTIFY_LEAD_TIME] = int(float(lead_time_raw)) if lead_time_raw is not None else DEFAULT_NOTIFY_LEAD_TIME
+                options[CONF_NOTIFY_LEAD_TIME] = (
+                    int(float(lead_time_raw))
+                    if lead_time_raw is not None
+                    else DEFAULT_NOTIFY_LEAD_TIME
+                )
                 # Carry forward existing debug + parking options unchanged —
                 # debug step is bypassed in the options flow; parking values
                 # carry through so a re-save of init alone preserves them.
@@ -323,52 +327,60 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 stale_timeout=self.config_entry.options.get(
                     CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT
                 ),
-            ).extend({
-                **({
+            ).extend(
+                {
+                    **(
+                        {
+                            vol.Optional(
+                                CONF_NYC311_ENTITY,
+                                default=self.config_entry.options.get(
+                                    CONF_NYC311_ENTITY, ""
+                                ),
+                            ): selector.EntitySelector(
+                                selector.EntitySelectorConfig(domain="binary_sensor")
+                            ),
+                        }
+                        if self.config_entry.options.get(CONF_NYC311_ENTITY)
+                        else {
+                            vol.Optional(CONF_NYC311_ENTITY): selector.EntitySelector(
+                                selector.EntitySelectorConfig(domain="binary_sensor")
+                            ),
+                        }
+                    ),
                     vol.Optional(
-                        CONF_NYC311_ENTITY,
-                        default=self.config_entry.options.get(CONF_NYC311_ENTITY, ""),
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(domain="binary_sensor")
+                        CONF_NYC311_API_KEY,
+                        default="",
+                    ): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD,
+                        )
                     ),
-                } if self.config_entry.options.get(CONF_NYC311_ENTITY) else {
-                    vol.Optional(CONF_NYC311_ENTITY): selector.EntitySelector(
-                        selector.EntitySelectorConfig(domain="binary_sensor")
+                    vol.Optional(
+                        CONF_NOTIFY_SERVICE,
+                        default=current_notify,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=notify_options,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                            custom_value=True,
+                        )
                     ),
-                }),
-                vol.Optional(
-                    CONF_NYC311_API_KEY,
-                    default="",
-                ): selector.TextSelector(
-                    selector.TextSelectorConfig(
-                        type=selector.TextSelectorType.PASSWORD,
-                    )
-                ),
-                vol.Optional(
-                    CONF_NOTIFY_SERVICE,
-                    default=current_notify,
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=notify_options,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                        custom_value=True,
-                    )
-                ),
-                vol.Optional(
-                    CONF_NOTIFY_LEAD_TIME,
-                    default=self.config_entry.options.get(
-                        CONF_NOTIFY_LEAD_TIME, DEFAULT_NOTIFY_LEAD_TIME
+                    vol.Optional(
+                        CONF_NOTIFY_LEAD_TIME,
+                        default=self.config_entry.options.get(
+                            CONF_NOTIFY_LEAD_TIME, DEFAULT_NOTIFY_LEAD_TIME
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=15,
+                            max=480,
+                            step=1,
+                            unit_of_measurement="min",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
                     ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=15,
-                        max=480,
-                        step=1,
-                        unit_of_measurement="min",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-            }),
+                }
+            ),
             errors=errors,
         )
 
@@ -395,7 +407,9 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 options[CONF_PARKING_LAT] = float(lat_val)
                 options[CONF_PARKING_LON] = float(lon_val)
                 options[CONF_PARKING_RADIUS] = (
-                    int(radius_val) if radius_val is not None else DEFAULT_PARKING_RADIUS
+                    int(radius_val)
+                    if radius_val is not None
+                    else DEFAULT_PARKING_RADIUS
                 )
             else:
                 options.pop(CONF_PARKING_LAT, None)
@@ -411,30 +425,64 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
         # bypassed in the options flow (Phase 25 commit 64fbf6d) so it never
         # triggers the validation. This step is reachable, so we must use "any".
         parking_schema: dict = {
-            **({
-                vol.Optional(CONF_PARKING_LAT, default=opts[CONF_PARKING_LAT]): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=-90, max=90, step="any", mode=selector.NumberSelectorMode.BOX)
-                ),
-            } if CONF_PARKING_LAT in opts else {
-                vol.Optional(CONF_PARKING_LAT): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=-90, max=90, step="any", mode=selector.NumberSelectorMode.BOX)
-                ),
-            }),
-            **({
-                vol.Optional(CONF_PARKING_LON, default=opts[CONF_PARKING_LON]): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=-180, max=180, step="any", mode=selector.NumberSelectorMode.BOX)
-                ),
-            } if CONF_PARKING_LON in opts else {
-                vol.Optional(CONF_PARKING_LON): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=-180, max=180, step="any", mode=selector.NumberSelectorMode.BOX)
-                ),
-            }),
+            **(
+                {
+                    vol.Optional(
+                        CONF_PARKING_LAT, default=opts[CONF_PARKING_LAT]
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=-90,
+                            max=90,
+                            step="any",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+                if CONF_PARKING_LAT in opts
+                else {
+                    vol.Optional(CONF_PARKING_LAT): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=-90,
+                            max=90,
+                            step="any",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
+            **(
+                {
+                    vol.Optional(
+                        CONF_PARKING_LON, default=opts[CONF_PARKING_LON]
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=-180,
+                            max=180,
+                            step="any",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+                if CONF_PARKING_LON in opts
+                else {
+                    vol.Optional(CONF_PARKING_LON): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=-180,
+                            max=180,
+                            step="any",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
             vol.Optional(
                 CONF_PARKING_RADIUS,
                 default=opts.get(CONF_PARKING_RADIUS, DEFAULT_PARKING_RADIUS),
             ): selector.NumberSelector(
                 selector.NumberSelectorConfig(
-                    min=50, max=5000, step=50,
+                    min=50,
+                    max=5000,
+                    step=50,
                     unit_of_measurement="m",
                     mode=selector.NumberSelectorMode.BOX,
                 )

@@ -1,8 +1,5 @@
 """Tests for side-of-street determination."""
 
-import math
-
-import pytest
 from shapely.geometry import LineString
 
 from gps2asp.resolver.side_resolver import (

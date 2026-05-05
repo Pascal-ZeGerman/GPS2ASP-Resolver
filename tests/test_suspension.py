@@ -9,7 +9,13 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from gps2asp.suspension import HolidayCalendar, SuspensionInfo, _extract_reason, _parse_ics, FALLBACK_2026
+from gps2asp.suspension import (
+    HolidayCalendar,
+    SuspensionInfo,
+    _extract_reason,
+    _parse_ics,
+    FALLBACK_2026,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -57,7 +63,9 @@ def test_is_suspended_holiday(ics_bytes: bytes) -> None:
     cal._holidays = _parse_ics(ics_bytes)
     cal._loaded = True
     result = cal.is_suspended(date(2026, 1, 1))
-    assert result == SuspensionInfo(is_suspended=True, reason="New Year's Day", source="holiday")
+    assert result == SuspensionInfo(
+        is_suspended=True, reason="New Year's Day", source="holiday"
+    )
 
 
 def test_is_suspended_normal(ics_bytes: bytes) -> None:
@@ -130,8 +138,6 @@ def test_suspension_info_frozen() -> None:
 
 def test_datetime_safety() -> None:
     """If DTSTART returns a datetime instead of date, parser extracts .date()."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
 
     # Build a minimal ICS where DTSTART is a datetime (not VALUE=DATE)
     ics_content = (

@@ -53,8 +53,7 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
         hass.data[_DOWNLOAD_TASK_KEY] = task
     elif task.done() and (exc := task.exception()) is not None:
         raise ConfigEntryNotReady(
-            f"Spatial index download failed: {exc}. "
-            "See documentation for manual setup."
+            f"Spatial index download failed: {exc}. See documentation for manual setup."
         ) from exc
 
     raise ConfigEntryNotReady(
@@ -93,9 +92,7 @@ async def _async_download_index(hass: HomeAssistant) -> None:
                 for name in zf.namelist():
                     member_path = (resolved_base / name).resolve()
                     if not str(member_path).startswith(str(resolved_base) + "/"):
-                        raise ValueError(
-                            f"ZIP path traversal attempt: {name!r}"
-                        )
+                        raise ValueError(f"ZIP path traversal attempt: {name!r}")
                     zf.extract(name, _INDEX_DIR)
         finally:
             tmp.unlink(missing_ok=True)
@@ -119,7 +116,6 @@ async def _async_download_index(hass: HomeAssistant) -> None:
         raise
 
 
-
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate config entry from version 1 to 2.
 
@@ -129,7 +125,6 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         hass.config_entries.async_update_entry(config_entry, version=2)
         logger.info("Migrated ASP Parking config entry from v1 to v2")
     return True
-
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -166,7 +161,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except ImportError as err:
         logger.error(
             "ASP Parking: gps2asp vendored package is incomplete -- "
-            "reinstall via HACS. (%s)", err,
+            "reinstall via HACS. (%s)",
+            err,
         )
         ir.async_create_issue(
             hass,
@@ -220,9 +216,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
-async def _async_options_updated(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update by reloading the integration.
 
     This ensures the coordinator picks up new threshold values.

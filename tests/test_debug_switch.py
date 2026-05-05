@@ -16,7 +16,6 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
 
 from custom_components.asp_parking.switch import (
     ASPDebugModeSwitch,
@@ -176,7 +175,9 @@ async def test_async_setup_entry_adds_one_switch_entity():
     def _async_add_entities(entities):
         added.extend(entities)
 
-    await async_setup_entry(hass=None, entry=entry, async_add_entities=_async_add_entities)
+    await async_setup_entry(
+        hass=None, entry=entry, async_add_entities=_async_add_entities
+    )
     assert len(added) == 1
     assert isinstance(added[0], ASPDebugModeSwitch)
     assert added[0].unique_id == "test_entry_123_debug_switch"
