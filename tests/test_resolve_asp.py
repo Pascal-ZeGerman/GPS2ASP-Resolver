@@ -18,8 +18,6 @@ from datetime import time as dtime, datetime
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
-NYC_TZ = ZoneInfo("America/New_York")
-
 import pytest
 
 from gps2asp import resolve_asp
@@ -35,6 +33,8 @@ from gps2asp.schedule.models import (
     WeeklySchedule,
 )
 from gps2asp.suspension import SuspensionInfo
+
+NYC_TZ = ZoneInfo("America/New_York")
 
 
 # ---------------------------------------------------------------------------

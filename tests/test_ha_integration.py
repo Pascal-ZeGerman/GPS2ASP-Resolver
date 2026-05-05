@@ -36,7 +36,7 @@ def _format_move_time(dt: datetime) -> str:
     return f"{day_str} {time_str}"
 
 
-from gps2asp.schedule.models import (
+from gps2asp.schedule.models import (  # noqa: E402
     ASPActiveNow,
     ASPDay,
     AllUnparseable,
@@ -49,7 +49,7 @@ from gps2asp.schedule.models import (
     TimeWindow,
     WeeklySchedule,
 )
-from gps2asp.suspension import SuspensionInfo, apply_suspension
+from gps2asp.suspension import SuspensionInfo, apply_suspension  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -1009,7 +1009,7 @@ class TestSuspensionBinarySensor:
 # Group 10: Suspension poll timer independence (SC3)
 # ===========================================================================
 
-import pathlib as _pathlib
+import pathlib as _pathlib  # noqa: E402
 
 _COORDINATOR_SRC = (
     _pathlib.Path(__file__).parent.parent

@@ -59,6 +59,7 @@ __all__ = [
     "resolve_segment",
     "ResolutionResult",
     "ResolutionError",
+    "SegmentCandidate",
     "OutsideNYCError",
     "NoSegmentFoundError",
     "AmbiguousResolutionError",

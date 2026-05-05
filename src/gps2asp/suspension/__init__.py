@@ -231,8 +231,8 @@ class HolidayCalendar:
         )
 
 
-from .merge import apply_suspension
-from .poller import NYC311Client, NYC311AuthError
+from .merge import apply_suspension  # noqa: E402
+from .poller import NYC311Client, NYC311AuthError  # noqa: E402
 
 __all__ = [
     "HolidayCalendar",
