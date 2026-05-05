@@ -49,10 +49,6 @@ from gps2asp.resolver.side_resolver import (
 )
 from gps2asp.resolver.spatial_index import SpatialIndex
 
-# Named constants for spatial search and ambiguity classification
-_MAX_SNAP_DISTANCE_FT: float = 164.0  # ~50m: maximum snap radius for spatial index
-# _NEAR_INTERSECTION_THRESHOLD_FT is imported from confidence.py (single source of truth)
-
 __all__ = [
     "resolve",
     "convert",
