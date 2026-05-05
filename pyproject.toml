@@ -39,6 +39,10 @@ packages = ["src/gps2asp"]
 module = ["shapely", "shapely.*", "rtree", "rtree.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["gps2asp", "gps2asp.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
 exclude = [".claude"]
 

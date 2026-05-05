@@ -264,9 +264,9 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
             if not errors:
                 options = {**cleaned}
                 if nyc311_entity:
-                    options[CONF_NYC311_ENTITY] = nyc311_entity
+                    options[CONF_NYC311_ENTITY] = nyc311_entity  # type: ignore[assignment]
                 if api_key:
-                    options[CONF_NYC311_API_KEY] = api_key
+                    options[CONF_NYC311_API_KEY] = api_key  # type: ignore[assignment]
                 elif CONF_NYC311_API_KEY in self.config_entry.options:
                     # Empty submission means "keep existing key unchanged"
                     options[CONF_NYC311_API_KEY] = self.config_entry.options[
@@ -274,7 +274,7 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     ]
                 # else: no key was set and none provided — omit from options
                 notify_svc = (user_input.get(CONF_NOTIFY_SERVICE) or "").strip()
-                options[CONF_NOTIFY_SERVICE] = notify_svc
+                options[CONF_NOTIFY_SERVICE] = notify_svc  # type: ignore[assignment]
                 lead_time_raw = user_input.get(CONF_NOTIFY_LEAD_TIME)
                 options[CONF_NOTIFY_LEAD_TIME] = (
                     int(float(lead_time_raw))
