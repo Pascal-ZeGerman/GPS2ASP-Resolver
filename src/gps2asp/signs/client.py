@@ -162,7 +162,9 @@ class SODAClient:
 
         # First page failed -- raise SODA API error
         raise SODAAPIError(
-            status_code=last_error.response.status_code if isinstance(last_error, httpx.HTTPStatusError) else None,
+            status_code=last_error.response.status_code
+            if isinstance(last_error, httpx.HTTPStatusError)
+            else None,
             detail=str(last_error),
         )
 
