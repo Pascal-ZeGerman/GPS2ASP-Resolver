@@ -8,6 +8,7 @@ AllUnparseable) pass through unchanged.
 from __future__ import annotations
 
 import dataclasses
+from typing import Literal
 
 from ..schedule.models import ASPActiveNow, ScheduleFound, ScheduleResult
 from . import SuspensionInfo
@@ -39,7 +40,7 @@ def apply_suspension(
     if not isinstance(schedule, (ScheduleFound, ASPActiveNow)):
         return schedule
 
-    resolution_reason: str
+    resolution_reason: Literal["suspended_holiday", "suspended_emergency"]
     if info.source == "holiday":
         resolution_reason = "suspended_holiday"
     elif info.source in ("emergency", "ha_nyc311"):

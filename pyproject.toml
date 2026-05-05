@@ -33,6 +33,12 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/gps2asp"]
 
+[tool.mypy]
+
+[[tool.mypy.overrides]]
+module = ["shapely", "shapely.*", "rtree", "rtree.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
 exclude = [".claude"]
 
