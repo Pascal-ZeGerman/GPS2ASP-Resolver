@@ -66,7 +66,18 @@ def test_is_suspended_normal(ics_bytes: bytes) -> None:
     cal._holidays = _parse_ics(ics_bytes)
     cal._loaded = True
     result = cal.is_suspended(date(2026, 6, 3))
-    assert result == SuspensionInfo(is_suspended=False, reason=None)
+    assert result == SuspensionInfo(is_suspended=False, reason=None, source="none")
+
+
+def test_is_suspended_before_load_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """is_suspended() before load() logs a warning and returns source='none'."""
+    import logging
+
+    cal = HolidayCalendar()
+    with caplog.at_level(logging.WARNING, logger="gps2asp.suspension"):
+        result = cal.is_suspended(date(2026, 1, 1))
+    assert any("before load()" in r.message for r in caplog.records)
+    assert result == SuspensionInfo(is_suspended=False, reason=None, source="none")
 
 
 # --- load() with mocked httpx ---
