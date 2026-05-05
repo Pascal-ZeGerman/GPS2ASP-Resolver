@@ -10,6 +10,7 @@ is event-driven (GPS updates), not polled.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -226,8 +227,8 @@ class ASPParkingCoordinator:
         # Cache key: (on_street, from_street, to_street, side_of_street)
         # Value: list of raw SODA records (may be empty list = NoMatchFound after lookup)
         self._sign_cache: dict[tuple[str, str, str, str], list[dict]] = {}
-        self._preseed_task = None  # type: ignore[var-annotated]  # handle for tests
-        self._unsub_cache_rebuild = None  # type: ignore[var-annotated]  # cancel callback
+        self._preseed_task: asyncio.Task[None] | None = None
+        self._unsub_cache_rebuild: CALLBACK_TYPE | None = None
 
         # Debouncer: coalesce rapid GPS updates into a single pipeline run
         self._debouncer = Debouncer(
@@ -330,7 +331,7 @@ class ASPParkingCoordinator:
         unsub_state = async_track_state_change_event(
             self.hass,
             [self.device_tracker_entity],
-            self._async_on_gps_update,
+            self._async_on_gps_update,  # type: ignore[arg-type]
         )
         self._listeners.append(unsub_state)
 
@@ -382,7 +383,7 @@ class ASPParkingCoordinator:
             unsub_bridge = async_track_state_change_event(
                 self.hass,
                 [bridge_entity_id],
-                self._async_on_nyc311_state_change,
+                self._async_on_nyc311_state_change,  # type: ignore[arg-type]
             )
             self._listeners.append(unsub_bridge)
 
@@ -452,7 +453,7 @@ class ASPParkingCoordinator:
             unsub()
         self._listeners.clear()
         self._entity_update_callbacks.clear()
-        await self._debouncer.async_cancel()
+        self._debouncer.async_cancel()
         logger.info("ASP Parking coordinator stopped")
 
     # ------------------------------------------------------------------
@@ -759,6 +760,8 @@ class ASPParkingCoordinator:
             if bridge_state is not None and bridge_state.state in ("on", "off"):
                 return  # Bridge healthy — no need for direct 311 API fetch
             # Bridge unavailable/unknown at startup — fall through to direct 311 fetch
+        if self._nyc311_client is None:
+            return
         try:
             info = await self._nyc311_client.fetch_status()
             if info.is_suspended:
@@ -910,6 +913,8 @@ class ASPParkingCoordinator:
         # D-07/D-08: No bridge or bridge unavailable -- use holiday calendar + 311 API
         today = self._get_now().date()
 
+        if self._holiday_calendar is None:
+            return
         info = self._holiday_calendar.is_suspended(today)
 
         if not info.is_suspended and self._nyc311_client is not None:

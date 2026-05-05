@@ -36,7 +36,7 @@ packages = ["src/gps2asp"]
 [tool.mypy]
 
 [[tool.mypy.overrides]]
-module = ["shapely", "shapely.*", "rtree", "rtree.*"]
+module = ["shapely", "shapely.*", "rtree", "rtree.*", "gps2asp", "gps2asp.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

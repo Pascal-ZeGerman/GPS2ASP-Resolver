@@ -12,6 +12,8 @@ both flows in sync.
 
 from __future__ import annotations
 
+from typing import Any
+
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -262,7 +264,7 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 except Exception:  # noqa: BLE001
                     pass  # Network error during validation -- accept key anyway
             if not errors:
-                options = {**cleaned}
+                options: dict[str, Any] = {**cleaned}
                 if nyc311_entity:
                     options[CONF_NYC311_ENTITY] = nyc311_entity
                 if api_key:
