@@ -12,39 +12,20 @@ BFS test validates span_distance on a filtered graph fixture.
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 
 import pytest
 import zstandard
 
+pytest.importorskip("geopandas")
+
+# Add scripts/ to sys.path so we can import build_index
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+
+from build_index import _filter_2hop_neighborhood
+
 from gps2asp.signs.graph import StreetGraph
-
-
-# ---------------------------------------------------------------------------
-# Reference implementation of _filter_2hop_neighborhood
-# (identical to what build_index.py will contain after Task 2)
-# ---------------------------------------------------------------------------
-
-def _filter_2hop_neighborhood(
-    adjacency: dict[int, set[int]],
-    asp_pids: set[int],
-) -> set[int]:
-    """Return PIDs reachable within 2 hops from any ASP segment."""
-    retained: set[int] = set()
-    seeds = asp_pids & set(adjacency.keys())
-    retained.update(seeds)
-
-    hop1_new: set[int] = set()
-    for pid in seeds:
-        for neighbor in adjacency.get(pid, set()):
-            if neighbor not in retained:
-                hop1_new.add(neighbor)
-    retained.update(hop1_new)
-
-    for pid in hop1_new:
-        for neighbor in adjacency.get(pid, set()):
-            retained.add(neighbor)
-
-    return retained
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +53,7 @@ ASP_PIDS = {1}
 # ---------------------------------------------------------------------------
 # Filter correctness tests
 # ---------------------------------------------------------------------------
+
 
 class TestFilter2HopNeighborhood:
     """Test the 2-hop BFS filter function."""
@@ -105,10 +87,12 @@ class TestFilter2HopNeighborhood:
         for pid in retained:
             neighbors = ADJACENCY.get(pid, set())
             pruned = {n for n in neighbors if n in retained}
-            dangling = {n for n in neighbors if n in excluded}
+            {n for n in neighbors if n in excluded}
             # When building the filtered graph, dangling refs must be removed
             for n in pruned:
-                assert n in retained, f"Neighbor {n} of PID {pid} is not in retained set"
+                assert n in retained, (
+                    f"Neighbor {n} of PID {pid} is not in retained set"
+                )
             # Verify that excluded PIDs exist (the filter actually excluded something)
             assert len(excluded) > 0, "Expected some PIDs to be excluded"
 
@@ -139,8 +123,17 @@ class TestFilter2HopNeighborhood:
 # StreetGraph .zst loading tests
 # ---------------------------------------------------------------------------
 
+
 class TestStreetGraphLoad:
     """Test StreetGraph.load() with .zst and .json files."""
+
+    def setup_method(self) -> None:
+        """Reset StreetGraph singleton before each test to prevent cross-test contamination."""
+        StreetGraph._instance = None
+
+    def teardown_method(self) -> None:
+        """Reset StreetGraph singleton after each test to prevent cross-test contamination."""
+        StreetGraph._instance = None
 
     def test_load_zst(self, tmp_path: pytest.TempPathFactory) -> None:
         """StreetGraph.load() reads a .zst file created with zstandard."""
@@ -183,6 +176,7 @@ class TestStreetGraphLoad:
 # ---------------------------------------------------------------------------
 # BFS on filtered graph
 # ---------------------------------------------------------------------------
+
 
 class TestBFSOnFilteredGraph:
     """Test BFS span_distance on a StreetGraph built from filtered data."""

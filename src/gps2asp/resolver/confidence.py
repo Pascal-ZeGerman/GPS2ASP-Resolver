@@ -27,7 +27,8 @@ from __future__ import annotations
 import logging
 import math
 
-# Named constant for intersection proximity threshold (must match resolver/__init__.py)
+# Named constant for intersection proximity threshold (single source of truth;
+# imported by resolver/__init__.py for _classify_ambiguity())
 _NEAR_INTERSECTION_THRESHOLD_FT: float = 30.0  # ~10m: block-face ambiguity zone
 
 # Default confidence threshold: 0.33 (lowered for testing — permits PROSPECT PL score of 0.57)
@@ -41,11 +42,11 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.33
 # NYC-informed estimates; code constant (not runtime-configurable) per user decision.
 # rw_type meanings from CSCL data dictionary (VEHICULAR_RW_TYPES = {1,2,3,4,5})
 _NYC_DEFAULT_WIDTHS: dict[int, float] = {
-    1: 30.0,   # Street — typical NYC residential/commercial block (~30ft curb-to-curb)
-    2: 60.0,   # Highway / expressway (~60ft, multiple lanes)
-    3: 60.0,   # Bridge — conservative wide estimate (~60ft deck width)
-    4: 30.0,   # Tunnel — conservative fallback (rarely parked on; width uncertain)
-    5: 30.0,   # Boardwalk / service road — treated conservatively as street width
+    1: 30.0,  # Street — typical NYC residential/commercial block (~30ft curb-to-curb)
+    2: 60.0,  # Highway / expressway (~60ft, multiple lanes)
+    3: 60.0,  # Bridge — conservative wide estimate (~60ft deck width)
+    4: 30.0,  # Tunnel — conservative fallback (rarely parked on; width uncertain)
+    5: 30.0,  # Boardwalk / service road — treated conservatively as street width
 }
 _DEFAULT_WIDTH_FALLBACK = 30.0  # catch-all for unrecognized rw_types
 
@@ -67,7 +68,9 @@ def resolve_effective_width(streetwidth_ft: float, rw_type: int) -> float:
     fallback = _NYC_DEFAULT_WIDTHS.get(rw_type, _DEFAULT_WIDTH_FALLBACK)
     logging.getLogger(__name__).debug(
         "streetwidth missing (got %s) for rw_type=%d; using fallback=%.0fft",
-        streetwidth_ft, rw_type, fallback,
+        streetwidth_ft,
+        rw_type,
+        fallback,
     )
     return fallback
 

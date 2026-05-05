@@ -9,6 +9,7 @@ Usage:
     python scripts/geocode_fixtures.py --borough queens --output tests/fixtures/queens_coverage.json
     python scripts/geocode_fixtures.py --borough manhattan --output tests/fixtures/manhattan_coverage.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -92,6 +93,11 @@ _BOROUGH_LABELS: dict[str, str] = {
     "manhattan": "Manhattan",
 }
 
+# Validate that both dicts are in sync — adding a new borough requires both.
+assert set(_BOROUGH_ADDRESSES.keys()) == set(_BOROUGH_LABELS.keys()), (
+    "Borough address and label dicts are out of sync"
+)
+
 
 def geocode_address(
     client: httpx.Client,
@@ -114,7 +120,14 @@ def geocode_address(
             return None
 
         feature = features[0]
-        coords = feature["geometry"]["coordinates"]
+        geometry = feature.get("geometry")
+        if not geometry or not geometry.get("coordinates"):
+            print(
+                f"  WARNING: No geometry in GeoSearch result for '{address}' -- skipping",
+                file=sys.stderr,
+            )
+            return None
+        coords = geometry["coordinates"]
         props = feature.get("properties", {})
 
         # Verify borough matches expected
@@ -135,7 +148,10 @@ def geocode_address(
             "lon": coords[0],  # GeoJSON: [lon, lat]
         }
     except Exception as e:
-        print(f"  WARNING: Failed to geocode '{address}': {e} -- skipping", file=sys.stderr)
+        print(
+            f"  WARNING: Failed to geocode '{address}': {e} -- skipping",
+            file=sys.stderr,
+        )
         return None
 
 
@@ -152,6 +168,7 @@ def geocode_addresses(
             print(f"  [{i + 1}/{len(addresses)}] Geocoding: {addr}")
             fixture = geocode_address(client, addr, borough_label)
             if fixture is not None:
+                print(f"    -> {fixture['description']}")
                 results.append(fixture)
             if i < len(addresses) - 1:
                 time.sleep(REQUEST_DELAY)
@@ -179,7 +196,9 @@ def main() -> None:
 
     addresses = _BOROUGH_ADDRESSES[args.borough]
     if not addresses:
-        print(f"Error: No addresses defined for borough '{args.borough}'", file=sys.stderr)
+        print(
+            f"Error: No addresses defined for borough '{args.borough}'", file=sys.stderr
+        )
         sys.exit(1)
 
     borough_label = _BOROUGH_LABELS.get(args.borough, args.borough.title())
@@ -188,6 +207,14 @@ def main() -> None:
     results = geocode_addresses(addresses, args.borough)
 
     print(f"\nSuccessfully geocoded {len(results)}/{len(addresses)} addresses")
+
+    if not results:
+        print(
+            "Error: Zero addresses geocoded successfully. Output file NOT written "
+            "to avoid overwriting existing fixture.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Write output
     args.output.parent.mkdir(parents=True, exist_ok=True)

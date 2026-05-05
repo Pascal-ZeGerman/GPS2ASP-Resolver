@@ -12,6 +12,8 @@ both flows in sync.
 
 from __future__ import annotations
 
+from typing import Any
+
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -19,7 +21,6 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_DEBUG_DATETIME,
-    CONF_DEBUG_ENABLED,
     CONF_DEBUG_LAT,
     CONF_DEBUG_LON,
     CONF_DEVICE_TRACKER,
@@ -28,20 +29,18 @@ from .const import (
     CONF_NOTIFY_SERVICE,
     CONF_NYC311_API_KEY,
     CONF_NYC311_ENTITY,
+    CONF_PARKING_LAT,
+    CONF_PARKING_LON,
+    CONF_PARKING_RADIUS,
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
     CONF_SUPPRESS_NOTIFICATIONS,
-    DEFAULT_DEBUG_DATETIME,
-    DEFAULT_DEBUG_ENABLED,
-    DEFAULT_DEBUG_LAT,
-    DEFAULT_DEBUG_LON,
     DEFAULT_MOVEMENT_THRESHOLD,
     DEFAULT_NOTIFY_LEAD_TIME,
     DEFAULT_NOTIFY_SERVICE,
-    DEFAULT_NYC311_ENTITY,
+    DEFAULT_PARKING_RADIUS,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STALE_TIMEOUT,
-    DEFAULT_SUPPRESS_NOTIFICATIONS,
     DOMAIN,
 )
 from .gps2asp.suspension import NYC311Client
@@ -113,9 +112,7 @@ def _validate_settings(
     refresh_interval = int(
         user_input.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL)
     )
-    stale_timeout = int(
-        user_input.get(CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT)
-    )
+    stale_timeout = int(user_input.get(CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT))
 
     if movement_threshold < 1:
         errors[CONF_MOVEMENT_THRESHOLD] = "movement_threshold_too_small"
@@ -213,13 +210,17 @@ class ASPParkingConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="api_keys",
-            data_schema=vol.Schema({
-                vol.Optional(CONF_NYC311_API_KEY, default=""): selector.TextSelector(
-                    selector.TextSelectorConfig(
-                        type=selector.TextSelectorType.PASSWORD,
-                    )
-                ),
-            }),
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_NYC311_API_KEY, default=""
+                    ): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD,
+                        )
+                    ),
+                }
+            ),
             errors=errors,
         )
 
@@ -263,29 +264,48 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 except Exception:  # noqa: BLE001
                     pass  # Network error during validation -- accept key anyway
             if not errors:
-                options = {**cleaned}
+                options: dict[str, Any] = {**cleaned}
                 if nyc311_entity:
                     options[CONF_NYC311_ENTITY] = nyc311_entity
                 if api_key:
                     options[CONF_NYC311_API_KEY] = api_key
-                elif CONF_NYC311_API_KEY in self.config_entry.options and api_key is None:
-                    options.pop(CONF_NYC311_API_KEY, None)
+                elif CONF_NYC311_API_KEY in self.config_entry.options:
+                    # Empty submission means "keep existing key unchanged"
+                    options[CONF_NYC311_API_KEY] = self.config_entry.options[
+                        CONF_NYC311_API_KEY
+                    ]
+                # else: no key was set and none provided — omit from options
                 notify_svc = (user_input.get(CONF_NOTIFY_SERVICE) or "").strip()
                 options[CONF_NOTIFY_SERVICE] = notify_svc
                 lead_time_raw = user_input.get(CONF_NOTIFY_LEAD_TIME)
-                options[CONF_NOTIFY_LEAD_TIME] = int(float(lead_time_raw)) if lead_time_raw is not None else DEFAULT_NOTIFY_LEAD_TIME
-                # Carry forward existing debug options unchanged — debug step
-                # is bypassed in the options flow to keep Configure single-step.
+                options[CONF_NOTIFY_LEAD_TIME] = (
+                    int(float(lead_time_raw))
+                    if lead_time_raw is not None
+                    else DEFAULT_NOTIFY_LEAD_TIME
+                )
+                # Carry forward existing debug + parking options unchanged —
+                # debug step is bypassed in the options flow; parking values
+                # carry through so a re-save of init alone preserves them.
+                # NOTE: CONF_DEBUG_ENABLED is intentionally absent — the
+                # coordinator unconditionally resets _debug_enabled = False
+                # on async_start (D-02); writing it to options is misleading.
                 for key in (
-                    CONF_DEBUG_ENABLED,
                     CONF_DEBUG_LAT,
                     CONF_DEBUG_LON,
                     CONF_DEBUG_DATETIME,
-                    CONF_SUPPRESS_NOTIFICATIONS,
+                    CONF_PARKING_LAT,
+                    CONF_PARKING_LON,
+                    CONF_PARKING_RADIUS,
                 ):
                     if key in self.config_entry.options:
                         options[key] = self.config_entry.options[key]
-                return self.async_create_entry(title="", data=options)
+                # Do NOT carry forward CONF_SUPPRESS_NOTIFICATIONS —
+                # its purpose is to suppress notifications during debug mode,
+                # which resets to False on restart. Carrying it forward causes
+                # permanent silent suppression with no UI indicator.
+                options[CONF_SUPPRESS_NOTIFICATIONS] = False
+                self._options = options
+                return await self.async_step_parking_area()
 
         notify_options = [
             f"notify.{svc}"
@@ -309,126 +329,169 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 stale_timeout=self.config_entry.options.get(
                     CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT
                 ),
-            ).extend({
-                **({
+            ).extend(
+                {
+                    **(
+                        {
+                            vol.Optional(
+                                CONF_NYC311_ENTITY,
+                                default=self.config_entry.options.get(
+                                    CONF_NYC311_ENTITY, ""
+                                ),
+                            ): selector.EntitySelector(
+                                selector.EntitySelectorConfig(domain="binary_sensor")
+                            ),
+                        }
+                        if self.config_entry.options.get(CONF_NYC311_ENTITY)
+                        else {
+                            vol.Optional(CONF_NYC311_ENTITY): selector.EntitySelector(
+                                selector.EntitySelectorConfig(domain="binary_sensor")
+                            ),
+                        }
+                    ),
                     vol.Optional(
-                        CONF_NYC311_ENTITY,
-                        default=self.config_entry.options[CONF_NYC311_ENTITY],
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(domain="binary_sensor")
+                        CONF_NYC311_API_KEY,
+                        default="",
+                    ): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD,
+                        )
                     ),
-                } if self.config_entry.options.get(CONF_NYC311_ENTITY) else {
-                    vol.Optional(CONF_NYC311_ENTITY): selector.EntitySelector(
-                        selector.EntitySelectorConfig(domain="binary_sensor")
+                    vol.Optional(
+                        CONF_NOTIFY_SERVICE,
+                        default=current_notify,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=notify_options,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                            custom_value=True,
+                        )
                     ),
-                }),
-                vol.Optional(
-                    CONF_NYC311_API_KEY,
-                    default=self.config_entry.options.get(CONF_NYC311_API_KEY, ""),
-                ): selector.TextSelector(
-                    selector.TextSelectorConfig(
-                        type=selector.TextSelectorType.PASSWORD,
-                    )
-                ),
-                vol.Optional(
-                    CONF_NOTIFY_SERVICE,
-                    default=current_notify,
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=notify_options,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                        custom_value=True,
-                    )
-                ),
-                vol.Optional(
-                    CONF_NOTIFY_LEAD_TIME,
-                    default=self.config_entry.options.get(
-                        CONF_NOTIFY_LEAD_TIME, DEFAULT_NOTIFY_LEAD_TIME
+                    vol.Optional(
+                        CONF_NOTIFY_LEAD_TIME,
+                        default=self.config_entry.options.get(
+                            CONF_NOTIFY_LEAD_TIME, DEFAULT_NOTIFY_LEAD_TIME
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=15,
+                            max=480,
+                            step=1,
+                            unit_of_measurement="min",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
                     ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=15,
-                        max=480,
-                        step=1,
-                        unit_of_measurement="min",
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
-            }),
+                }
+            ),
             errors=errors,
         )
 
-    async def async_step_debug(
+    async def async_step_parking_area(
         self, user_input: dict | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Debug overrides step -- for testing only."""
+        """Optional home parking area for SODA cache pre-seeding (AREA-01).
+
+        Three optional fields (lat/lon/radius). Empty submission is valid (D-07);
+        in that case CONF_PARKING_* keys are removed from entry.options entirely.
+        """
         errors: dict[str, str] = {}
 
         if user_input is not None:
             options = {**getattr(self, "_options", {})}
-            options[CONF_DEBUG_ENABLED] = user_input.get(
-                CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED
-            )
-            # Store lat/lon only if provided; clear from options when blank so stale
-            # values don't persist across saves (WR-02)
-            debug_lat = user_input.get(CONF_DEBUG_LAT)
-            debug_lon = user_input.get(CONF_DEBUG_LON)
-            if debug_lat is not None:
-                options[CONF_DEBUG_LAT] = float(debug_lat)
+            lat_val = user_input.get(CONF_PARKING_LAT)
+            lon_val = user_input.get(CONF_PARKING_LON)
+            radius_val = user_input.get(CONF_PARKING_RADIUS)
+            # Persist lat/lon only when BOTH are present — a half-configured
+            # pair (lat without lon, or vice versa) is semantically invalid and
+            # would silently disable the cache feature. If either is missing,
+            # remove all three parking keys so the feature is fully disabled.
+            if lat_val is not None and lon_val is not None:
+                options[CONF_PARKING_LAT] = float(lat_val)
+                options[CONF_PARKING_LON] = float(lon_val)
+                options[CONF_PARKING_RADIUS] = (
+                    int(radius_val)
+                    if radius_val is not None
+                    else DEFAULT_PARKING_RADIUS
+                )
             else:
-                options.pop(CONF_DEBUG_LAT, None)
-            if debug_lon is not None:
-                options[CONF_DEBUG_LON] = float(debug_lon)
-            else:
-                options.pop(CONF_DEBUG_LON, None)
-            # Store datetime string if provided; clear when blank so stale ISO
-            # strings don't re-activate the override at startup (WR-03)
-            debug_dt = user_input.get(CONF_DEBUG_DATETIME)
-            if debug_dt:
-                options[CONF_DEBUG_DATETIME] = debug_dt
-            else:
-                options.pop(CONF_DEBUG_DATETIME, None)
-            options[CONF_SUPPRESS_NOTIFICATIONS] = user_input.get(
-                CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS
-            )
+                options.pop(CONF_PARKING_LAT, None)
+                options.pop(CONF_PARKING_LON, None)
+                options.pop(CONF_PARKING_RADIUS, None)
             return self.async_create_entry(title="", data=options)
 
         opts = self.config_entry.options
-        debug_schema: dict = {
+        # NOTE: step="any" is used (not 0.000001) because HA 2026.2.3's
+        # NumberSelectorConfig schema enforces step>=0.001 — the literal "any"
+        # is the documented escape hatch for arbitrary-precision inputs (GPS
+        # coordinates). The existing debug step uses step=0.000001 but is
+        # bypassed in the options flow (Phase 25 commit 64fbf6d) so it never
+        # triggers the validation. This step is reachable, so we must use "any".
+        parking_schema: dict = {
+            **(
+                {
+                    vol.Optional(
+                        CONF_PARKING_LAT, default=opts[CONF_PARKING_LAT]
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=-90,
+                            max=90,
+                            step="any",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+                if CONF_PARKING_LAT in opts
+                else {
+                    vol.Optional(CONF_PARKING_LAT): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=-90,
+                            max=90,
+                            step="any",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
+            **(
+                {
+                    vol.Optional(
+                        CONF_PARKING_LON, default=opts[CONF_PARKING_LON]
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=-180,
+                            max=180,
+                            step="any",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+                if CONF_PARKING_LON in opts
+                else {
+                    vol.Optional(CONF_PARKING_LON): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=-180,
+                            max=180,
+                            step="any",
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
             vol.Optional(
-                CONF_DEBUG_ENABLED,
-                default=opts.get(CONF_DEBUG_ENABLED, DEFAULT_DEBUG_ENABLED),
-            ): selector.BooleanSelector(),
-            **({
-                vol.Optional(CONF_DEBUG_LAT, default=opts[CONF_DEBUG_LAT]): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=-90, max=90, step=0.000001, mode=selector.NumberSelectorMode.BOX)
-                ),
-            } if CONF_DEBUG_LAT in opts else {
-                vol.Optional(CONF_DEBUG_LAT): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=-90, max=90, step=0.000001, mode=selector.NumberSelectorMode.BOX)
-                ),
-            }),
-            **({
-                vol.Optional(CONF_DEBUG_LON, default=opts[CONF_DEBUG_LON]): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=-180, max=180, step=0.000001, mode=selector.NumberSelectorMode.BOX)
-                ),
-            } if CONF_DEBUG_LON in opts else {
-                vol.Optional(CONF_DEBUG_LON): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=-180, max=180, step=0.000001, mode=selector.NumberSelectorMode.BOX)
-                ),
-            }),
-            **({
-                vol.Optional(CONF_DEBUG_DATETIME, default=opts[CONF_DEBUG_DATETIME]): selector.DateTimeSelector(),
-            } if CONF_DEBUG_DATETIME in opts else {
-                vol.Optional(CONF_DEBUG_DATETIME): selector.DateTimeSelector(),
-            }),
-            vol.Optional(
-                CONF_SUPPRESS_NOTIFICATIONS,
-                default=opts.get(CONF_SUPPRESS_NOTIFICATIONS, DEFAULT_SUPPRESS_NOTIFICATIONS),
-            ): selector.BooleanSelector(),
+                CONF_PARKING_RADIUS,
+                default=opts.get(CONF_PARKING_RADIUS, DEFAULT_PARKING_RADIUS),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=50,
+                    max=5000,
+                    step=50,
+                    unit_of_measurement="m",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
         }
         return self.async_show_form(
-            step_id="debug",
-            data_schema=vol.Schema(debug_schema),
+            step_id="parking_area",
+            data_schema=vol.Schema(parking_schema),
             errors=errors,
         )

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from itertools import groupby
 
-from gps2asp.schedule.models import ASPDay, TimeWindow, WeeklySchedule
+from gps2asp.schedule.models import TimeWindow, WeeklySchedule
 
 logger = logging.getLogger("gps2asp.schedule.merge")
 
@@ -24,6 +24,14 @@ def merge_windows(windows: list[TimeWindow]) -> WeeklySchedule:
     Groups windows by day, then merges any overlapping or adjacent windows
     within each day using conservative logic (earliest start, latest end).
     Source sign lists are concatenated for merged windows.
+
+    Note on provenance representations:
+        TimeWindow.source_sign: semicolon-joined string of contributing sign
+            descriptions for this merged window (e.g. "SIGN A; SIGN B").
+        ScheduleFound.source_signs: the raw pre-merge list of all sign
+            descriptions on the block.
+        These two are different representations of provenance and are not
+        expected to be identical.
 
     Args:
         windows: Flat list of TimeWindow objects from all parsed signs.

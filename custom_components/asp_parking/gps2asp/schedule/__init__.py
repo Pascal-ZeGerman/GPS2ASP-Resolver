@@ -118,17 +118,13 @@ def compute_schedule(
                 reason="Failed to parse sign description",
             )
             parse_failures.append(failure)
-            logger.warning(
-                "Parse failure for sign: %r", sign.sign_description
-            )
+            logger.warning("Parse failure for sign: %r", sign.sign_description)
         else:
             all_windows.extend(result)
 
     # All signs failed to parse.
     if not all_windows:
-        logger.info(
-            "All %d signs failed to parse", len(sign_result.signs)
-        )
+        logger.info("All %d signs failed to parse", len(sign_result.signs))
         return AllUnparseable(
             status="all_unparseable",
             parse_failures=parse_failures,

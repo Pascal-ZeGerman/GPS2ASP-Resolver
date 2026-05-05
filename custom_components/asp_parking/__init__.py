@@ -14,6 +14,7 @@ from pathlib import Path
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import issue_registry as ir
 
 from .const import DOMAIN, INDEX_DOWNLOAD_URL, PLATFORMS
 from .coordinator import ASPParkingCoordinator
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 _INDEX_DIR = Path(__file__).parent / "gps2asp" / "data" / "index"
 _INDEX_FILES = ("segments.idx", "segments.dat", "segments.json", "graph.json")
 _DOWNLOAD_TASK_KEY = f"{DOMAIN}_index_task"
+_IMPORT_ERROR_ISSUE_ID = "gps2asp_import_error"
 
 
 async def _async_ensure_index(hass: HomeAssistant) -> None:
@@ -31,6 +33,13 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
     Raises ConfigEntryNotReady while the download is in progress so HA retries
     automatically. After the download completes, the next retry succeeds.
     """
+    from homeassistant.components.persistent_notification import (
+        async_dismiss as pn_dismiss,
+    )
+
+    # Dismiss any stale error notification from a previous failed download attempt
+    pn_dismiss(hass, "asp_parking_index_error")
+
     if all((_INDEX_DIR / f).exists() for f in _INDEX_FILES):
         return
 
@@ -44,8 +53,7 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
         hass.data[_DOWNLOAD_TASK_KEY] = task
     elif task.done() and (exc := task.exception()) is not None:
         raise ConfigEntryNotReady(
-            f"Spatial index download failed: {exc}. "
-            "See documentation for manual setup."
+            f"Spatial index download failed: {exc}. See documentation for manual setup."
         ) from exc
 
     raise ConfigEntryNotReady(
@@ -80,15 +88,22 @@ async def _async_download_index(hass: HomeAssistant) -> None:
                         for chunk in resp.iter_bytes(chunk_size=65536):
                             f.write(chunk)
             with zipfile.ZipFile(tmp) as zf:
-                zf.extractall(_INDEX_DIR)
+                resolved_base = _INDEX_DIR.resolve()
+                for name in zf.namelist():
+                    member_path = (resolved_base / name).resolve()
+                    if not str(member_path).startswith(str(resolved_base) + "/"):
+                        raise ValueError(f"ZIP path traversal attempt: {name!r}")
+                    zf.extract(name, _INDEX_DIR)
         finally:
             tmp.unlink(missing_ok=True)
 
     try:
         await hass.async_add_executor_job(_sync_download)
+        hass.data.pop(_DOWNLOAD_TASK_KEY, None)
         pn_dismiss(hass, "asp_parking_index_download")
         logger.info("ASP Parking: spatial index downloaded to %s", _INDEX_DIR)
     except Exception as err:
+        hass.data.pop(_DOWNLOAD_TASK_KEY, None)
         pn_dismiss(hass, "asp_parking_index_download")
         pn_create(
             hass,
@@ -99,7 +114,6 @@ async def _async_download_index(hass: HomeAssistant) -> None:
         )
         logger.error("ASP Parking: index download failed: %s", err)
         raise
-
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -113,12 +127,16 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     return True
 
 
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up ASP Parking from a config entry.
 
     Creates the coordinator, starts GPS tracking, forwards entity platforms,
     registers the resolve_now service, and sets up options change listener.
+
+    On ImportError from the vendored gps2asp package (DIAG-02/03), logs an
+    actionable error message, creates a persistent HA Repair issue, and
+    raises ConfigEntryNotReady. On every successful setup attempt, any
+    stale repair issue is auto-dismissed first (D-07).
 
     Args:
         hass: Home Assistant instance.
@@ -127,11 +145,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     Returns:
         True if setup was successful.
     """
+    # D-07: auto-dismiss stale repair on every setup attempt (no-op if absent).
+    # Runs first so a successful HACS reinstall clears the Repairs badge automatically.
+    ir.async_delete_issue(hass, DOMAIN, _IMPORT_ERROR_ISSUE_ID)
+
     # Ensure spatial index is present (downloads on first setup)
     await _async_ensure_index(hass)
 
-    # Create and start the coordinator
-    coordinator = ASPParkingCoordinator(hass, entry)
+    # D-06: guard the gps2asp-dependent coordinator instantiation. Late
+    # vendored imports happen inside the coordinator's __init__ chain;
+    # ImportError surfaces here. (Module-level coordinator.py import failure
+    # is caught at HA's own integration loader -- see 27-04-SUMMARY.)
+    try:
+        coordinator = ASPParkingCoordinator(hass, entry)
+    except ImportError as err:
+        logger.error(
+            "ASP Parking: gps2asp vendored package is incomplete -- "
+            "reinstall via HACS. (%s)",
+            err,
+        )
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _IMPORT_ERROR_ISSUE_ID,
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="gps2asp_import_error",
+        )
+        raise ConfigEntryNotReady(
+            "gps2asp vendored package is incomplete -- reinstall via HACS"
+        ) from err
+
     entry.runtime_data = coordinator
     await coordinator.async_start()
 
@@ -172,9 +216,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
-async def _async_options_updated(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update by reloading the integration.
 
     This ensures the coordinator picks up new threshold values.

@@ -29,7 +29,7 @@ from .exceptions import (
     SODAAPIError,
     SignRetrievalError,
 )
-from .graph import StreetGraph, _find_best_covering_span
+from .graph import StreetGraph
 from .models import (
     NoASPSigns,
     NoMatchFound,
@@ -41,6 +41,7 @@ from .normalize import name_variants, normalize_to_soda
 
 __all__ = [
     "retrieve_signs",
+    "materialize_cached_records",
     "SignRetrievalResult",
     "SignRetrievalSuccess",
     "NoASPSigns",
@@ -71,6 +72,49 @@ def _deduplicate(records: list[dict]) -> list[SignRecord]:
             seen.add(desc)
             unique.append(SignRecord(sign_description=desc))
     return unique
+
+
+def materialize_cached_records(
+    records: list[dict],
+    on_street: str,
+    from_street: str,
+    to_street: str,
+    side_of_street: str,
+    soda_level: int = 1,
+) -> SignRetrievalResult:
+    """Build a SignRetrievalResult from pre-fetched raw SODA records.
+
+    Used by the HA coordinator's parking-area sign cache to deliver
+    the same result shape as retrieve_signs() without making a network
+    call. Empty `records` => NoMatchFound; records present but no broom
+    signs after dedup => NoASPSigns; otherwise SignRetrievalSuccess.
+
+    Args:
+        records: Raw SODA API record dicts as returned by SODAClient.fetch_signs.
+        on_street: Canonical on_street name (CSCL format).
+        from_street: Canonical from_street name (CSCL format).
+        to_street: Canonical to_street name (CSCL format).
+        side_of_street: Compass direction side (N, S, E, or W).
+        soda_level: Fallback level marker; defaults to 1 since the cache
+            is populated via Level 1 block queries.
+
+    Returns:
+        SignRetrievalResult of the appropriate variant.
+    """
+    if not records:
+        return NoMatchFound()
+    signs = _deduplicate(records)
+    if not signs:
+        return NoASPSigns()
+    return SignRetrievalSuccess(
+        status="signs_found",
+        signs=signs,
+        on_street=on_street,
+        from_street=from_street,
+        to_street=to_street,
+        side_of_street=side_of_street,
+        soda_level=soda_level,
+    )
 
 
 def _normalize_street(name: str) -> str:
@@ -222,8 +266,13 @@ async def retrieve_signs(
     )
     result = await _try_query(
         client,
-        on_variants[0], from_variants[0], to_variants[0], side_of_street,
-        on_street, from_street, to_street,
+        on_variants[0],
+        from_variants[0],
+        to_variants[0],
+        side_of_street,
+        on_street,
+        from_street,
+        to_street,
         soda_level=1,
     )
     if result is not None:
@@ -254,8 +303,13 @@ async def retrieve_signs(
         )
         result = await _try_query(
             client,
-            on_var, from_var, to_var, side_of_street,
-            on_street, from_street, to_street,
+            on_var,
+            from_var,
+            to_var,
+            side_of_street,
+            on_street,
+            from_street,
+            to_street,
             soda_level=2,
         )
         if result is not None:
@@ -286,9 +340,7 @@ async def retrieve_signs(
             any_soda_results = True
             # Client-side cross-street filtering
             filtered = [
-                r
-                for r in records
-                if _cross_streets_match(r, from_street, to_street)
+                r for r in records if _cross_streets_match(r, from_street, to_street)
             ]
             logger.debug(
                 "Level 3: %d records after cross-street filtering", len(filtered)
@@ -297,8 +349,13 @@ async def retrieve_signs(
             if filtered:
                 result = await _try_query(
                     client,
-                    on_var, from_variants[0], to_variants[0], side_of_street,
-                    on_street, from_street, to_street,
+                    on_var,
+                    from_variants[0],
+                    to_variants[0],
+                    side_of_street,
+                    on_street,
+                    from_street,
+                    to_street,
                     soda_level=3,
                     prefetched_records=filtered,
                 )
@@ -348,10 +405,17 @@ async def retrieve_signs(
 
                 if records:
                     any_soda_results = True
-                    span_count = len({
-                        (r.get("from_street", ""), r.get("to_street", ""))
-                        for r in records
-                    })
+                    span_count = len(
+                        {
+                            (r.get("from_street", ""), r.get("to_street", ""))
+                            for r in records
+                        }
+                    )
+                    # Local import: _find_best_covering_span is a private
+                    # implementation detail of signs.graph; importing here
+                    # keeps it off the package's public namespace.
+                    from .graph import _find_best_covering_span  # noqa: PLC0415
+
                     best_span = _find_best_covering_span(
                         records, from_street, to_street, graph
                     )
@@ -367,8 +431,13 @@ async def retrieve_signs(
                         )
                         result = await _try_query(
                             client,
-                            on_var, from_variants[0], to_variants[0], side_of_street,
-                            on_street, from_street, to_street,
+                            on_var,
+                            from_variants[0],
+                            to_variants[0],
+                            side_of_street,
+                            on_street,
+                            from_street,
+                            to_street,
                             soda_level=4,
                             prefetched_records=best_span,
                         )

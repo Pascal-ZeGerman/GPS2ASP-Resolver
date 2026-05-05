@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from gps2asp.resolver.confidence import (
     DEFAULT_CONFIDENCE_THRESHOLD,
@@ -15,7 +14,7 @@ from gps2asp.resolver.confidence import (
 class TestComputeConfidence:
     """Test confidence scoring for side-of-street determination."""
 
-    def test_near_centerline_below_threshold(self):
+    def test_near_centerline_above_threshold_returns_nonzero(self):
         """Point at 5ft on 30ft street: threshold=4.95ft; guard does NOT fire.
 
         5ft > new 4.95ft threshold (width-relative), so confidence is computed.
@@ -27,7 +26,9 @@ class TestComputeConfidence:
             distance_to_nearest_intersection_ft=200.0,
         )
         assert result > 0.0
-        assert result < 0.4  # 0.333... is low confidence (close to parking-lane threshold)
+        assert (
+            result < 0.4
+        )  # 0.333... is low confidence (close to parking-lane threshold)
 
     def test_near_intersection_returns_zero(self):
         """Point near intersection (20ft < 30ft threshold) -> 0.0.
@@ -109,12 +110,16 @@ class TestComputeConfidence:
         """Confidence should always be between 0.0 and 1.0."""
         # Test various inputs
         test_cases = [
-            (5.0, 30.0, 200.0),   # above width-relative guard, below confidence threshold
-            (15.0, 30.0, 20.0),   # near intersection
+            (
+                5.0,
+                30.0,
+                200.0,
+            ),  # above width-relative guard, below confidence threshold
+            (15.0, 30.0, 20.0),  # near intersection
             (18.0, 30.0, 200.0),  # high confidence
-            (12.0, 30.0, 80.0),   # medium confidence
+            (12.0, 30.0, 80.0),  # medium confidence
             (50.0, 60.0, 500.0),  # very confident
-            (11.0, 30.0, 31.0),   # just above both thresholds
+            (11.0, 30.0, 31.0),  # just above both thresholds
         ]
         for perp, width, intersection in test_cases:
             result = compute_confidence(perp, width, intersection)
@@ -159,7 +164,7 @@ class TestComputeConfidence:
 
         resolve_effective_width resolves the fallback; result matches explicit 30ft.
         """
-        width_from_nan = resolve_effective_width(float('nan'), rw_type=1)
+        width_from_nan = resolve_effective_width(float("nan"), rw_type=1)
         result_nan = compute_confidence(
             perp_distance_ft=9.2,
             effective_width_ft=width_from_nan,
@@ -212,11 +217,11 @@ class TestIsConfident:
     """Test the is_confident helper."""
 
     def test_above_default_threshold(self):
-        """Confidence above default threshold (0.6) should return True."""
+        """Confidence above default threshold (0.33) should return True."""
         assert is_confident(0.8) is True
 
     def test_below_default_threshold(self):
-        """Confidence below default threshold (0.6) should return False."""
+        """Confidence below default threshold (0.33) should return False."""
         assert is_confident(0.3) is False
 
     def test_at_default_threshold(self):

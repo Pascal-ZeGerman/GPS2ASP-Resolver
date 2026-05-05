@@ -8,9 +8,11 @@ Provides ASPNextMoveTimeSensor which maps coordinator data to a sensor state:
 
 Rich attributes cover schedule, location, window, metadata, and error groups.
 
-Also provides 6 diagnostic sensors for debugging and dashboards:
+Also provides 9 diagnostic sensors for debugging and dashboards:
 ASPCarNameSensor, ASPVINSensor, ASPLatitudeSensor, ASPLongitudeSensor,
-ASPResolvedStreetSensor, ASPResolutionStatusSensor.
+ASPResolvedStreetSensor, ASPResolutionStatusSensor,
+ASPConfidenceScoreSensor, ASPSODALevelSensor, ASPLastResolvedSensor,
+ASPLastErrorSensor.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from .gps2asp.schedule.models import (
 )
 from .gps2asp.suspension import apply_suspension
 
-from .const import CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT, DOMAIN
+from .const import CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT, DOMAIN, VERSION
 from .coordinator import ASPParkingCoordinator
 
 
@@ -45,16 +47,22 @@ async def async_setup_entry(
 ) -> None:
     """Set up the ASP Parking sensor from a config entry."""
     coordinator: ASPParkingCoordinator = entry.runtime_data
-    async_add_entities([
-        ASPNextMoveTimeSensor(coordinator),
-        ASPCarNameSensor(coordinator),
-        ASPVINSensor(coordinator),
-        ASPLatitudeSensor(coordinator),
-        ASPLongitudeSensor(coordinator),
-        ASPResolvedStreetSensor(coordinator),
-        ASPResolutionStatusSensor(coordinator),
-        ASPDebugModeSensor(coordinator),
-    ])
+    async_add_entities(
+        [
+            ASPNextMoveTimeSensor(coordinator),
+            ASPCarNameSensor(coordinator),
+            ASPVINSensor(coordinator),
+            ASPLatitudeSensor(coordinator),
+            ASPLongitudeSensor(coordinator),
+            ASPResolvedStreetSensor(coordinator),
+            ASPResolutionStatusSensor(coordinator),
+            # DIAG-04 (Phase 27): four diagnostic sensors surfacing coordinator state
+            ASPConfidenceScoreSensor(coordinator),
+            ASPSODALevelSensor(coordinator),
+            ASPLastResolvedSensor(coordinator),
+            ASPLastErrorSensor(coordinator),
+        ]
+    )
 
 
 class ASPNextMoveTimeSensor(SensorEntity):
@@ -80,6 +88,11 @@ class ASPNextMoveTimeSensor(SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Register update callback when entity is added to HA."""
         self._coordinator.async_add_update_callback(self.async_write_ha_state)
+        self.async_on_remove(
+            lambda: self._coordinator.async_remove_update_callback(
+                self.async_write_ha_state
+            )
+        )
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -89,14 +102,16 @@ class ASPNextMoveTimeSensor(SensorEntity):
             name="ASP Parking Monitor",
             manufacturer="GPS2ASP",
             model="ASP Schedule Resolver",
-            sw_version="0.1.0",
+            sw_version=VERSION,
         )
 
     def _format_move_time(self, dt: datetime) -> str:
         """Return human-friendly move time string, with urgency prefix if <12h away."""
         local_dt = dt_util.as_local(dt)
         seconds_until = (dt_util.as_utc(dt) - dt_util.utcnow()).total_seconds()
-        time_str = local_dt.strftime("%-I:%M %p")  # e.g. "8:00 AM" (no leading zero)
+        time_str = local_dt.strftime("%I:%M %p").lstrip(
+            "0"
+        )  # e.g. "8:00 AM" (no leading zero, portable)
         if seconds_until < 12 * 3600:
             return f"\u26a0 Today {time_str}"
         day_str = local_dt.strftime("%a")  # "Mon", "Tue", etc.
@@ -211,12 +226,17 @@ class ASPNextMoveTimeSensor(SensorEntity):
                     ].index(d),
                 )
                 attrs["cleaning_days"] = day_names
-                if weekly.windows:
-                    first_window = weekly.windows[0]
-                    attrs["time_window_start"] = first_window.start_time.strftime(
-                        "%H:%M"
-                    )
-                    attrs["time_window_end"] = first_window.end_time.strftime("%H:%M")
+
+            # time_window_start/end: use next_window (the temporally-next window)
+            # rather than windows[0] (the day-sorted first window), so these
+            # attributes always reflect the window the user actually needs to act on.
+            if isinstance(schedule, ScheduleFound) and schedule.next_window is not None:
+                attrs["time_window_start"] = schedule.next_window.start_time.strftime(
+                    "%H:%M"
+                )
+                attrs["time_window_end"] = schedule.next_window.end_time.strftime(
+                    "%H:%M"
+                )
 
             attrs["schedule_summary"] = schedule.summary
 
@@ -227,14 +247,15 @@ class ASPNextMoveTimeSensor(SensorEntity):
             elif isinstance(schedule, ASPActiveNow):
                 _move_dt = schedule.active_window.end_datetime
             if _move_dt is not None:
-                seconds_until = (dt_util.as_utc(_move_dt) - dt_util.utcnow()).total_seconds()
+                seconds_until = (
+                    dt_util.as_utc(_move_dt) - dt_util.utcnow()
+                ).total_seconds()
                 attrs["urgency"] = "high" if seconds_until < 12 * 3600 else "normal"
 
             # --- Location group ---
             attrs["street_name"] = schedule.on_street
             attrs["cross_streets"] = f"{schedule.from_street} to {schedule.to_street}"
             attrs["side_of_street"] = schedule.side_of_street
-            attrs["borough"] = None  # Not in current pipeline output
 
         # --- Window group ---
         if isinstance(schedule, ScheduleFound):
@@ -262,6 +283,9 @@ class ASPNextMoveTimeSensor(SensorEntity):
             data.last_resolved.isoformat() if data.last_resolved else None
         )
         attrs["confidence_score"] = data.confidence_score
+        attrs["borough"] = (
+            data.borough
+        )  # Phase 30 — always present (None when unresolved)
         attrs["sign_count"] = data.sign_count
         attrs["parse_failures"] = data.parse_failures
         attrs["soda_level"] = data.soda_level
@@ -293,6 +317,11 @@ class _ASPDiagnosticSensor(SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Register update callback when entity is added to HA."""
         self._coordinator.async_add_update_callback(self.async_write_ha_state)
+        self.async_on_remove(
+            lambda: self._coordinator.async_remove_update_callback(
+                self.async_write_ha_state
+            )
+        )
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -302,7 +331,7 @@ class _ASPDiagnosticSensor(SensorEntity):
             name="ASP Parking Monitor",
             manufacturer="GPS2ASP",
             model="ASP Schedule Resolver",
-            sw_version="0.1.0",
+            sw_version=VERSION,
         )
 
 
@@ -319,6 +348,8 @@ class ASPCarNameSensor(_ASPDiagnosticSensor):
     @property
     def native_value(self) -> str | None:
         """Return the friendly name of the device_tracker entity."""
+        if self.hass is None:
+            return None
         state = self.hass.states.get(self._coordinator.device_tracker_entity)
         if state is None:
             return None
@@ -338,6 +369,8 @@ class ASPVINSensor(_ASPDiagnosticSensor):
     @property
     def native_value(self) -> str | None:
         """Return the VIN from device_tracker attributes."""
+        if self.hass is None:
+            return None
         state = self.hass.states.get(self._coordinator.device_tracker_entity)
         if state is None:
             return None
@@ -399,8 +432,8 @@ class ASPResolvedStreetSensor(_ASPDiagnosticSensor):
         return None
 
     @property
-    def extra_state_attributes(self) -> dict[str, str | float | None]:
-        """Return cross streets, side, and confidence."""
+    def extra_state_attributes(self) -> dict[str, str | float | int | None]:
+        """Return cross streets, side, confidence, and Phase 30 diagnostic fields."""
         schedule = self._coordinator.data.schedule_result
         if not isinstance(schedule, (ScheduleFound, ASPActiveNow)):
             return {}
@@ -409,6 +442,10 @@ class ASPResolvedStreetSensor(_ASPDiagnosticSensor):
             "to_street": schedule.to_street,
             "side_of_street": schedule.side_of_street,
             "confidence_score": self._coordinator.data.confidence_score,
+            "borough": self._coordinator.data.borough,
+            "distance_ft": self._coordinator.data.distance_ft,
+            "street_width_ft": self._coordinator.data.street_width_ft,
+            "segment_id": self._coordinator.data.segment_id,
         }
 
 
@@ -448,34 +485,85 @@ class ASPResolutionStatusSensor(_ASPDiagnosticSensor):
         return attrs
 
 
-class ASPDebugModeSensor(_ASPDiagnosticSensor):
-    """Diagnostic sensor showing whether debug mode is active.
+class ASPConfidenceScoreSensor(_ASPDiagnosticSensor):
+    """Diagnostic sensor showing the resolver confidence score (0-1).
 
-    Per D-09: EntityCategory.DIAGNOSTIC, state is 'active'/'inactive',
-    attributes show current debug override values for visibility.
+    Per D-08: surfaces coordinator.data.confidence_score as the entity state.
+    Reading frequency follows the coordinator's pipeline cadence (event-driven
+    on GPS change; refreshed every refresh_interval hours).
     """
 
-    _attr_icon = "mdi:bug"
-    _attr_translation_key = "debug_mode"
+    _attr_icon = "mdi:gauge"
+    _attr_translation_key = "confidence_score"
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator: ASPParkingCoordinator) -> None:
         super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_debug_mode"
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_confidence_score"
 
     @property
-    def native_value(self) -> str:
-        """Return 'active' when debug mode is enabled, 'inactive' otherwise."""
-        return "active" if self._coordinator._debug_enabled else "inactive"
+    def native_value(self) -> float | None:
+        """Return the resolver confidence (0..1) or None if not yet resolved."""
+        return self._coordinator.data.confidence_score
+
+
+class ASPSODALevelSensor(_ASPDiagnosticSensor):
+    """Diagnostic sensor showing which SODA fallback level matched (0-4).
+
+    Per D-08: surfaces coordinator.data.soda_level as the entity state. 0 means
+    no resolution yet; 1-4 indicate which fallback strategy succeeded.
+    """
+
+    _attr_icon = "mdi:layers-search"
+    _attr_translation_key = "soda_level"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: ASPParkingCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_soda_level"
 
     @property
-    def extra_state_attributes(self) -> dict[str, str | float | bool | None]:
-        """Return current debug override values for visibility."""
-        c = self._coordinator
-        return {
-            "debug_lat": c._debug_lat,
-            "debug_lon": c._debug_lon,
-            "debug_datetime": (
-                c._debug_datetime.isoformat() if c._debug_datetime else None
-            ),
-            "suppress_notifications": c._suppress_notifications,
-        }
+    def native_value(self) -> int | None:
+        """Return the SODA fallback level (0-4); 0 means not resolved."""
+        return self._coordinator.data.soda_level
+
+
+class ASPLastResolvedSensor(_ASPDiagnosticSensor):
+    """Diagnostic sensor showing the timestamp of the last successful resolve.
+
+    Per D-08: surfaces coordinator.data.last_resolved as ISO string entity state.
+    Returns None when the pipeline has never produced a successful resolution.
+    """
+
+    _attr_icon = "mdi:clock-check"
+    _attr_translation_key = "last_resolved"
+
+    def __init__(self, coordinator: ASPParkingCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_last_resolved"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return ISO timestamp of last successful pipeline run, or None."""
+        ts = self._coordinator.data.last_resolved
+        return ts.isoformat() if ts else None
+
+
+class ASPLastErrorSensor(_ASPDiagnosticSensor):
+    """Diagnostic sensor showing the most recent pipeline error string.
+
+    Per D-08: surfaces coordinator.data.last_error as the entity state.
+    Returns None when no errors have occurred since startup.
+    """
+
+    _attr_icon = "mdi:alert-circle-outline"
+    _attr_translation_key = "last_error"
+
+    def __init__(self, coordinator: ASPParkingCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_last_error"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the last error string, or None if no error."""
+        return self._coordinator.data.last_error

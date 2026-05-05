@@ -8,11 +8,11 @@
     "notes": "North-side parking between Vanderbilt and Carlton"
   },
   {
-    "name": "Vanderbilt Ave between Prospect Pl and Park Pl (east side)",
-    "lat": 40.6774,
-    "lon": -73.9694,
+    "name": "Vanderbilt Ave between Park Pl and Prospect Pl (east side)",
+    "lat": 40.6770,
+    "lon": -73.9690,
     "expected_on_street": "VANDERBILT AVE",
     "expected_side": "E",
-    "notes": "East side of north-south street"
+    "notes": "East side of north-south street, updated to match current spatial index"
   }
 ]

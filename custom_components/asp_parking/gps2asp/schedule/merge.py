@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from itertools import groupby
 
-from .models import ASPDay, TimeWindow, WeeklySchedule
+from .models import TimeWindow, WeeklySchedule
 
 logger = logging.getLogger("gps2asp.schedule.merge")
 

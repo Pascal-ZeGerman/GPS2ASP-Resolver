@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 
@@ -60,7 +60,7 @@ class NoASPSigns:
 
 @dataclass(frozen=True)
 class NoMatchFound:
-    """All three fallback levels exhausted; no matching segment in SODA.
+    """All four fallback levels exhausted; no matching segment in SODA.
 
     Attributes:
         status: Discriminator literal "no_match".

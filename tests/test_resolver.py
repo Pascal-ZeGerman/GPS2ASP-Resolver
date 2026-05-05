@@ -34,7 +34,9 @@ class TestResolveProspectHeights:
     """End-to-end resolution tests using known Prospect Heights coordinates."""
 
     async def test_resolve_prospect_heights(
-        self, spatial_index_dir, prospect_heights_fixtures,
+        self,
+        spatial_index_dir,
+        prospect_heights_fixtures,
     ):
         """Resolve known Prospect Heights coordinates to correct streets."""
         for fixture in prospect_heights_fixtures:
@@ -44,7 +46,9 @@ class TestResolveProspectHeights:
 
             try:
                 result = await resolve(
-                    lat, lon, index_dir=spatial_index_dir,
+                    lat,
+                    lon,
+                    index_dir=spatial_index_dir,
                 )
                 # Street name should match (case-insensitive contains)
                 assert expected_street.upper() in result.on_street.upper(), (
@@ -60,7 +64,9 @@ class TestResolveProspectHeights:
         """Verify resolve() returns a confidence score between 0.0 and 1.0."""
         try:
             result = await resolve(
-                40.6778, -73.9690, index_dir=spatial_index_dir,
+                40.6778,
+                -73.9690,
+                index_dir=spatial_index_dir,
             )
             assert isinstance(result.confidence, float)
             assert 0.0 <= result.confidence <= 1.0
@@ -73,7 +79,9 @@ class TestResolveProspectHeights:
         """Verify resolve() returns a boolean has_asp field."""
         try:
             result = await resolve(
-                40.6778, -73.9690, index_dir=spatial_index_dir,
+                40.6778,
+                -73.9690,
+                index_dir=spatial_index_dir,
             )
             assert isinstance(result.has_asp, bool)
         except AmbiguousResolutionError:
@@ -83,7 +91,9 @@ class TestResolveProspectHeights:
         """Verify resolve() returns non-empty from_street and to_street."""
         try:
             result = await resolve(
-                40.6778, -73.9690, index_dir=spatial_index_dir,
+                40.6778,
+                -73.9690,
+                index_dir=spatial_index_dir,
             )
             assert isinstance(result.from_street, str)
             assert isinstance(result.to_street, str)
@@ -99,7 +109,9 @@ class TestResolveProspectHeights:
         # One-step
         try:
             result_one_step = await resolve(
-                lat, lon, index_dir=spatial_index_dir,
+                lat,
+                lon,
+                index_dir=spatial_index_dir,
             )
         except AmbiguousResolutionError as e:
             result_one_step = e
@@ -108,7 +120,9 @@ class TestResolveProspectHeights:
         x, y = convert(lat, lon)
         try:
             result_two_step = await resolve_segment(
-                x, y, index_dir=spatial_index_dir,
+                x,
+                y,
+                index_dir=spatial_index_dir,
             )
         except AmbiguousResolutionError as e:
             result_two_step = e
@@ -123,24 +137,27 @@ class TestResolveProspectHeights:
             assert isinstance(result_two_step, AmbiguousResolutionError)
 
     async def test_resolve_debug_logging(
-        self, spatial_index_dir, caplog,
+        self,
+        spatial_index_dir,
+        caplog,
     ):
         """Verify JSON debug output is emitted during resolution."""
-        from gps2asp.resolver.logging import configure_logging
-
-        configure_logging("DEBUG")
-
+        # Use caplog.at_level instead of configure_logging() to avoid
+        # permanently adding handlers to the logger across the test session.
         with caplog.at_level(logging.DEBUG, logger="gps2asp.resolver"):
             try:
                 await resolve(
-                    40.6778, -73.9690, index_dir=spatial_index_dir,
+                    40.6778,
+                    -73.9690,
+                    index_dir=spatial_index_dir,
                 )
             except AmbiguousResolutionError:
                 pass
 
         # Check that at least one log record contains JSON-like content
         debug_records = [
-            r for r in caplog.records
+            r
+            for r in caplog.records
             if r.levelno == logging.DEBUG and "resolution_attempt" in r.message
         ]
         assert len(debug_records) > 0, "Expected DEBUG log with resolution_attempt"
@@ -154,7 +171,8 @@ class TestResolveProspectHeights:
         """Verify that a very high confidence threshold raises AmbiguousResolutionError."""
         with pytest.raises(AmbiguousResolutionError):
             await resolve(
-                40.6778, -73.9690,
+                40.6778,
+                -73.9690,
                 confidence_threshold=0.99,
                 index_dir=spatial_index_dir,
             )
@@ -163,7 +181,9 @@ class TestResolveProspectHeights:
         """Verify ResolutionResult has the correct field types."""
         try:
             result = await resolve(
-                40.6778, -73.9690, index_dir=spatial_index_dir,
+                40.6778,
+                -73.9690,
+                index_dir=spatial_index_dir,
             )
             assert isinstance(result, ResolutionResult)
             assert isinstance(result.on_street, str)
@@ -179,7 +199,9 @@ class TestResolveProspectHeights:
         """Prospect Place in Prospect Heights should have ASP regulations."""
         try:
             result = await resolve(
-                40.6778, -73.9690, index_dir=spatial_index_dir,
+                40.6778,
+                -73.9690,
+                index_dir=spatial_index_dir,
             )
             # Prospect Place has ASP signs per parking signs dataset
             if "PROSPECT" in result.on_street.upper():

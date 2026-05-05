@@ -6,7 +6,7 @@ ASPDay enum values match datetime.weekday() convention (Monday=0).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, time
 from enum import IntEnum
 from typing import Literal
@@ -135,11 +135,10 @@ class ScheduleFound:
         suspended: v3 suspension layer flag. Set to True when ASP is suspended.
         suspension_reason: Human-readable reason for suspension (e.g. "MLK Day").
             None when not suspended.
-        resolution_reason: Machine-readable resolution state. One of:
-            'active' (ASP in effect), 'suspended_holiday' (holiday suspension),
-            'suspended_emergency' (emergency/weather suspension),
-            'no_asp_on_block', 'no_data_for_block', 'unknown'. None when
-            not yet annotated by apply_suspension().
+        resolution_reason: Machine-readable suspension classification. One of:
+            'suspended_holiday' (holiday suspension),
+            'suspended_emergency' (emergency/weather suspension).
+            None when not suspended / not yet annotated by apply_suspension().
     """
 
     status: Literal["schedule_found"]
@@ -155,14 +154,13 @@ class ScheduleFound:
     # v3 suspension merge fields
     suspended: bool = False
     suspension_reason: str | None = None
-    resolution_reason: Literal[
-        'active',
-        'suspended_holiday',
-        'suspended_emergency',
-        'no_asp_on_block',
-        'no_data_for_block',
-        'unknown',
-    ] | None = None
+    resolution_reason: (
+        Literal[
+            "suspended_holiday",
+            "suspended_emergency",
+        ]
+        | None
+    ) = None
 
 
 @dataclass(frozen=True)
@@ -181,11 +179,10 @@ class ASPActiveNow:
         suspended: v3 suspension layer flag. Set to True when ASP is suspended.
         suspension_reason: Human-readable reason for suspension (e.g. "MLK Day").
             None when not suspended.
-        resolution_reason: Machine-readable resolution state. One of:
-            'active' (ASP in effect), 'suspended_holiday' (holiday suspension),
-            'suspended_emergency' (emergency/weather suspension),
-            'no_asp_on_block', 'no_data_for_block', 'unknown'. None when
-            not yet annotated by apply_suspension().
+        resolution_reason: Machine-readable suspension classification. One of:
+            'suspended_holiday' (holiday suspension),
+            'suspended_emergency' (emergency/weather suspension).
+            None when not suspended / not yet annotated by apply_suspension().
     """
 
     status: Literal["asp_active_now"]
@@ -199,14 +196,13 @@ class ASPActiveNow:
     # v3 suspension merge fields
     suspended: bool = False
     suspension_reason: str | None = None
-    resolution_reason: Literal[
-        'active',
-        'suspended_holiday',
-        'suspended_emergency',
-        'no_asp_on_block',
-        'no_data_for_block',
-        'unknown',
-    ] | None = None
+    resolution_reason: (
+        Literal[
+            "suspended_holiday",
+            "suspended_emergency",
+        ]
+        | None
+    ) = None
 
 
 @dataclass(frozen=True)

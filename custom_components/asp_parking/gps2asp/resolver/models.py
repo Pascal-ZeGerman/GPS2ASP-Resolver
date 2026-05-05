@@ -19,6 +19,14 @@ class ResolutionResult:
         side_of_street: Compass direction side - N, S, E, or W.
         confidence: Confidence score from 0.0 (ambiguous) to 1.0 (certain).
         has_asp: Whether this segment has any ASP regulations.
+        borocode: CSCL borough code as string ("1"=Manhattan, "2"=Bronx, "3"=Brooklyn,
+            "4"=Queens, "5"=Staten Island), or None when resolution failed.
+        perpendicular_distance_ft: Perpendicular distance from the GPS point to the
+            segment centerline (feet), rounded to 2 decimals. None when not computed.
+        street_width_ft: Effective street width used in confidence calculation
+            (feet, post-fallback from _NYC_DEFAULT_WIDTHS). None when not computed.
+        segment_id: CSCL physical segment ID for the matched street segment.
+            None when no segment was matched.
     """
 
     on_street: str
@@ -27,6 +35,10 @@ class ResolutionResult:
     side_of_street: Literal["N", "S", "E", "W"]
     confidence: float
     has_asp: bool
+    borocode: str | None = None
+    perpendicular_distance_ft: float | None = None
+    street_width_ft: float | None = None
+    segment_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -43,7 +55,7 @@ class SegmentCandidate:
         nominaldir: Nominal compass direction of the segment.
         rw_type: Road type (1=Street, 2=Highway, etc.).
         streetwidth: Paved width in feet.
-        borocode: Borough code (1=Manhattan, 2=Bronx, 3=Brooklyn, 4=Queens, 5=Staten Island).
+        borocode: Borough code as string ("1"=Manhattan, "2"=Bronx, "3"=Brooklyn, "4"=Queens, "5"=Staten Island).
         distance_ft: Distance from the query point to the segment centerline in feet.
     """
 
@@ -94,4 +106,6 @@ class ResolutionDebugInfo:
     confidence: float = 0.0
     side: str | None = None
     outcome: str = "no_segment"
-    street_width_ft: float | None = None    # effective width used in confidence calc (post-fallback)
+    street_width_ft: float | None = (
+        None  # effective width used in confidence calc (post-fallback)
+    )

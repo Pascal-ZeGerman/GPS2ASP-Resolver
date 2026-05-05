@@ -5,7 +5,7 @@ importable function that runs the full GPS-to-schedule pipeline.
 
 Two variants:
     ASPResult      — lean result when debug=False (schedule + error fields only)
-    ASPDebugResult — rich result when debug=True (all 13 intermediate fields)
+    ASPDebugResult — rich result when debug=True (all 17 intermediate fields)
 """
 
 from __future__ import annotations
@@ -73,8 +73,12 @@ class ASPDebugResult:
             point.
         state_plane_y: NY State Plane Y coordinate (feet) for the input GPS
             point.
-        soda_level: SODA fallback level that matched (1, 2, or 3). Set to 0
+        soda_level: SODA fallback level that matched (1, 2, 3, or 4). Set to 0
             if no SODA match was found or resolution failed.
+        borocode: CSCL borough code as string ("1"=Manhattan…"5"=Staten Island), or None when resolution failed.
+        perpendicular_distance_ft: Perpendicular distance from GPS point to segment centerline (feet), rounded to 2 decimals. None when resolution failed.
+        street_width_ft: Effective street width used in confidence calc (feet). None when resolution failed.
+        segment_id: CSCL physical segment ID. None when resolution failed.
     """
 
     schedule: ScheduleResult | None
@@ -90,6 +94,10 @@ class ASPDebugResult:
     state_plane_x: float
     state_plane_y: float
     soda_level: int
+    borocode: str | None = None
+    perpendicular_distance_ft: float | None = None
+    street_width_ft: float | None = None
+    segment_id: int | None = None
 
     @classmethod
     def from_resolution(
@@ -116,6 +124,10 @@ class ASPDebugResult:
             state_plane_x=state_plane_x,
             state_plane_y=state_plane_y,
             soda_level=soda_level,
+            borocode=resolution.borocode,
+            perpendicular_distance_ft=resolution.perpendicular_distance_ft,
+            street_width_ft=resolution.street_width_ft,
+            segment_id=resolution.segment_id,
         )
 
     @classmethod
@@ -140,4 +152,8 @@ class ASPDebugResult:
             state_plane_x=state_plane_x,
             state_plane_y=state_plane_y,
             soda_level=0,
+            borocode=None,
+            perpendicular_distance_ft=None,
+            street_width_ft=None,
+            segment_id=None,
         )

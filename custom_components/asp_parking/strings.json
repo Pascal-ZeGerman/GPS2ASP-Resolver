@@ -2,24 +2,42 @@
   "config": {
     "step": {
       "user": {
-        "title": "VW CarNet Login",
-        "description": "VW CarNet integration coming soon. Click Submit to continue with manual device tracker selection."
-      },
-      "vehicle": {
         "title": "Select Vehicle",
-        "description": "Choose the device tracker entity that provides your car's GPS location.",
+        "description": "Choose the device tracker that provides your car's GPS location.",
         "data": {
-          "device_tracker": "Device tracker entity"
+          "device_tracker": "Device tracker"
         }
       },
       "settings": {
         "title": "Settings",
+        "description": "Fine-tune when the integration re-resolves the parking schedule.",
         "data": {
-          "movement_threshold": "Movement threshold (meters)",
-          "refresh_interval": "Refresh interval (hours)",
-          "stale_timeout": "GPS stale timeout (hours)"
+          "movement_threshold": "Movement threshold",
+          "refresh_interval": "Refresh interval",
+          "stale_timeout": "GPS stale timeout"
+        },
+        "data_description": {
+          "movement_threshold": "Min distance the car must move before re-running the schedule lookup. 50 m filters GPS drift without missing real moves.",
+          "refresh_interval": "Re-check schedule even without movement so upcoming windows stay current. 8 h balances freshness with API calls.",
+          "stale_timeout": "Mark sensor unavailable after this long without a GPS update. Match your tracker's reporting frequency."
+        }
+      },
+      "api_keys": {
+        "title": "NYC 311 API Key (Optional)",
+        "description": "Enter your NYC 311 API key to receive weather and emergency suspension alerts. Leave blank to skip — holiday suspensions still work without it.",
+        "data": {
+          "nyc311_api_key": "NYC 311 API key"
+        },
+        "data_description": {
+          "nyc311_api_key": "Get a free key at api-portal.nyc.gov. Enables real-time weather/emergency suspension detection."
         }
       }
+    },
+    "error": {
+      "movement_threshold_too_small": "Must be at least 1 m.",
+      "refresh_interval_too_small": "Must be at least 1 h.",
+      "stale_timeout_too_small": "Must be at least 1 h.",
+      "invalid_api_key": "Invalid API key — check your NYC 311 API portal subscription key."
     },
     "abort": {
       "already_configured": "ASP Parking Monitor is already configured."
@@ -29,50 +47,113 @@
     "step": {
       "init": {
         "title": "Settings",
+        "description": "Fine-tune when the integration re-resolves the parking schedule.",
         "data": {
-          "movement_threshold": "Movement threshold (meters)",
-          "refresh_interval": "Refresh interval (hours)",
-          "stale_timeout": "GPS stale timeout (hours)",
+          "movement_threshold": "Movement threshold",
+          "refresh_interval": "Refresh interval",
+          "stale_timeout": "GPS stale timeout",
+          "nyc311_entity": "ha-nyc311 suspension entity",
+          "nyc311_api_key": "NYC 311 API key",
           "notify_service": "Push notification service",
-          "notify_lead_time": "Notification lead time (minutes)"
+          "notify_lead_time": "Notification lead time"
         },
         "data_description": {
-          "movement_threshold": "Min distance the car must move before re-running the schedule lookup.",
-          "refresh_interval": "Re-check schedule even without movement so upcoming windows stay current.",
-          "stale_timeout": "Mark sensor unavailable after this long without a GPS update.",
-          "notify_service": "Pick a notify entity. Leave empty to disable push notifications.",
-          "notify_lead_time": "How many minutes before a cleaning window starts to send the push notification."
+          "movement_threshold": "Min distance the car must move before re-running the schedule lookup. 50 m filters GPS drift without missing real moves.",
+          "refresh_interval": "Re-check schedule even without movement so upcoming windows stay current. 8 h balances freshness with API calls.",
+          "stale_timeout": "Mark sensor unavailable after this long without a GPS update. Match your tracker's reporting frequency.",
+          "nyc311_entity": "Leave empty for auto-detection. Only set this if you renamed the ha-nyc311 binary sensor.",
+          "nyc311_api_key": "Get a free key at api-portal.nyc.gov. Leave blank to disable 311 polling.",
+          "notify_service": "Pick a notify service. Leave empty to disable push notifications. If the list is empty, set up the Home Assistant Companion app or another notify integration first.",
+          "notify_lead_time": "How many minutes before a cleaning window starts to send the push notification. Default 120 minutes (2 hours). Range 15-480."
         }
       },
       "debug": {
-        "title": "Debug Overrides",
+        "title": "GPS & Time Overrides",
+        "description": "Override GPS coordinates and datetime for testing. Leave blank to use live device data.",
         "data": {
-          "debug_enabled": "Debug mode",
           "debug_lat": "Override latitude",
           "debug_lon": "Override longitude",
-          "debug_datetime": "Override current date/time",
-          "suppress_notifications": "Suppress push notifications"
+          "debug_datetime": "Override current date/time"
         },
         "data_description": {
-          "debug_enabled": "Master toggle. When off, all override fields are ignored even if set.",
           "debug_lat": "Fake GPS latitude for testing. Both lat and lon must be set together.",
           "debug_lon": "Fake GPS longitude for testing. Both lat and lon must be set together.",
-          "debug_datetime": "Replace the current date/time for schedule and suspension checks.",
-          "suppress_notifications": "Prevent push notifications while debug mode is active."
+          "debug_datetime": "Replace the current date/time for schedule and suspension checks."
+        }
+      },
+      "parking_area": {
+        "title": "Parking Area (Optional)",
+        "description": "Define a home parking zone so the integration can pre-fetch sign data for nearby blocks. Leave all fields blank to use on-demand lookups only.",
+        "data": {
+          "parking_lat": "Center latitude",
+          "parking_lon": "Center longitude",
+          "parking_radius": "Radius"
+        },
+        "data_description": {
+          "parking_lat": "Latitude of your usual parking area (e.g. copy from Google Maps).",
+          "parking_lon": "Longitude of your usual parking area.",
+          "parking_radius": "How far around the center to pre-fetch sign data, in meters. Larger radii pre-fetch more blocks but make more API calls to NYC Open Data. For radii above 1000 m, a NYC Open Data app token is recommended to avoid rate limits (set via the NYC_OPEN_DATA_APP_TOKEN environment variable on your HA host)."
         }
       }
+    },
+    "error": {
+      "movement_threshold_too_small": "Must be at least 1 m.",
+      "refresh_interval_too_small": "Must be at least 1 h.",
+      "stale_timeout_too_small": "Must be at least 1 h.",
+      "invalid_api_key": "Invalid API key — check your NYC 311 API portal subscription key."
     }
   },
   "entity": {
     "sensor": {
       "next_move_time": {
         "name": "Next Move Time"
+      },
+      "car_name": {
+        "name": "Car Name"
+      },
+      "vin": {
+        "name": "VIN"
+      },
+      "latitude": {
+        "name": "Latitude"
+      },
+      "longitude": {
+        "name": "Longitude"
+      },
+      "resolved_street": {
+        "name": "Resolved Street"
+      },
+      "resolution_status": {
+        "name": "Resolution Status"
+      },
+      "confidence_score": {
+        "name": "Confidence Score"
+      },
+      "soda_level": {
+        "name": "SODA Level"
+      },
+      "last_resolved": {
+        "name": "Last Resolved"
+      },
+      "last_error": {
+        "name": "Last Error"
       }
     },
     "binary_sensor": {
       "active_now": {
         "name": "ASP Active Now"
       }
+    },
+    "switch": {
+      "debug_switch": {
+        "name": "Debug Mode"
+      }
+    }
+  },
+  "issues": {
+    "gps2asp_import_error": {
+      "title": "ASP Parking: vendored package is incomplete",
+      "description": "The bundled gps2asp Python package is missing files. Reinstall ASP Parking from HACS to restore them, then reload the integration. After a successful reload, this notification clears automatically."
     }
   }
 }

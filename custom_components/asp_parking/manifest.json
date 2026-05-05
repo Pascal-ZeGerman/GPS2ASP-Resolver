@@ -1,13 +1,13 @@
 {
   "domain": "asp_parking",
   "name": "ASP Parking",
-  "version": "3.1.0",
-  "documentation": "https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver",
-  "issue_tracker": "https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/issues",
-  "requirements": ["pyproj>=3.7.0", "rtree>=1.4.0", "shapely>=2.1.0", "numpy", "httpx>=0.28.0", "zstandard>=0.21.0", "icalendar>=6.1.0"],
   "codeowners": ["@Pascal-ZeGerman"],
   "config_flow": true,
-  "iot_class": "cloud_polling",
+  "documentation": "https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver",
   "integration_type": "service",
-  "single_config_entry": true
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/issues",
+  "requirements": ["pyproj>=3.7.0", "rtree>=1.4.0", "shapely>=2.1.0", "numpy", "httpx>=0.28.0", "zstandard>=0.21.0", "icalendar>=6.1.0"],
+  "single_config_entry": true,
+  "version": "3.1.0"
 }

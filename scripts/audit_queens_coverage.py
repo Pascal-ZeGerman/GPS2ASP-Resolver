@@ -9,6 +9,7 @@ Usage:
 
 Requires network access (live SODA API calls).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,8 +20,9 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from gps2asp import resolve_asp, ASPDebugResult, AmbiguousResolutionError
+from gps2asp import resolve_asp
 from gps2asp.signs.client import SODAClient
+from gps2asp.signs.models import NoMatchFound
 from gps2asp.signs.normalize import normalize_to_soda
 
 # Default fixture paths
@@ -50,7 +52,11 @@ async def diagnose_l3(
     query = client.build_on_street_query(normalized_on, side)
     try:
         records = await client.fetch_signs(query)
-    except Exception:
+    except Exception as exc:
+        print(
+            f"  WARNING: diagnose_l3 SODA query failed for '{on_street}' {side}: {exc}",
+            file=sys.stderr,
+        )
         return []
 
     # Count unique (from_street, to_street) spans
@@ -68,13 +74,13 @@ async def diagnose_l3(
 
 async def audit_fixture(fixture_path: Path, *, verbose: bool = False) -> list[dict]:
     """Run resolve_asp(debug=True) on each location in the fixture file."""
-    with open(fixture_path) as f:
+    with open(fixture_path, encoding="utf-8") as f:
         locations = json.load(f)
 
     results = []
     for loc in locations:
-        desc = loc["description"]
         try:
+            desc = loc["description"]
             result = await resolve_asp(loc["lat"], loc["lon"], debug=True)
             # result is ASPDebugResult when debug=True
             entry: dict = {
@@ -87,8 +93,15 @@ async def audit_fixture(fixture_path: Path, *, verbose: bool = False) -> list[di
                 "status": "ok",
             }
 
-            # L3 diagnostic: only for non-L1/L2 results to avoid doubling API calls
-            if verbose and (result.soda_level >= 3 or result.soda_level == 0):
+            # L3 diagnostic: only for NoMatchFound (soda_level==0) or high fallback
+            # levels (3+). Excludes NoASPSigns (soda_level==0 but SODA was found),
+            # which has no diagnostic value and would waste extra API calls.
+            is_no_match = isinstance(result.sign_result, NoMatchFound)
+            if (
+                verbose
+                and entry["on_street"]
+                and (result.soda_level >= 3 or is_no_match)
+            ):
                 diag = await diagnose_l3(
                     entry["on_street"],
                     entry["side_of_street"],
@@ -101,66 +114,77 @@ async def audit_fixture(fixture_path: Path, *, verbose: bool = False) -> list[di
 
             results.append(entry)
         except Exception as e:
-            results.append({
-                "description": desc,
-                "soda_level": 0,
-                "on_street": "",
-                "from_street": "",
-                "to_street": "",
-                "side_of_street": "",
-                "status": f"error: {type(e).__name__}: {e}",
-            })
+            results.append(
+                {
+                    "description": loc.get("description", "<unknown>"),
+                    "soda_level": 0,
+                    "on_street": "",
+                    "from_street": "",
+                    "to_street": "",
+                    "side_of_street": "",
+                    "status": f"error: {type(e).__name__}: {e}",
+                }
+            )
     return results
 
 
-def print_report(results: list[dict], fixture_name: str, *, verbose: bool = False) -> None:
+def print_report(
+    results: list[dict], fixture_name: str, *, verbose: bool = False
+) -> None:
     """Print per-location table and summary statistics."""
     total = len(results)
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"ASP Coverage Audit: {fixture_name} ({total} locations)")
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
     # Per-location table
-    print(f"{'#':>3} | {'Level':>5} | {'Status':<8} | {'On Street':<25} | {'From':<20} | {'To':<20} | {'Description'}")
-    print(f"{'-'*3}-+-{'-'*5}-+-{'-'*8}-+-{'-'*25}-+-{'-'*20}-+-{'-'*20}-+-{'-'*30}")
+    print(
+        f"{'#':>3} | {'Level':>5} | {'Status':<8} | {'On Street':<25} | {'From':<20} | {'To':<20} | {'Description'}"
+    )
+    print(
+        f"{'-' * 3}-+-{'-' * 5}-+-{'-' * 8}-+-{'-' * 25}-+-{'-' * 20}-+-{'-' * 20}-+-{'-' * 30}"
+    )
     for i, r in enumerate(results, 1):
         level = str(r["soda_level"]) if r["status"] == "ok" else "fail"
         status = "ok" if r["status"] == "ok" else "FAIL"
-        print(f"{i:>3} | {level:>5} | {status:<8} | {r['on_street']:<25} | {r['from_street']:<20} | {r['to_street']:<20} | {r['description']}")
+        print(
+            f"{i:>3} | {level:>5} | {status:<8} | {r['on_street']:<25} | {r['from_street']:<20} | {r['to_street']:<20} | {r['description']}"
+        )
 
     # Summary
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("Summary:")
     counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
     errors = 0
     for r in results:
         if r["status"] != "ok":
             errors += 1
+        elif r["soda_level"] in counts:
+            counts[r["soda_level"]] += 1
         else:
-            counts[r["soda_level"]] = counts.get(r["soda_level"], 0) + 1
+            counts[r["soda_level"]] = 1  # unexpected level — surface it explicitly
 
-    for level in [1, 2, 3, 4, 0]:
+    for level in sorted(counts.keys()):
         pct = counts[level] / total * 100 if total else 0
         label = f"Level {level}" if level > 0 else "No match (level 0)"
         print(f"  {label}: {counts[level]}/{total} ({pct:.1f}%)")
 
     if errors:
-        print(f"  Errors: {errors}/{total} ({errors/total*100:.1f}%)")
+        print(f"  Errors: {errors}/{total} ({errors / total * 100:.1f}%)")
 
     l12 = counts[1] + counts[2]
     l12_pct = l12 / total * 100 if total else 0
     print(f"\n  Level 1+2 (target): {l12}/{total} ({l12_pct:.1f}%)")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     # L3 Diagnostics section (verbose only)
     if verbose:
         diag_rows = [
-            (i, r) for i, r in enumerate(results, 1)
-            if r.get("l3_diag") is not None
+            (i, r) for i, r in enumerate(results, 1) if r.get("l3_diag") is not None
         ]
         if diag_rows:
-            print(f"\nL3 Diagnostics:")
-            print(f"\u2500" * 60)
+            print("\nL3 Diagnostics:")
+            print("─" * 60)
             for idx, r in diag_rows:
                 on = r["on_street"]
                 side = r.get("side_of_street", "?")
@@ -172,14 +196,18 @@ def print_report(results: list[dict], fixture_name: str, *, verbose: bool = Fals
                 spans = r["l3_diag"]
                 if spans:
                     for span in spans:
-                        print(f"    SODA spans: from={span['from']!r}  to={span['to']!r}  ({span['count']} signs)")
+                        print(
+                            f"    SODA spans: from={span['from']!r}  to={span['to']!r}  ({span['count']} signs)"
+                        )
                 else:
-                    print(f"    SODA spans: (none found)")
+                    print("    SODA spans: (none found)")
                 print()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Audit ASP coverage for GPS fixture locations")
+    parser = argparse.ArgumentParser(
+        description="Audit ASP coverage for GPS fixture locations"
+    )
     parser.add_argument(
         "--fixture",
         default="queens",

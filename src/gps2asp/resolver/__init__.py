@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from gps2asp.resolver.confidence import (
     DEFAULT_CONFIDENCE_THRESHOLD,
+    _NEAR_INTERSECTION_THRESHOLD_FT,
     compute_confidence,
     is_confident,
     resolve_effective_width,
@@ -49,14 +50,15 @@ from gps2asp.resolver.side_resolver import (
 from gps2asp.resolver.spatial_index import SpatialIndex
 
 # Named constants for spatial search and ambiguity classification
-_MAX_SNAP_DISTANCE_FT: float = 164.0    # ~50m: maximum snap radius for spatial index
-_NEAR_INTERSECTION_THRESHOLD_FT: float = 30.0  # ~10m: block-face ambiguity zone
+_MAX_SNAP_DISTANCE_FT: float = 164.0  # ~50m: maximum snap radius for spatial index
+# _NEAR_INTERSECTION_THRESHOLD_FT is imported from confidence.py (single source of truth)
 
 __all__ = [
     "resolve",
     "convert",
     "resolve_segment",
     "ResolutionResult",
+    "SegmentCandidate",
     "ResolutionError",
     "OutsideNYCError",
     "NoSegmentFoundError",
@@ -109,7 +111,8 @@ async def resolve(
 
     # Step 2-5: Delegate to resolve_segment
     return await resolve_segment(
-        x, y,
+        x,
+        y,
         confidence_threshold=confidence_threshold,
         index_dir=index_dir,
         parking_lane_fraction=parking_lane_fraction,
@@ -203,7 +206,8 @@ async def resolve_segment(
             confidence=round(confidence, 4),
             side=side,
             outcome=(
-                "resolved" if is_confident(confidence, confidence_threshold)
+                "resolved"
+                if is_confident(confidence, confidence_threshold)
                 else _classify_ambiguity(perp_distance, dist_to_endpoints)
             ),
             street_width_ft=effective_width,
@@ -238,6 +242,10 @@ async def resolve_segment(
             side_of_street=side,
             confidence=round(confidence, 4),
             has_asp=has_asp,
+            borocode=best.borocode,
+            perpendicular_distance_ft=round(perp_distance, 2),
+            street_width_ft=effective_width,
+            segment_id=best.segment_id,
         )
 
     except (NoSegmentFoundError, AmbiguousResolutionError):
