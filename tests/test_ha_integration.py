@@ -31,7 +31,7 @@ from gps2asp.schedule.models import (
     TimeWindow,
     WeeklySchedule,
 )
-from gps2asp.suspension import SuspensionInfo, apply_suspension
+from gps2asp.suspension import SuspensionInfo, apply_suspension  # noqa: E402
 
 NYC_TZ = ZoneInfo("America/New_York")
 UTC_TZ = timezone.utc

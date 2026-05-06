@@ -39,6 +39,9 @@ packages = ["src/gps2asp"]
 module = ["shapely", "shapely.*", "rtree", "rtree.*", "gps2asp", "gps2asp.*"]
 ignore_missing_imports = true
 
+[tool.ruff]
+exclude = [".claude"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = [

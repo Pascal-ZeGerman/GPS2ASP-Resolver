@@ -16,9 +16,9 @@ import sys
 from pathlib import Path
 
 import pytest
-import zstandard
 
 pytest.importorskip("geopandas")
+import zstandard
 
 # Add scripts/ to sys.path so we can import build_index
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
@@ -87,7 +87,6 @@ class TestFilter2HopNeighborhood:
         for pid in retained:
             neighbors = ADJACENCY.get(pid, set())
             pruned = {n for n in neighbors if n in retained}
-            {n for n in neighbors if n in excluded}
             # When building the filtered graph, dangling refs must be removed
             for n in pruned:
                 assert n in retained, (

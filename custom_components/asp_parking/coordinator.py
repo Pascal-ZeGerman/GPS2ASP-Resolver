@@ -525,7 +525,7 @@ class ASPParkingCoordinator:
         try:
             self._entity_update_callbacks.remove(cb)
         except ValueError:
-            pass
+            pass  # cb was never registered or already removed — safe to ignore
 
     @callback
     def _async_notify_entities(self) -> None:

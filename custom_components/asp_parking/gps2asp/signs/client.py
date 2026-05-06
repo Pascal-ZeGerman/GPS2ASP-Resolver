@@ -157,10 +157,12 @@ class SODAClient:
             )
 
         # First page failed -- raise SODA API error
-        status_code: int | None = None
-        if isinstance(last_error, httpx.HTTPStatusError):
-            status_code = last_error.response.status_code
-        raise SODAAPIError(status_code=status_code, detail=str(last_error))
+        raise SODAAPIError(
+            status_code=last_error.response.status_code
+            if isinstance(last_error, httpx.HTTPStatusError)
+            else None,
+            detail=str(last_error),
+        )
 
     def build_block_query(
         self,
