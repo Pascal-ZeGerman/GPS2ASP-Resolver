@@ -99,7 +99,7 @@ class TestResolveProspectHeights:
             assert isinstance(result.to_street, str)
             assert len(result.from_street) > 0, "from_street should not be empty"
             assert len(result.to_street) > 0, "to_street should not be empty"
-        except AmbiguousResolutionError:
+        except AmbiguousResolutionError:  # lgtm[py/empty-except]
             pass
 
     async def test_convert_then_resolve_segment(self, spatial_index_dir):
@@ -151,7 +151,7 @@ class TestResolveProspectHeights:
                     -73.9690,
                     index_dir=spatial_index_dir,
                 )
-            except AmbiguousResolutionError:
+            except AmbiguousResolutionError:  # lgtm[py/empty-except]
                 pass
 
         # Check that at least one log record contains JSON-like content
@@ -192,7 +192,7 @@ class TestResolveProspectHeights:
             assert result.side_of_street in ("N", "S", "E", "W")
             assert isinstance(result.confidence, float)
             assert isinstance(result.has_asp, bool)
-        except AmbiguousResolutionError:
+        except AmbiguousResolutionError:  # lgtm[py/empty-except]
             pass
 
     async def test_resolve_prospect_place_has_asp(self, spatial_index_dir):
@@ -208,5 +208,5 @@ class TestResolveProspectHeights:
                 assert result.has_asp is True, (
                     f"Expected has_asp=True for {result.on_street}"
                 )
-        except AmbiguousResolutionError:
+        except AmbiguousResolutionError:  # lgtm[py/empty-except]
             pass

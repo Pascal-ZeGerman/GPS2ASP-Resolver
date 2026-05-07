@@ -279,7 +279,6 @@ async def retrieve_signs(
         soda_level=1,
     )
     if result is not None:
-        any_soda_results = True
         logger.info(
             "Level 1 matched: on_street=%r, from=%r, to=%r (%d unique signs)",
             on_variants[0],
@@ -316,7 +315,6 @@ async def retrieve_signs(
             soda_level=2,
         )
         if result is not None:
-            any_soda_results = True
             logger.info(
                 "Level 2 matched: on_street=%r, from=%r, to=%r (%d unique signs)",
                 on_var,

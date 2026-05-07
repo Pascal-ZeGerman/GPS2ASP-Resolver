@@ -81,10 +81,10 @@ def determine_side(
     if 315 <= angle or angle < 45:
         # Segment runs roughly East: left=N, right=S
         return "N" if cross > 0 else "S"
-    elif 45 <= angle < 135:
+    elif angle < 135:
         # Segment runs roughly North: left=W, right=E
         return "W" if cross > 0 else "E"
-    elif 135 <= angle < 225:
+    elif angle < 225:
         # Segment runs roughly West: left=S, right=N
         return "S" if cross > 0 else "N"
     else:  # 225 <= angle < 315

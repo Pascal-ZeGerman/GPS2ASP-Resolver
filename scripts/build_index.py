@@ -29,7 +29,6 @@ from pathlib import Path
 import geopandas as gpd
 import requests
 import zstandard
-from pyproj import Transformer
 from rtree import index as rtree_index
 
 from gps2asp.signs.normalize import normalize_to_soda
@@ -50,9 +49,6 @@ VEHICULAR_RW_TYPES = {1, 2, 3, 4, 5}
 # SODA API batch sizes for pagination
 CSCL_BATCH_SIZE = 10000
 SIGNS_BATCH_SIZE = 50000
-
-# WGS84 to EPSG:2263 transformer for reprojecting GeoJSON (which arrives in WGS84)
-_transformer = Transformer.from_crs("EPSG:4326", "EPSG:2263", always_xy=True)
 
 
 def _normalize_street_name(name: str) -> str:

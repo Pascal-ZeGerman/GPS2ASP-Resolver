@@ -189,7 +189,7 @@ class TestDividedRoads:
             # are approximate, but it should resolve to something
             assert isinstance(result.on_street, str)
             assert len(result.on_street) > 0
-        except (AmbiguousResolutionError, NoSegmentFoundError):
+        except (AmbiguousResolutionError, NoSegmentFoundError):  # lgtm[py/empty-except]
             pass
 
 
@@ -208,7 +208,7 @@ class TestMultipleBoroughs:
             )
             assert isinstance(result.on_street, str)
             assert result.side_of_street in ("N", "S", "E", "W")
-        except (AmbiguousResolutionError, NoSegmentFoundError):
+        except (AmbiguousResolutionError, NoSegmentFoundError):  # lgtm[py/empty-except]
             pass
 
     async def test_queens_astoria(self, spatial_index_dir):
@@ -221,7 +221,7 @@ class TestMultipleBoroughs:
                 index_dir=spatial_index_dir,
             )
             assert isinstance(result.on_street, str)
-        except (AmbiguousResolutionError, NoSegmentFoundError):
+        except (AmbiguousResolutionError, NoSegmentFoundError):  # lgtm[py/empty-except]
             pass
 
     async def test_bronx_grand_concourse(self, spatial_index_dir):
@@ -234,5 +234,5 @@ class TestMultipleBoroughs:
                 index_dir=spatial_index_dir,
             )
             assert isinstance(result.on_street, str)
-        except (AmbiguousResolutionError, NoSegmentFoundError):
+        except (AmbiguousResolutionError, NoSegmentFoundError):  # lgtm[py/empty-except]
             pass

@@ -23,7 +23,7 @@ async def resolve_asp(
     lon: float,
     debug: Literal[False] = ...,
     suspension_status: SuspensionInfo | None = ...,
-) -> ASPResult: ...
+) -> ASPResult: ...  # lgtm[py/ineffectual-statement]
 
 
 @overload
@@ -32,7 +32,7 @@ async def resolve_asp(
     lon: float,
     debug: Literal[True],
     suspension_status: SuspensionInfo | None = ...,
-) -> ASPDebugResult: ...
+) -> ASPDebugResult: ...  # lgtm[py/ineffectual-statement]
 
 
 async def resolve_asp(
