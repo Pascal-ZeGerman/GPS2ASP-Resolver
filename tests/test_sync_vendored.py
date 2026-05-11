@@ -421,3 +421,20 @@ class TestCliDryRun:
         capsys.readouterr()
         assert exit_code == 0
         assert not (vendor_root / "data" / "index_helper.py").exists()
+
+    def test_dry_run_detects_stale_vendor_file(
+        self,
+        staged_trees: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A vendor .py file with no src counterpart must be flagged as drift."""
+        _src_root, vendor_root = staged_trees
+        # No source files — only a stale vendor file with no src counterpart.
+        _stage_vendor(vendor_root, "deleted_module.py", "# stale\n")
+
+        monkeypatch.setattr(sys, "argv", ["sync_vendored.py", "--dry-run"])
+        exit_code = sync_vendored.main()
+        captured = capsys.readouterr()
+        assert exit_code == 1
+        assert "deleted_module.py" in captured.out
