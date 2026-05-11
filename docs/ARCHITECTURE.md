@@ -1,3 +1,4 @@
+<!-- generated-by: gsd-doc-writer -->
 # GPS2ASP-Resolver Architecture
 
 A developer reference covering the three-stage pipeline, suspension calendar subsystem,
@@ -57,10 +58,11 @@ Stage 1  Stage 2  Stage 3         Stage 1   Stage 2   Stage 3
 resolver  signs  schedule         resolver   signs    schedule
                                              |
                                   +----------+----------+
-                                  |                     |
-                             sensor.py          binary_sensor.py
-                             next_move          asp_active_now
-                             schedule_summary
+                                  |          |          |
+                             sensor.py  binary_sensor  switch.py
+                             next_move  asp_active_now  debug_mode
+                             schedule
+                             summary
 ```
 
 Both deployment modes share the same three-stage pipeline. In standalone use, `pipeline.py`
@@ -90,12 +92,15 @@ Modules:
   of the nearest segment the coordinate falls on.
 - `confidence.py` — Scores the resolution quality based on perpendicular distance,
   street width, and whether the segment has ASP regulations.
-- `models.py` — `ResolutionResult` and `SegmentCandidate` frozen dataclasses.
+- `models.py` — `ResolutionResult`, `SegmentCandidate`, `ResolutionDebugInfo` frozen
+  dataclasses.
 - `exceptions.py` — `OutsideNYCError`, `NoSegmentFoundError`, `AmbiguousResolutionError`,
   `IndexNotFoundError`.
+- `logging.py` — JSON debug logging helpers for resolution attempts.
 
 Output: a `ResolutionResult` containing `on_street`, `from_street`, `to_street`,
-`side_of_street` (N/S/E/W), `confidence` (0.0–1.0), and `has_asp` flag.
+`side_of_street` (N/S/E/W), `confidence` (0.0–1.0), `has_asp` flag, `borocode`,
+`perpendicular_distance_ft`, `street_width_ft`, and `segment_id`.
 
 ### Stage 2 — Signs (`signs/`)
 
@@ -112,20 +117,21 @@ Modules:
 
 - `client.py` — `SODAClient`: async `httpx` client against the NYC Open Data SODA API
   (resource `nfid-uabd.json`). Implements Levels 1–3 fallback query strategy with
-  pagination and exponential backoff.
+  pagination (batch size 1000) and exponential backoff (3 retries).
 - `graph.py` — `StreetGraph`: street adjacency graph from `data/index/graph.json`;
   supports Level 4 mid-span BFS matching for blocks that fall in the middle of a SODA
   sign record rather than at its boundary cross-streets.
 - `normalize.py` — Translates street names between CSCL format and SODA format at the
   API boundary.
-- `models.py` — `SignRetrievalSuccess`, `NoASPSigns`, `NoMatchFound` frozen dataclasses;
-  `SignRetrievalResult` discriminated union.
+- `exceptions.py` — `SODAAPIError`, `IncompleteResultsError`.
+- `models.py` — `SignRecord`, `SignRetrievalSuccess`, `NoASPSigns`, `NoMatchFound`
+  frozen dataclasses; `SignRetrievalResult` discriminated union.
 
 All SODA queries filter to active ASP signs only via
 `sign_description LIKE '%SANITATION BROOM%'` and `sign_design_voided_on_date IS NULL`.
 
 Output: a `SignRetrievalResult` — either a `SignRetrievalSuccess` containing a list of
-sign description strings and the SODA fallback level (1–4) that matched, `NoASPSigns`
+`SignRecord` objects and the SODA fallback level (1–4) that matched, `NoASPSigns`
 when the block exists in SODA but has no ASP regulations, or `NoMatchFound` when all
 fallback levels are exhausted.
 
@@ -148,13 +154,16 @@ Modules:
   local time (`America/New_York`).
 - `summary.py` — Produces a human-readable schedule string
   (e.g., `"Mon 8–9:30 AM, Thu 11:30 AM–1 PM"`).
-- `models.py` — `ScheduleResult` discriminated union: `ScheduleFound`, `ASPActiveNow`,
+- `models.py` — `TimeWindow`, `CleaningWindow`, `WeeklySchedule`, `ParseFailure`, and
+  the `ScheduleResult` discriminated union: `ScheduleFound`, `ASPActiveNow`,
   `NoASPSchedule`, `NoMatchSchedule`, `AllUnparseable`.
 
 Output: a `ScheduleResult`. When signs parse successfully, `ScheduleFound` or
 `ASPActiveNow` carries the `next_window` (`CleaningWindow`), the full `WeeklySchedule`,
 location fields, and a human-readable `summary`. Typed failure variants indicate why a
-result could not be produced (`no_asp`, `no_match`, `all_unparseable`).
+result could not be produced (`no_asp`, `no_match`, `all_unparseable`). Both
+`ScheduleFound` and `ASPActiveNow` carry optional suspension annotation fields
+(`suspended`, `suspension_reason`, `resolution_reason`) added by Stage 4.
 
 ### Entry Point — `pipeline.py`
 
@@ -165,7 +174,8 @@ an optional Stage 4 suspension annotation into a single async call.
   use containing the `ScheduleResult`, resolution failure flag, and SODA fallback level.
 - When `debug=True`, returns `ASPDebugResult` — the full intermediate state from all
   stages (State Plane coordinates, `ResolutionResult`, raw `SignRetrievalResult`,
-  `ScheduleResult`, and SODA level) for diagnostics and testing.
+  `ScheduleResult`, SODA level, `borocode`, `perpendicular_distance_ft`,
+  `street_width_ft`, `segment_id`) for diagnostics and testing.
 - `AmbiguousResolutionError` from Stage 1 is caught and surfaced as structured fields on
   the result rather than propagating. All other errors propagate to the caller.
 - When `suspension_status` is provided (a `SuspensionInfo`), Stage 4 runs
@@ -185,12 +195,13 @@ Modules:
 
 - `__init__.py` (`HolidayCalendar`, `SuspensionInfo`) — Fetches the NYC DOT annual ICS
   calendar from `nyc.gov`. Parses `VEVENT` entries to build a date-to-reason mapping.
-  Falls back to a hardcoded calendar when the ICS fetch fails. Exposes
-  `is_suspended(date)` returning a `SuspensionInfo`. Also exports `apply_suspension()`
-  which annotates a `ScheduleResult` with suspension fields.
-- `poller.py` (`NYC311Client`) — Polls the NYC311 API for real-time emergency ASP
-  suspension announcements (weather events, sanitation emergencies). Also handles
-  integration with the `ha-nyc311` HA integration as an alternative data source.
+  Falls back to a hardcoded calendar (2026 confirmed dates) when the ICS fetch fails.
+  Exposes `is_suspended(date)` returning a `SuspensionInfo`. Also exports
+  `apply_suspension()` which annotates a `ScheduleResult` with suspension fields.
+- `poller.py` (`NYC311Client`, `NYC311AuthError`) — Polls the NYC 311 GetCalendar API
+  for real-time emergency ASP suspension announcements (weather events, sanitation
+  emergencies). Also handles integration with the `ha-nyc311` HA integration as an
+  alternative data source. Raises `NYC311AuthError` on HTTP 401/403.
 - `merge.py` (`apply_suspension`) — Merges holiday and NYC311 suspension signals into a
   single `SuspensionInfo` and applies it to a `ScheduleResult`, setting the `suspended`,
   `suspension_reason`, and `resolution_reason` fields on `ScheduleFound` /
@@ -218,6 +229,8 @@ Modules:
     |
     +-- Movement threshold check (default 50m; skips pipeline if below threshold)
     |
+    +-- Optional: parking area check (parking_lat/lon/radius; skips if car has not left)
+    |
     +-- Stage 1: resolve() → ResolutionResult
     +-- Stage 2: retrieve_signs() → SignRetrievalResult
     +-- Stage 3: compute_schedule() → ScheduleResult
@@ -226,12 +239,12 @@ Modules:
     |
     +-- Notify entities via async_add_update_callback() callbacks
            |
-     ------+------
-     |            |
-  sensor.py   binary_sensor.py
-  next_move   asp_active_now
-  schedule
-  summary
+     ------+----------+-------
+     |                |      |
+  sensor.py   binary_sensor  switch.py
+  next_move   asp_active_now debug_mode
+  schedule    (+ 9 diag
+  summary      sensors)
 ```
 
 **Key design:** The coordinator is event-driven, not polled. It does not subclass
@@ -246,6 +259,21 @@ beyond the configured movement threshold, plus a periodic forced refresh.
 | `sensor.asp_next_move` | `sensor` | Datetime of the next upcoming ASP cleaning window |
 | `sensor.asp_schedule_summary` | `sensor` | Human-readable schedule string (e.g., `"Mon 8–9:30 AM"`) |
 | `binary_sensor.asp_active_now` | `binary_sensor` | `true` when currently inside a cleaning window |
+| `switch.asp_debug_mode` | `switch` | Toggles coordinator debug mode in-memory (resets to off on restart) |
+| `sensor.asp_confidence_score` | `sensor` (diagnostic) | Resolution confidence score 0.0–1.0 |
+| `sensor.asp_soda_level` | `sensor` (diagnostic) | SODA fallback level that resolved this location (1–4) |
+| `sensor.asp_resolved_street` | `sensor` (diagnostic) | Resolved on-street name in CSCL format |
+| `sensor.asp_resolution_status` | `sensor` (diagnostic) | Resolution outcome string |
+| `sensor.asp_last_resolved` | `sensor` (diagnostic) | Timestamp of last successful pipeline run |
+| `sensor.asp_last_error` | `sensor` (diagnostic) | Last pipeline error message |
+| `sensor.asp_latitude` | `sensor` (diagnostic) | Last resolved latitude |
+| `sensor.asp_longitude` | `sensor` (diagnostic) | Last resolved longitude |
+| `sensor.asp_car_name` | `sensor` (diagnostic) | Device tracker friendly name |
+| `sensor.asp_vin` | `sensor` (diagnostic) | VIN from vehicle integration (if available) |
+
+**Diagnostics support:** `diagnostics.py` implements `async_get_config_entry_diagnostics()`
+for the HA Diagnostics viewer. Sensitive fields (`parking_lat`, `parking_lon`,
+`debug_lat`, `debug_lon`, `nyc311_api_key`, `notify_service`) are automatically redacted.
 
 **Suspension integration:** At startup the coordinator loads `HolidayCalendar` and
 checks today's date. If an `nyc311_api_key` is configured, `NYC311Client` polls the
@@ -259,14 +287,13 @@ the `src/gps2asp/` library. The integration does not rely on the library being i
 separately — everything is self-contained for HACS users.
 
 **First-run index download:** On first HA setup, if no local spatial index exists, the
-integration downloads `index.zip` from the GitHub releases page
-(`releases/download/index-v1/index.zip`) and extracts it automatically. No manual build
-step is required for HA users.
+integration downloads `index.zip` from the GitHub releases page and extracts it
+automatically. No manual build step is required for HA users.
 
 **Push notifications:** When `notify_service` is configured, the coordinator sends a
 push notification via `hass.services.async_call("notify", ...)` when a cleaning window
-starts within 2 hours of the current time. Each unique `CleaningWindow` triggers at most
-one notification.
+starts within the configured lead time (default 120 minutes). Each unique
+`CleaningWindow` triggers at most one notification.
 
 ---
 
@@ -281,7 +308,7 @@ the resolver can run.
 |---|---|
 | `data/index/segments.idx` + `segments.dat` | R-tree binary index files (rtree library format) |
 | `data/index/segments.json` | Segment attributes: geometry WKT, street names, ASP presence flags, `streetwidth`, `borocode` |
-| `data/index/graph.json` | Street adjacency graph for mid-span BFS (used by `signs/graph.py`) |
+| `data/index/graph.json.zst` | Street adjacency graph for mid-span BFS, zstandard-compressed (used by `signs/graph.py`) |
 | `data/index/build_info.json` | Build timestamp and per-borough coverage statistics |
 
 Index files are gitignored. Each developer must build locally or download from the
@@ -322,6 +349,7 @@ cross-streets — return `no_match` at Levels 1–3. The Level 4 BFS traversal v
 |---|---|---|---|
 | `GPS2ASP_INDEX_DIR` | No | `src/gps2asp/data/index/` | Override path to the spatial index directory. Useful for testing with a custom index or in CI environments. |
 | `NYC_OPEN_DATA_APP_TOKEN` | No | (none) | NYC Open Data SODA API app token. Without it, requests share the anonymous rate-limit pool. Obtain from `data.cityofnewyork.us`. |
+| `NYC_311_API_KEY` | No | (none) | NYC 311 API subscription key for emergency suspension polling. Used by `NYC311Client` as a fallback when no key is configured in the HA options flow. |
 
 ### 7.2 Home Assistant Config Flow
 
@@ -349,18 +377,26 @@ In addition to the threshold and API key fields above, the options flow exposes:
 |---|---|
 | `nyc311_entity` | Optional HA `binary_sensor` entity ID to read NYC311 suspension state from (alternative to direct API polling) |
 | `notify_service` | Optional HA notify service name for move reminders (e.g., `mobile_app_my_phone`) |
-| `debug_enabled` | Enables debug mode — coordinator ignores the real device tracker and resolves against the debug coordinates/datetime |
+| `notify_lead_time` | Minutes before a cleaning window to send push notification (default 120) |
+| `parking_lat` / `parking_lon` | Optional fixed parking area coordinates. Pipeline is skipped if the car has not left this area (within `parking_radius` meters). |
+| `parking_radius` | Radius in meters for the parking area check (default 500) |
 | `debug_lat` / `debug_lon` | Override coordinates used when debug mode is active |
 | `debug_datetime` | Override datetime used when debug mode is active (ISO 8601 string) |
 | `suppress_notifications` | When debug mode is active, suppress push notifications |
 
 ### 7.3 Debug Overrides (debug mode only)
 
-When `debug_enabled` is `true`, the coordinator ignores the real device tracker and
+Debug mode is toggled at runtime via the `switch.asp_debug_mode` entity on the HA
+dashboard. The state is in-memory only — it resets to `off` on every HA restart by
+design. When debug mode is active, the coordinator ignores the real device tracker and
 instead resolves against the configured `debug_lat` / `debug_lon` / `debug_datetime`.
 The debug datetime also replaces `datetime.now()` for all time-sensitive operations
 in the coordinator (next-window computation, stale timeout checks). Intended for
 development and testing within the HA UI without needing a real GPS device.
+
+Note: `CONF_DEBUG_ENABLED` has been removed from `entry.options` (Phase 29). The
+`switch.py` entity is the sole runtime setter; it writes directly to
+`coordinator._debug_enabled` and never touches `entry.options`.
 
 ---
 
