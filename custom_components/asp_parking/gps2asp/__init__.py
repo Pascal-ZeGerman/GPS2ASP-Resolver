@@ -11,7 +11,9 @@ from .resolver.exceptions import (
     OutsideNYCError,
     NoSegmentFoundError,
     AmbiguousResolutionError,
+    IndexNotFoundError,
 )
+from .signs.exceptions import SODAAPIError, IncompleteResultsError
 
 __all__ = [
     "resolve_asp",
@@ -21,4 +23,7 @@ __all__ = [
     "OutsideNYCError",
     "NoSegmentFoundError",
     "AmbiguousResolutionError",
+    "IndexNotFoundError",
+    "SODAAPIError",
+    "IncompleteResultsError",
 ]
