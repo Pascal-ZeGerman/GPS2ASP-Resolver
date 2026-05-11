@@ -338,7 +338,6 @@ async def retrieve_signs(
         logger.debug("Level 3: received %d raw records for broad query", len(records))
 
         if records:
-            any_soda_results = True
             # Client-side cross-street filtering
             filtered = [
                 r for r in records if _cross_streets_match(r, from_street, to_street)
@@ -348,6 +347,9 @@ async def retrieve_signs(
             )
 
             if filtered:
+                # Cross streets matched: this block exists in SODA. Level 4 is
+                # not needed regardless of whether broom signs are present.
+                any_soda_results = True
                 result = await _try_query(
                     client,
                     on_var,
@@ -368,8 +370,8 @@ async def retrieve_signs(
                         len(result.signs),
                     )
                     return result
-                # filtered had records but dedup yielded no signs
-                # treat as any_soda_results (no ASP signs on this block)
+                # filtered had records but dedup yielded no signs —
+                # block is in SODA but has no ASP broom signs.
 
     # ------------------------------------------------------------------
     # Level 4: Best-covering span (mid-span blocks)
