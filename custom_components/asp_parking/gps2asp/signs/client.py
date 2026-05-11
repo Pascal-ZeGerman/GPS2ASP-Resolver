@@ -147,7 +147,10 @@ class SODAClient:
                     await asyncio.sleep(delay)
 
         # All retries exhausted
-        assert last_error is not None
+        if last_error is None:
+            raise RuntimeError(
+                "unreachable: retry loop exited without recording an error"
+            )
 
         if records_fetched_so_far > 0:
             # Previous pages succeeded -- this is an incomplete result
