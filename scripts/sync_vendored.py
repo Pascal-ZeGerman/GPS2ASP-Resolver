@@ -121,6 +121,22 @@ def main() -> int:
                 vendor_path.write_text(target_text, encoding="utf-8")
                 written += 1
 
+    # Second pass: detect vendor-only files that have no src counterpart.
+    # These are stale modules left behind after a source file was deleted.
+    synced_rels = {src.relative_to(SRC_ROOT) for src in source_files}
+    for vendor_py in sorted(
+        p
+        for p in VENDOR_ROOT.rglob("*.py")
+        if "data" not in p.relative_to(VENDOR_ROOT).parts
+    ):
+        rel = vendor_py.relative_to(VENDOR_ROOT)
+        if rel not in synced_rels:
+            if args.dry_run:
+                drifted.append(f"[stale] {rel}")
+            else:
+                vendor_py.unlink()
+                written += 1
+
     if args.dry_run:
         if drifted:
             print(
