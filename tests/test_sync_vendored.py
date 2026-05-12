@@ -438,3 +438,28 @@ class TestCliDryRun:
         captured = capsys.readouterr()
         assert exit_code == 1
         assert "deleted_module.py" in captured.out
+
+    def test_write_mode_deletes_stale_vendor_file(
+        self,
+        staged_trees: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Write mode must physically delete a stale vendor file that has no src
+        counterpart and exit 0. Covers the vendor_py.unlink() branch."""
+        src_root, vendor_root = staged_trees
+        # One real source file so src_written/unchanged are non-trivial.
+        _stage_source(src_root, "pipeline.py", "from gps2asp.api_models import ASPResult\n")
+        _stage_vendor(vendor_root, "pipeline.py", "from .api_models import ASPResult\n")
+        # Stale vendor file with no src counterpart.
+        stale_file = _stage_vendor(vendor_root, "deleted_module.py", "# stale\n")
+        assert stale_file.exists()
+
+        monkeypatch.setattr(sys, "argv", ["sync_vendored.py"])
+        exit_code = sync_vendored.main()
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        assert not stale_file.exists(), "stale vendor file should have been deleted"
+        # Summary must mention the deleted count.
+        assert "deleted 1 stale file" in captured.out
