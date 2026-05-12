@@ -89,12 +89,14 @@ class SpatialIndex:
     def reset(cls) -> None:
         """Clear the singleton instance (for testing).
 
-        After reset, the next call to get() will create and load a fresh instance.
+        Must only be called when no coroutines are concurrently awaiting get().
+        The lock is preserved intentionally — resetting it would allow concurrent
+        get() calls to race past the double-checked load guard.
         """
         if cls._instance is not None and cls._instance._index is not None:
             cls._instance._index.close()
         cls._instance = None
-        cls._lock = None
+        # _lock is intentionally NOT reset — see docstring.
 
     async def _load(self) -> None:
         """Load the R-tree index and segment metadata from disk.
