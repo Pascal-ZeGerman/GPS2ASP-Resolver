@@ -103,7 +103,8 @@ def main() -> int:
     args = parser.parse_args()
 
     drifted: list[str] = []
-    written = 0
+    src_written = 0
+    stale_deleted = 0
     source_files = iter_source_files()
     for src_path in source_files:
         rel = src_path.relative_to(SRC_ROOT)
@@ -119,7 +120,7 @@ def main() -> int:
             else:
                 vendor_path.parent.mkdir(parents=True, exist_ok=True)
                 vendor_path.write_text(target_text, encoding="utf-8")
-                written += 1
+                src_written += 1
 
     # Second pass: detect vendor-only files that have no src counterpart.
     # These are stale modules left behind after a source file was deleted.
@@ -135,7 +136,7 @@ def main() -> int:
                 drifted.append(f"[stale] {rel}")
             else:
                 vendor_py.unlink()
-                written += 1
+                stale_deleted += 1
 
     if args.dry_run:
         if drifted:
@@ -150,8 +151,11 @@ def main() -> int:
         print("Vendored mirror is in sync with src/gps2asp/.")
         return 0
 
-    unchanged = len(source_files) - written
-    print(f"Synced {written} file(s); {unchanged} already up to date.")
+    unchanged = len(source_files) - src_written
+    print(
+        f"Synced {src_written} file(s), deleted {stale_deleted} stale file(s);"
+        f" {unchanged} already up to date."
+    )
     return 0
 
 
