@@ -79,7 +79,8 @@
         "data_description": {
           "debug_lat": "Fake GPS latitude for testing. Both lat and lon must be set together.",
           "debug_lon": "Fake GPS longitude for testing. Both lat and lon must be set together.",
-          "debug_datetime": "Replace the current date/time for schedule and suspension checks."
+          "debug_datetime": "Replace the current date/time for schedule and suspension checks.",
+          "suppress_notifications": "When enabled, push notifications are silenced while debug overrides are active. Prevents test runs from sending alerts to your phone."
         }
       },
       "parking_area": {
