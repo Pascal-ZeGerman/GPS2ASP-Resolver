@@ -17,7 +17,7 @@ ASPLastErrorSensor.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
@@ -38,6 +38,7 @@ from .gps2asp.suspension import apply_suspension
 
 from .const import CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT, DOMAIN, VERSION
 from .coordinator import ASPParkingCoordinator
+from .util import now_ha_local
 
 
 async def async_setup_entry(
@@ -106,16 +107,29 @@ class ASPNextMoveTimeSensor(SensorEntity):
         )
 
     def _format_move_time(self, dt: datetime) -> str:
-        """Return human-friendly move time string, with urgency prefix if <12h away."""
+        """Return human-friendly move time string with date-aware tier.
+
+        Three tiers (FMT-01, D-01):
+          - Today    -> "\u26a0 Today, 8:30 AM"
+          - Tomorrow -> "Tomorrow, 8:30 AM"
+          - Other    -> "Thursday (5/3), 8:30 AM"
+
+        All date comparisons use HA's configured local timezone via
+        now_ha_local(); the 12-hour seconds heuristic is removed (D-02).
+        """
         local_dt = dt_util.as_local(dt)
-        seconds_until = (dt_util.as_utc(dt) - dt_util.utcnow()).total_seconds()
-        time_str = local_dt.strftime("%I:%M %p").lstrip(
-            "0"
-        )  # e.g. "8:00 AM" (no leading zero, portable)
-        if seconds_until < 12 * 3600:
-            return f"\u26a0 Today {time_str}"
-        day_str = local_dt.strftime("%a")  # "Mon", "Tue", etc.
-        return f"{day_str} {time_str}"
+        today = now_ha_local().date()
+        target_date = local_dt.date()
+        time_str = local_dt.strftime("%I:%M %p").lstrip("0")
+
+        if target_date == today:
+            return f"\u26a0 Today, {time_str}"
+        if target_date == today + timedelta(days=1):
+            return f"Tomorrow, {time_str}"
+
+        weekday = local_dt.strftime("%A")
+        md = f"{local_dt.month}/{local_dt.day}"
+        return f"{weekday} ({md}), {time_str}"
 
     @property
     def native_value(self) -> str | None:
@@ -123,7 +137,9 @@ class ASPNextMoveTimeSensor(SensorEntity):
 
         Maps coordinator data to one of:
         - Human-friendly time string (ScheduleFound or ASPActiveNow)
-          Normal: "Mon 8:00 AM", Urgent (<12h): "⚠ Today 8:00 AM"
+          Today: "⚠ Today, 8:30 AM"
+          Tomorrow: "Tomorrow, 8:30 AM"
+          Other: "Thursday (5/3), 8:30 AM"
         - "No restrictions" (NoASPSchedule, NoMatchSchedule, AllUnparseable)
         - "Outside coverage area" (special_state)
         - "No street match" (special_state)
@@ -198,6 +214,13 @@ class ASPNextMoveTimeSensor(SensorEntity):
         """
         data = self._coordinator.data
         attrs: dict[str, str | float | int | list | None] = {}
+
+        # Date-relationship booleans (D-06: always present, default False)
+        # Set defaults BEFORE branching so attributes are present even when no
+        # concrete _move_dt exists (Claude's discretion: never None, never omitted).
+        attrs["next_move_is_today"] = False
+        attrs["next_move_is_tomorrow"] = False
+
         schedule = data.schedule_result
 
         # Lazy merge suspension at read time
@@ -240,17 +263,23 @@ class ASPNextMoveTimeSensor(SensorEntity):
 
             attrs["schedule_summary"] = schedule.summary
 
-            # Urgency attribute — only when a concrete move datetime exists
+            # Urgency + date-relationship booleans — only when a concrete move
+            # datetime exists. Single source-of-truth derivation (Pitfall 4):
+            # is_today / is_tomorrow drive both urgency and the new booleans.
             _move_dt: datetime | None = None
             if isinstance(schedule, ScheduleFound) and schedule.next_window is not None:
                 _move_dt = schedule.next_window.start_datetime
             elif isinstance(schedule, ASPActiveNow):
                 _move_dt = schedule.active_window.end_datetime
             if _move_dt is not None:
-                seconds_until = (
-                    dt_util.as_utc(_move_dt) - dt_util.utcnow()
-                ).total_seconds()
-                attrs["urgency"] = "high" if seconds_until < 12 * 3600 else "normal"
+                local_dt = dt_util.as_local(_move_dt)
+                today = now_ha_local().date()
+                target_date = local_dt.date()
+                is_today = target_date == today
+                is_tomorrow = target_date == today + timedelta(days=1)
+                attrs["urgency"] = "high" if is_today else "normal"
+                attrs["next_move_is_today"] = is_today
+                attrs["next_move_is_tomorrow"] = is_tomorrow
 
             # --- Location group ---
             attrs["street_name"] = schedule.on_street
