@@ -193,10 +193,15 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
                 ].index(d),
             )
             attrs["cleaning_days"] = day_names
-            if weekly.windows:
-                first_window = weekly.windows[0]
-                attrs["time_window_start"] = first_window.start_time.strftime("%H:%M")
-                attrs["time_window_end"] = first_window.end_time.strftime("%H:%M")
+
+        # time_window_start/end: mirror production logic — use next_window (the
+        # temporally-next window), not weekly.windows[0] (day-sorted first entry).
+        # Gated on ScheduleFound with a non-None next_window, matching sensor.py.
+        if isinstance(schedule, ScheduleFound) and schedule.next_window is not None:
+            attrs["time_window_start"] = schedule.next_window.start_time.strftime(
+                "%H:%M"
+            )
+            attrs["time_window_end"] = schedule.next_window.end_time.strftime("%H:%M")
 
         attrs["schedule_summary"] = schedule.summary
 
