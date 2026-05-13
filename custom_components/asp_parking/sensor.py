@@ -17,7 +17,7 @@ ASPLastErrorSensor.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
@@ -106,19 +106,25 @@ class ASPNextMoveTimeSensor(SensorEntity):
             sw_version=VERSION,
         )
 
-    def _format_move_time(self, dt: datetime) -> str:
+    def _format_move_time(self, dt: datetime, today: date | None = None) -> str:
         """Return human-friendly move time string with date-aware tier.
 
         Three tiers (FMT-01, D-01):
           - Today    -> "\u26a0 Today, 8:30 AM"
           - Tomorrow -> "Tomorrow, 8:30 AM"
-          - Other    -> "Thursday (5/3), 8:30 AM"
+          - Other    -> "Friday (5/15), 8:30 AM"
 
         All date comparisons use HA's configured local timezone via
         now_ha_local(); the 12-hour seconds heuristic is removed (D-02).
+
+        ``today`` may be pre-captured by the caller (e.g. extra_state_attributes)
+        so that a single snapshot is shared across multiple reads, eliminating a
+        midnight race where native_value and extra_state_attributes resolve "today"
+        independently and can disagree for one state cycle (WR-03).
         """
         local_dt = dt_util.as_local(dt)
-        today = now_ha_local().date()
+        if today is None:
+            today = now_ha_local().date()
         target_date = local_dt.date()
         time_str = local_dt.strftime("%I:%M %p").lstrip("0")
 
@@ -215,6 +221,13 @@ class ASPNextMoveTimeSensor(SensorEntity):
         data = self._coordinator.data
         attrs: dict[str, str | float | int | list | None] = {}
 
+        # Capture "today" once so that native_value (_format_move_time) and
+        # extra_state_attributes share the same date snapshot. Without this,
+        # a midnight boundary crossed between the two property reads produces a
+        # transient inconsistency (WR-03: urgency/"next_move_is_today" and the
+        # display string can disagree for one HA state cycle).
+        today = now_ha_local().date()
+
         # Date-relationship booleans (D-06: always present, default False)
         # Set defaults BEFORE branching so attributes are present even when no
         # concrete _move_dt exists (Claude's discretion: never None, never omitted).
@@ -273,7 +286,6 @@ class ASPNextMoveTimeSensor(SensorEntity):
                 _move_dt = schedule.active_window.end_datetime
             if _move_dt is not None:
                 local_dt = dt_util.as_local(_move_dt)
-                today = now_ha_local().date()
                 target_date = local_dt.date()
                 is_today = target_date == today
                 is_tomorrow = target_date == today + timedelta(days=1)
