@@ -225,7 +225,7 @@ class TestFormatMoveTime:
             assert sensor._format_move_time(move_dt) == "Tomorrow, 8:30 AM"
 
     def test_other_day_full_weekday_unpadded_md(self, nyc_timezone) -> None:
-        """Other day: move dt two days out → 'Thursday (5/15), 8:30 AM'."""
+        """Other day: move dt two days out → 'Friday (5/15), 8:30 AM'."""
         with freeze_time("2026-05-13 16:00:00"):
             sensor = _make_stub_sensor()
             move_dt = datetime(2026, 5, 15, 8, 30, tzinfo=NYC_TZ)
