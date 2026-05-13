@@ -18,6 +18,8 @@ from datetime import datetime, time, timedelta, timezone
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
+from freezegun import freeze_time
+
 from gps2asp.schedule.models import (
     ASPActiveNow,
     ASPDay,
@@ -40,15 +42,31 @@ UTC_TZ = timezone.utc
 def _format_move_time(dt: datetime) -> str:
     """Mirror of ASPNextMoveTimeSensor._format_move_time() for test helpers.
 
-    Uses stdlib only (no dt_util) so tests run without Home Assistant.
+    Uses stdlib only (no dt_util) so the existing tests run without Home
+    Assistant. Mirrors the Phase 32 three-tier production format (FMT-01,
+    D-01..D-03):
+
+      - Today    \u2192 "\u26a0 Today, 8:30 AM"
+      - Tomorrow \u2192 "Tomorrow, 8:30 AM"
+      - Other    \u2192 "Thursday (5/3), 8:30 AM"
+
+    The mirror uses NYC_TZ for backwards-compat with existing tests that
+    construct datetimes in NYC time. Boundary-correctness tests against
+    HA's configured TZ live in tests/test_sensor_display_format.py.
     """
     local_dt = dt.astimezone(NYC_TZ)
-    seconds_until = (dt - datetime.now(tz=UTC_TZ)).total_seconds()
+    today = datetime.now(tz=NYC_TZ).date()
+    target_date = local_dt.date()
     time_str = local_dt.strftime("%I:%M %p").lstrip("0")
-    if seconds_until < 12 * 3600:
-        return f"\u26a0 Today {time_str}"
-    day_str = local_dt.strftime("%a")
-    return f"{day_str} {time_str}"
+
+    if target_date == today:
+        return f"\u26a0 Today, {time_str}"
+    if target_date == today + timedelta(days=1):
+        return f"Tomorrow, {time_str}"
+
+    weekday = local_dt.strftime("%A")
+    md = f"{local_dt.month}/{local_dt.day}"
+    return f"{weekday} ({md}), {time_str}"
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +160,13 @@ def sensor_available(data: ASPParkingData, stale_timeout_hours: int = 8) -> bool
 def sensor_extra_attributes(data: ASPParkingData) -> dict:
     """Replicate ASPNextMoveTimeSensor.extra_state_attributes logic."""
     attrs: dict = {}
+
+    # --- Date-relationship booleans (Phase 32 D-06: always present, default False) ---
+    # Set defaults BEFORE branching so the keys appear on every code path
+    # (NoMatchSchedule, NoASPSchedule, AllUnparseable, special_state, …).
+    attrs["next_move_is_today"] = False
+    attrs["next_move_is_tomorrow"] = False
+
     schedule = data.schedule_result
 
     # Lazy merge suspension at read time
@@ -175,15 +200,22 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
 
         attrs["schedule_summary"] = schedule.summary
 
-        # Urgency attribute — only when a concrete move datetime exists
+        # Urgency attribute + Phase 32 D-04/D-06 booleans — only when a
+        # concrete move datetime exists. Date-equality gate (not 12h seconds).
         _move_dt: datetime | None = None
         if isinstance(schedule, ScheduleFound) and schedule.next_window is not None:
             _move_dt = schedule.next_window.start_datetime
         elif isinstance(schedule, ASPActiveNow):
             _move_dt = schedule.active_window.end_datetime
         if _move_dt is not None:
-            seconds_until = (_move_dt - datetime.now(tz=UTC_TZ)).total_seconds()
-            attrs["urgency"] = "high" if seconds_until < 12 * 3600 else "normal"
+            local_dt = _move_dt.astimezone(NYC_TZ)
+            today = datetime.now(tz=NYC_TZ).date()
+            target_date = local_dt.date()
+            is_today = target_date == today
+            is_tomorrow = target_date == today + timedelta(days=1)
+            attrs["urgency"] = "high" if is_today else "normal"
+            attrs["next_move_is_today"] = is_today
+            attrs["next_move_is_tomorrow"] = is_tomorrow
 
         attrs["street_name"] = schedule.on_street
         attrs["cross_streets"] = f"{schedule.from_street} to {schedule.to_street}"
@@ -639,11 +671,21 @@ class TestStaleTimeout:
 # ===========================================================================
 
 
-# Pattern for normal case: "Mon 8:00 AM" (abbreviated day + no-leading-zero 12h time)
-_NORMAL_FORMAT_RE = re.compile(r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2}:\d{2} (AM|PM)$")
+# Phase 32 three-tier display patterns (FMT-01, D-01).
+#
+# Pattern for "Today" tier: "⚠ Today, 8:30 AM"
+_TODAY_FORMAT_RE = re.compile(r"^⚠ Today, \d{1,2}:\d{2} (AM|PM)$")
 
-# Pattern for urgent case: "⚠ Today 8:00 AM"
-_URGENT_FORMAT_RE = re.compile(r"^\u26a0 Today \d{1,2}:\d{2} (AM|PM)$")
+# Pattern for "Tomorrow" tier: "Tomorrow, 8:30 AM"
+_TOMORROW_FORMAT_RE = re.compile(r"^Tomorrow, \d{1,2}:\d{2} (AM|PM)$")
+
+# Pattern for "other day" tier: "Thursday (5/3), 8:30 AM"
+# Full weekday name + unpadded M/D (no %-d which breaks on non-Linux CI).
+_OTHER_DAY_FORMAT_RE = re.compile(
+    r"^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)"
+    r" \(\d{1,2}/\d{1,2}\), \d{1,2}:\d{2} (AM|PM)$"
+)
+
 
 
 @pytest.mark.ha_integration
@@ -651,83 +693,108 @@ class TestHumanFriendlyNativeValue:
     """Test that native_value returns human-friendly strings, not ISO."""
 
     def test_schedule_found_normal_format(self) -> None:
-        """ScheduleFound >12h away returns 'Mon 8:00 AM' style string."""
-        # Create a window 24 hours from now (well past 12h threshold)
-        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=24)
-        window = _make_cleaning_window(
-            day=ASPDay.MONDAY,
-            start_dt=future_dt,
-            end_dt=future_dt + timedelta(hours=1, minutes=30),
-        )
-        result = _make_schedule_found(window)
-        data = ASPParkingData(schedule_result=result)
+        """ScheduleFound on a non-today/non-tomorrow date returns 'Thursday (5/15), 8:30 AM' style.
 
-        state = sensor_native_value(data)
+        Phase 32 (FMT-01, D-01): three-tier format. Wrap in freeze_time so
+        the window-relative-to-now construction lands deterministically on
+        the "other day" tier.
+        """
+        with freeze_time("2026-05-13 16:00:00"):
+            # Create a window 48 hours from now (two days out -> "other day" tier)
+            future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(
+                hours=48
+            )
+            window = _make_cleaning_window(
+                day=ASPDay.MONDAY,
+                start_dt=future_dt,
+                end_dt=future_dt + timedelta(hours=1, minutes=30),
+            )
+            result = _make_schedule_found(window)
+            data = ASPParkingData(schedule_result=result)
 
-        # Must match "DDD H:MM AM/PM" pattern — NOT an ISO string
-        assert state is not None
-        assert _NORMAL_FORMAT_RE.match(state), (
-            f"Expected normal format like 'Mon 8:00 AM', got: {state!r}"
-        )
-        # Must NOT be an ISO string (ISO format: YYYY-MM-DDTHH:MM...)
-        assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
-            f"ISO string leaked into native_value: {state!r}"
-        )
+            state = sensor_native_value(data)
+
+            # Must match the three-tier "other day" pattern — NOT an ISO string
+            assert state is not None
+            assert _OTHER_DAY_FORMAT_RE.match(state), (
+                f"Expected other-day format like 'Thursday (5/15), 8:30 AM', got: {state!r}"
+            )
+            # Must NOT be an ISO string (ISO format: YYYY-MM-DDTHH:MM...)
+            assert not re.match(r"\d{4}-\d{2}-\d{2}T", state), (
+                f"ISO string leaked into native_value: {state!r}"
+            )
 
     def test_schedule_found_urgent_format(self) -> None:
-        """ScheduleFound <12h away returns '⚠ Today 8:00 AM' prefix."""
-        # Create a window 3 hours from now (inside 12h threshold)
-        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=3)
-        window = _make_cleaning_window(
-            day=ASPDay.MONDAY,
-            start_dt=soon_dt,
-            end_dt=soon_dt + timedelta(hours=1, minutes=30),
-        )
-        result = _make_schedule_found(window)
-        data = ASPParkingData(schedule_result=result)
+        """ScheduleFound landing on today returns '⚠ Today, 8:30 AM' prefix.
 
-        state = sensor_native_value(data)
+        Phase 32 (FMT-01, D-01): today tier wraps in freeze_time so the
+        +3h offset (from 16:00 NYC -> 19:00 NYC) stays on the same date.
+        """
+        with freeze_time("2026-05-13 16:00:00"):
+            # Create a window 3 hours from now (same day under frozen clock)
+            soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=3)
+            window = _make_cleaning_window(
+                day=ASPDay.MONDAY,
+                start_dt=soon_dt,
+                end_dt=soon_dt + timedelta(hours=1, minutes=30),
+            )
+            result = _make_schedule_found(window)
+            data = ASPParkingData(schedule_result=result)
 
-        assert state is not None
-        assert _URGENT_FORMAT_RE.match(state), (
-            f"Expected urgent format like '⚠ Today 8:00 AM', got: {state!r}"
-        )
+            state = sensor_native_value(data)
+
+            assert state is not None
+            assert _TODAY_FORMAT_RE.match(state), (
+                f"Expected today format like '⚠ Today, 8:30 AM', got: {state!r}"
+            )
 
     def test_asp_active_now_normal_format(self) -> None:
-        """ASPActiveNow >12h end time returns 'Mon 8:00 AM' style for end time."""
-        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=24)
-        window = _make_cleaning_window(
-            day=ASPDay.MONDAY,
-            start_dt=future_dt - timedelta(hours=1),
-            end_dt=future_dt,
-        )
-        result = _make_asp_active_now(window)
-        data = ASPParkingData(schedule_result=result)
+        """ASPActiveNow with end time on a different date returns 'Thursday (5/15), 8:30 AM' style.
 
-        state = sensor_native_value(data)
+        Phase 32 (FMT-01, D-01): wrap in freeze_time so +48h lands deterministically
+        on the "other day" tier (two days out).
+        """
+        with freeze_time("2026-05-13 16:00:00"):
+            future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(
+                hours=48
+            )
+            window = _make_cleaning_window(
+                day=ASPDay.MONDAY,
+                start_dt=future_dt - timedelta(hours=1),
+                end_dt=future_dt,
+            )
+            result = _make_asp_active_now(window)
+            data = ASPParkingData(schedule_result=result)
 
-        assert state is not None
-        assert _NORMAL_FORMAT_RE.match(state), (
-            f"Expected normal format for ASPActiveNow, got: {state!r}"
-        )
+            state = sensor_native_value(data)
+
+            assert state is not None
+            assert _OTHER_DAY_FORMAT_RE.match(state), (
+                f"Expected other-day format like 'Thursday (5/15), 8:30 AM', got: {state!r}"
+            )
 
     def test_asp_active_now_urgent_format(self) -> None:
-        """ASPActiveNow with end time <12h away gets urgency prefix."""
-        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=2)
-        window = _make_cleaning_window(
-            day=ASPDay.MONDAY,
-            start_dt=soon_dt - timedelta(minutes=30),
-            end_dt=soon_dt,
-        )
-        result = _make_asp_active_now(window)
-        data = ASPParkingData(schedule_result=result)
+        """ASPActiveNow with end time landing on today gets urgency prefix.
 
-        state = sensor_native_value(data)
+        Phase 32 (FMT-01, D-01): wrap in freeze_time so +2h from 16:00 NYC
+        stays on the same date and produces the today tier.
+        """
+        with freeze_time("2026-05-13 16:00:00"):
+            soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=2)
+            window = _make_cleaning_window(
+                day=ASPDay.MONDAY,
+                start_dt=soon_dt - timedelta(minutes=30),
+                end_dt=soon_dt,
+            )
+            result = _make_asp_active_now(window)
+            data = ASPParkingData(schedule_result=result)
 
-        assert state is not None
-        assert _URGENT_FORMAT_RE.match(state), (
-            f"Expected urgent format for ASPActiveNow end, got: {state!r}"
-        )
+            state = sensor_native_value(data)
+
+            assert state is not None
+            assert _TODAY_FORMAT_RE.match(state), (
+                f"Expected today format like '⚠ Today, 8:30 AM' for ASPActiveNow end, got: {state!r}"
+            )
 
     def test_no_iso_string_leaks_in_schedule_found(self) -> None:
         """native_value for ScheduleFound must never contain raw ISO datetime."""
@@ -768,49 +835,70 @@ class TestUrgencyAttribute:
     """Test that extra_state_attributes gains 'urgency' key."""
 
     def test_urgency_normal_when_far_away(self) -> None:
-        """Move time >12h away -> urgency='normal'."""
-        future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=24)
-        window = _make_cleaning_window(
-            start_dt=future_dt,
-            end_dt=future_dt + timedelta(hours=2),
-        )
-        result = _make_schedule_found(window)
-        data = ASPParkingData(schedule_result=result)
+        """Move time on a different date -> urgency='normal' (Phase 32 D-04).
 
-        attrs = sensor_extra_attributes(data)
-        assert "urgency" in attrs, "urgency key missing from extra_state_attributes"
-        assert attrs["urgency"] == "normal"
+        The date-equality gate replaces the old 12h-seconds threshold; wrap
+        in freeze_time so the +48h delta deterministically lands on a
+        non-today date.
+        """
+        with freeze_time("2026-05-13 16:00:00"):
+            future_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(
+                hours=48
+            )
+            window = _make_cleaning_window(
+                start_dt=future_dt,
+                end_dt=future_dt + timedelta(hours=2),
+            )
+            result = _make_schedule_found(window)
+            data = ASPParkingData(schedule_result=result)
+
+            attrs = sensor_extra_attributes(data)
+            assert "urgency" in attrs, "urgency key missing from extra_state_attributes"
+            assert attrs["urgency"] == "normal"
 
     def test_urgency_high_when_soon(self) -> None:
-        """Move time <12h away -> urgency='high'."""
-        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=3)
-        window = _make_cleaning_window(
-            start_dt=soon_dt,
-            end_dt=soon_dt + timedelta(hours=2),
-        )
-        result = _make_schedule_found(window)
-        data = ASPParkingData(schedule_result=result)
+        """Move time landing on today -> urgency='high' (Phase 32 D-04).
 
-        attrs = sensor_extra_attributes(data)
-        assert "urgency" in attrs
-        assert attrs["urgency"] == "high"
+        Wrap in freeze_time so +3h from 16:00 NYC stays on the same date.
+        """
+        with freeze_time("2026-05-13 16:00:00"):
+            soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=3)
+            window = _make_cleaning_window(
+                start_dt=soon_dt,
+                end_dt=soon_dt + timedelta(hours=2),
+            )
+            result = _make_schedule_found(window)
+            data = ASPParkingData(schedule_result=result)
+
+            attrs = sensor_extra_attributes(data)
+            assert "urgency" in attrs
+            assert attrs["urgency"] == "high"
 
     def test_urgency_high_for_asp_active_now_soon(self) -> None:
-        """ASPActiveNow with end time <12h -> urgency='high'."""
-        soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=1)
-        window = _make_cleaning_window(
-            start_dt=soon_dt - timedelta(minutes=30),
-            end_dt=soon_dt,
-        )
-        result = _make_asp_active_now(window)
-        data = ASPParkingData(schedule_result=result)
+        """ASPActiveNow with end time on today -> urgency='high' (Phase 32 D-04).
 
-        attrs = sensor_extra_attributes(data)
-        assert "urgency" in attrs
-        assert attrs["urgency"] == "high"
+        Wrap in freeze_time so +1h from 16:00 NYC stays on the same date.
+        """
+        with freeze_time("2026-05-13 16:00:00"):
+            soon_dt = datetime.now(tz=ZoneInfo("America/New_York")) + timedelta(hours=1)
+            window = _make_cleaning_window(
+                start_dt=soon_dt - timedelta(minutes=30),
+                end_dt=soon_dt,
+            )
+            result = _make_asp_active_now(window)
+            data = ASPParkingData(schedule_result=result)
+
+            attrs = sensor_extra_attributes(data)
+            assert "urgency" in attrs
+            assert attrs["urgency"] == "high"
 
     def test_urgency_absent_when_next_window_none(self) -> None:
-        """ScheduleFound with next_window=None -> no urgency key."""
+        """ScheduleFound with next_window=None -> no urgency key.
+
+        Phase 32 D-06: also verifies that the new boolean attributes
+        (next_move_is_today, next_move_is_tomorrow) are PRESENT and False
+        when no concrete move datetime exists (never None, never omitted).
+        """
         tw = TimeWindow(
             day=ASPDay.MONDAY,
             start_time=time(8, 30),
@@ -834,6 +922,9 @@ class TestUrgencyAttribute:
         attrs = sensor_extra_attributes(data)
         # urgency must NOT be present when no datetime is available
         assert "urgency" not in attrs
+        # Phase 32 D-06: boolean attributes always present and False here
+        assert attrs["next_move_is_today"] is False
+        assert attrs["next_move_is_tomorrow"] is False
 
     def test_urgency_absent_for_no_asp_schedule(self) -> None:
         """NoASPSchedule -> no urgency key in attributes."""
