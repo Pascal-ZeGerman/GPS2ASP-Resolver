@@ -71,6 +71,32 @@ The integration is aware of citywide ASP suspension days. It checks the NYC DOT 
 
 If you have the companion [ha-nyc311](https://github.com/Pascal-ZeGerman/ha-nyc311) integration installed, ASP Parking can subscribe to its `binary_sensor.nyc311_parking_exception_today` entity for real-time suspension updates without requiring a separate API key.
 
+## Upgrade Notes
+
+### v3.2 — Sensor Display Format (Breaking change)
+
+**What changed.** Before this release, the `sensor.asp_parking_next_move_time` state used a short format like `"Mon 8:30 AM"` (or `"⚠ Today 8:30 AM"` when the next window was less than 12 hours away). After this release, the state uses a three-tier date-aware format:
+
+- **Today**: `"⚠ Today, 8:30 AM"` — when the next move is today in Home Assistant's configured local timezone
+- **Tomorrow**: `"Tomorrow, 8:30 AM"` — when the next move is tomorrow
+- **Other day**: `"Thursday (5/3), 8:30 AM"` — full weekday name plus unpadded `M/D` for any other day
+
+The "Today" gate now compares the move's local date against Home Assistant's configured local timezone. Previously it used a 12-hour seconds-until threshold, which could mislabel an 8 AM move shown at 11 PM the night before as "Today" instead of "Tomorrow". The new gate is wall-clock-correct for any HA install regardless of where the user (or their HA instance) sits.
+
+**Templates affected.** Any Lovelace card or automation that did state-string matching on the prior format will break, for example:
+
+- `{% if states.sensor.asp_parking_next_move_time.state.startswith('Mon ') %}`
+- `{% if '⚠ Today' in states.sensor.asp_parking_next_move_time.state %}`
+
+**Migration.**
+
+- Replace state-string matching with the new boolean attributes on the next-move sensor:
+  - `next_move_is_today` — `True` when the next move is today in HA's local timezone, `False` otherwise
+  - `next_move_is_tomorrow` — `True` when the next move is tomorrow, `False` otherwise
+
+  Both attributes are always present (`False` when no move datetime exists), so templates can read them safely without `| default(false)`.
+- For raw datetime access, the existing `next_window_start` attribute (ISO 8601 string) is preserved unchanged — it remains the stable programmatic-access surface for templates and automations that need the underlying timestamp rather than the rendered label.
+
 ## Known Limitations
 
 **Coverage varies by borough.** ASP Parking matches your GPS location against NYC's official sign database. As of the current index build, approximate borough coverage is: Brooklyn ~47.9%, Manhattan ~29.5%, Bronx ~28.6%, Queens ~18.1%, Staten Island ~0%. The integration uses graph-based BFS matching to improve coverage for mid-block locations that fall in the middle of a sign record rather than at its boundary cross-streets.
