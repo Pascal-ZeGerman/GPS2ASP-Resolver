@@ -85,6 +85,14 @@ from .const import (
     DEFAULT_SUPPRESS_NOTIFICATIONS,
     DEFAULT_SUSPENSION_INTERVAL,
     GPS_DEBOUNCE_COOLDOWN,
+    INDEX_DOWNLOAD_URL,
+)
+from .index_io import (
+    INDEX_DIR,
+    _sync_atomic_swap,
+    _sync_cleanup_stale,
+    _sync_download_and_extract,
+    _sync_read_build_timestamp,
 )
 
 if TYPE_CHECKING:
@@ -229,6 +237,14 @@ class ASPParkingCoordinator:
         self._sign_cache: dict[tuple[str, str, str, str], list[dict]] = {}
         self._preseed_task: asyncio.Task[None] | None = None
         self._unsub_cache_rebuild: CALLBACK_TYPE | None = None
+
+        # Phase 33: index rebuild lifecycle (IDX-02..IDX-04).
+        # Lock is constructed inside __init__ (NOT at class scope) so it binds
+        # to the current event loop per RESEARCH Pitfall 1.
+        self._is_rebuilding: bool = False
+        self._rebuild_task: asyncio.Task[None] | None = None
+        self._rebuild_lock: asyncio.Lock = asyncio.Lock()
+        self._last_rebuilt: datetime | None = None
 
         # Debouncer: coalesce rapid GPS updates into a single pipeline run
         self._debouncer = Debouncer(
@@ -439,6 +455,12 @@ class ASPParkingCoordinator:
                 self._parking_radius_m,
             )
 
+        # Phase 33: pre-populate _last_rebuilt from build_info.json so the
+        # last_rebuilt sensor is non-None on first startup (RESEARCH Open Q3).
+        self._last_rebuilt = await self.hass.async_add_executor_job(
+            _sync_read_build_timestamp, INDEX_DIR
+        )
+
         logger.info(
             "ASP Parking coordinator started: tracking %s, "
             "movement threshold %.0fm, refresh every %dh",
@@ -455,6 +477,143 @@ class ASPParkingCoordinator:
         self._entity_update_callbacks.clear()
         self._debouncer.async_cancel()
         logger.info("ASP Parking coordinator stopped")
+
+    # ------------------------------------------------------------------
+    # Phase 33: index rebuild orchestration (IDX-01..IDX-04)
+    # ------------------------------------------------------------------
+
+    async def async_request_rebuild(self) -> None:
+        """Public entry point: fire-and-forget spawn of the rebuild task.
+
+        IDX-02 concurrent-press protection: if a rebuild is already in
+        progress, this is a no-op (the flag is the gate; the lock alone
+        would only serialize a second press behind the first one).
+
+        RESEARCH Pitfall 1: uses ``entry.async_create_background_task`` so
+        the task is auto-cancelled when the config entry is unloaded —
+        ``async_stop`` does not need explicit handling.
+        """
+        if self._is_rebuilding:
+            logger.info(
+                "ASP Parking: rebuild already in progress -- press ignored"
+            )
+            return
+        # Construct the coroutine via the class to keep this method testable
+        # with a SimpleNamespace stub that binds only async_request_rebuild
+        # (tests/test_coordinator_rebuild.py).  Behaviourally identical to
+        # self._async_do_rebuild() since `self` is an ASPParkingCoordinator.
+        self._rebuild_task = self.entry.async_create_background_task(
+            self.hass,
+            ASPParkingCoordinator._async_do_rebuild(self),
+            name="asp_parking_index_rebuild",
+        )
+
+    async def _async_do_rebuild(self) -> None:
+        """Background task body — performs the full rebuild lifecycle.
+
+        Strict ordering (RESEARCH Pitfall 2):
+          cleanup_stale -> download_and_extract -> atomic_swap
+          -> SpatialIndex.reset -> _sign_cache.clear -> read_build_timestamp
+
+        Notification IDs are distinct from the first-time-setup IDs in
+        ``__init__.py`` (RESEARCH Pitfall 7):
+          - in-progress: ``asp_parking_index_rebuild``
+          - success:     ``asp_parking_index_rebuild_success``
+          - error:       ``asp_parking_index_rebuild_error``
+
+        The ``finally`` block ALWAYS resets ``_is_rebuilding=False`` and
+        re-notifies entities — D-06 guarantees the button never gets stuck.
+        """
+        # Lazy import (matches __init__.py pattern lines 36-38) so module
+        # import does not pull in HA's persistent_notification module.
+        from homeassistant.components.persistent_notification import (
+            async_create as pn_create,
+            async_dismiss as pn_dismiss,
+        )
+
+        async with self._rebuild_lock:
+            self._is_rebuilding = True
+            self._async_notify_entities()
+            pn_create(
+                self.hass,
+                "Rebuilding NYC spatial index (~15 MB compressed). "
+                "ASP Parking will continue using the existing index until complete.",
+                title="ASP Parking: Index Rebuild",
+                notification_id="asp_parking_index_rebuild",
+            )
+
+            try:
+                # RESEARCH Pitfall 5: wipe any stale _tmp/_bak/_download.zip
+                # from a prior crash BEFORE writing fresh artifacts.
+                await self.hass.async_add_executor_job(
+                    _sync_cleanup_stale, INDEX_DIR
+                )
+                await self.hass.async_add_executor_job(
+                    _sync_download_and_extract, INDEX_DIR, INDEX_DOWNLOAD_URL
+                )
+                await self.hass.async_add_executor_job(
+                    _sync_atomic_swap, INDEX_DIR
+                )
+
+                # RESEARCH Pitfall 2: reset MUST happen AFTER atomic_swap so the
+                # next SpatialIndex.get() re-opens the new files. reset() just
+                # closes the rtree handle and nulls the singleton — safe to
+                # call on the event loop (spatial_index.py line 89-99).
+                SpatialIndex.reset()
+
+                # IDX-04: drop pre-seeded SODA records so readers re-query
+                # against the fresh on-disk index.
+                self._sign_cache.clear()
+
+                # Read the new build_info.json so _last_rebuilt reflects the
+                # just-built index.
+                self._last_rebuilt = await self.hass.async_add_executor_job(
+                    _sync_read_build_timestamp, INDEX_DIR
+                )
+
+                pn_dismiss(self.hass, "asp_parking_index_rebuild")
+                ts_str = (
+                    self._last_rebuilt.strftime("%Y-%m-%d %H:%M UTC")
+                    if self._last_rebuilt
+                    else "unknown"
+                )
+                pn_create(
+                    self.hass,
+                    f"Spatial index updated. Built: {ts_str}.",
+                    title="ASP Parking: Index Rebuild Complete",
+                    notification_id="asp_parking_index_rebuild_success",
+                )
+                logger.info(
+                    "ASP Parking: index rebuild complete (built %s)", ts_str
+                )
+
+            except Exception as err:  # noqa: BLE001
+                pn_dismiss(self.hass, "asp_parking_index_rebuild")
+                pn_create(
+                    self.hass,
+                    f"Failed to rebuild spatial index: {err}. "
+                    "Your existing index is still active.",
+                    title="ASP Parking: Index Rebuild Failed",
+                    notification_id="asp_parking_index_rebuild_error",
+                )
+                logger.error("ASP Parking: index rebuild failed: %s", err)
+                # Best-effort cleanup: wipe the partial _tmp dir.  Atomic-swap
+                # guarantees the live index dir is untouched on failure.
+                try:
+                    await self.hass.async_add_executor_job(
+                        _sync_cleanup_stale, INDEX_DIR
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "ASP Parking: cleanup after rebuild failure errored",
+                        exc_info=True,
+                    )
+
+            finally:
+                # D-06: ALWAYS clear the flag and re-notify so the button
+                # is usable again and the binary_sensor flips back to off.
+                self._is_rebuilding = False
+                self._async_notify_entities()
 
     # ------------------------------------------------------------------
     # ha-nyc311 bridge helpers
