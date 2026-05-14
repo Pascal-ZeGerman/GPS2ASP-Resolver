@@ -5,7 +5,7 @@ from __future__ import annotations
 DOMAIN = "asp_parking"
 VERSION = "3.1.0"
 
-PLATFORMS = ["sensor", "binary_sensor", "switch"]
+PLATFORMS = ["sensor", "binary_sensor", "switch", "button"]
 
 # Config entry data keys
 CONF_DEVICE_TRACKER = "device_tracker"

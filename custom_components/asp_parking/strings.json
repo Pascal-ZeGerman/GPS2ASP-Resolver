@@ -139,16 +139,27 @@
       },
       "last_error": {
         "name": "Last Error"
+      },
+      "index_last_rebuilt": {
+        "name": "Index Last Rebuilt"
       }
     },
     "binary_sensor": {
       "active_now": {
         "name": "ASP Active Now"
+      },
+      "index_rebuilding": {
+        "name": "Index Rebuilding"
       }
     },
     "switch": {
       "debug_switch": {
         "name": "Debug Mode"
+      }
+    },
+    "button": {
+      "rebuild_index": {
+        "name": "Rebuild Index"
       }
     }
   },
