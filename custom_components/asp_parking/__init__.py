@@ -8,8 +8,6 @@ and sets up an options update listener for reconfiguration.
 from __future__ import annotations
 
 import logging
-import zipfile
-from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -18,11 +16,16 @@ from homeassistant.helpers import issue_registry as ir
 
 from .const import DOMAIN, INDEX_DOWNLOAD_URL, PLATFORMS
 from .coordinator import ASPParkingCoordinator
+from .index_io import (
+    INDEX_DIR,
+    INDEX_FILES,
+    _sync_atomic_swap,
+    _sync_cleanup_stale,
+    _sync_download_and_extract,
+)
 
 logger = logging.getLogger(__name__)
 
-_INDEX_DIR = Path(__file__).parent / "gps2asp" / "data" / "index"
-_INDEX_FILES = ("segments.idx", "segments.dat", "segments.json", "graph.json")
 _DOWNLOAD_TASK_KEY = f"{DOMAIN}_index_task"
 _IMPORT_ERROR_ISSUE_ID = "gps2asp_import_error"
 
@@ -40,7 +43,7 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
     # Dismiss any stale error notification from a previous failed download attempt
     pn_dismiss(hass, "asp_parking_index_error")
 
-    if all((_INDEX_DIR / f).exists() for f in _INDEX_FILES):
+    if all((INDEX_DIR / f).exists() for f in INDEX_FILES):
         return
 
     task = hass.data.get(_DOWNLOAD_TASK_KEY)
@@ -62,13 +65,20 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
 
 
 async def _async_download_index(hass: HomeAssistant) -> None:
-    """Download and extract the spatial index ZIP from the GitHub release."""
+    """Download and extract the spatial index ZIP from the GitHub release.
+
+    Phase 33 D-01: this first-time-setup flow now consumes the same shared
+    sync helpers from ``index_io.py`` that the manual rebuild flow uses
+    (single source of truth for zip-slip safety + atomic swap). The
+    first-time-setup notification IDs (``asp_parking_index_download`` /
+    ``asp_parking_index_error``) remain DISTINCT from the rebuild-flow IDs
+    by design -- different UX for different lifecycle events (RESEARCH
+    Pitfall 7).
+    """
     from homeassistant.components.persistent_notification import (
         async_create as pn_create,
         async_dismiss as pn_dismiss,
     )
-
-    import httpx
 
     pn_create(
         hass,
@@ -77,31 +87,18 @@ async def _async_download_index(hass: HomeAssistant) -> None:
         notification_id="asp_parking_index_download",
     )
 
-    def _sync_download() -> None:
-        _INDEX_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = _INDEX_DIR / "_download.zip"
-        try:
-            with httpx.Client(timeout=300, follow_redirects=True) as client:
-                with client.stream("GET", INDEX_DOWNLOAD_URL) as resp:
-                    resp.raise_for_status()
-                    with open(tmp, "wb") as f:
-                        for chunk in resp.iter_bytes(chunk_size=65536):
-                            f.write(chunk)
-            with zipfile.ZipFile(tmp) as zf:
-                resolved_base = _INDEX_DIR.resolve()
-                for name in zf.namelist():
-                    member_path = (resolved_base / name).resolve()
-                    if not str(member_path).startswith(str(resolved_base) + "/"):
-                        raise ValueError(f"ZIP path traversal attempt: {name!r}")
-                    zf.extract(name, _INDEX_DIR)
-        finally:
-            tmp.unlink(missing_ok=True)
-
     try:
-        await hass.async_add_executor_job(_sync_download)
+        # D-01 single source of truth: same three sync helpers the manual
+        # rebuild flow uses (coordinator._async_do_rebuild). cleanup_stale
+        # is idempotent — safe on a fresh install where no _tmp/_bak exist.
+        await hass.async_add_executor_job(_sync_cleanup_stale, INDEX_DIR)
+        await hass.async_add_executor_job(
+            _sync_download_and_extract, INDEX_DIR, INDEX_DOWNLOAD_URL
+        )
+        await hass.async_add_executor_job(_sync_atomic_swap, INDEX_DIR)
         hass.data.pop(_DOWNLOAD_TASK_KEY, None)
         pn_dismiss(hass, "asp_parking_index_download")
-        logger.info("ASP Parking: spatial index downloaded to %s", _INDEX_DIR)
+        logger.info("ASP Parking: spatial index downloaded to %s", INDEX_DIR)
     except Exception as err:
         hass.data.pop(_DOWNLOAD_TASK_KEY, None)
         pn_dismiss(hass, "asp_parking_index_download")
