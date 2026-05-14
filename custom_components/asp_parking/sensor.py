@@ -8,18 +8,22 @@ Provides ASPNextMoveTimeSensor which maps coordinator data to a sensor state:
 
 Rich attributes cover schedule, location, window, metadata, and error groups.
 
-Also provides 9 diagnostic sensors for debugging and dashboards:
+Also provides 10 diagnostic sensors for debugging and dashboards:
 ASPCarNameSensor, ASPVINSensor, ASPLatitudeSensor, ASPLongitudeSensor,
 ASPResolvedStreetSensor, ASPResolutionStatusSensor,
 ASPConfidenceScoreSensor, ASPSODALevelSensor, ASPLastResolvedSensor,
-ASPLastErrorSensor.
+ASPLastErrorSensor, ASPIndexLastRebuiltSensor (Phase 33, IDX-03).
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -62,6 +66,8 @@ async def async_setup_entry(
             ASPSODALevelSensor(coordinator),
             ASPLastResolvedSensor(coordinator),
             ASPLastErrorSensor(coordinator),
+            # Phase 33 IDX-03: spatial-index last-rebuilt timestamp sensor
+            ASPIndexLastRebuiltSensor(coordinator),
         ]
     )
 
@@ -608,3 +614,30 @@ class ASPLastErrorSensor(_ASPDiagnosticSensor):
     def native_value(self) -> str | None:
         """Return the last error string, or None if no error."""
         return self._coordinator.data.last_error
+
+
+class ASPIndexLastRebuiltSensor(_ASPDiagnosticSensor):
+    """Diagnostic sensor exposing the spatial-index build timestamp (Phase 33, IDX-03).
+
+    Surfaces ``coordinator._last_rebuilt`` -- a tz-aware datetime populated
+    at ``async_start`` (from ``build_info.json``) and after each successful
+    manual rebuild. With ``SensorDeviceClass.TIMESTAMP`` HA renders the
+    value as a relative time string ("X days ago") in the UI.
+
+    RESEARCH Pitfall 6: the TIMESTAMP device class REJECTS naive datetimes.
+    The coordinator's ``_sync_read_build_timestamp`` helper guarantees the
+    parsed value is tz-aware, so ``native_value`` can pass through unchanged.
+    """
+
+    _attr_icon = "mdi:clock-check"
+    _attr_translation_key = "index_last_rebuilt"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator: ASPParkingCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_index_last_rebuilt"
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return tz-aware build_timestamp datetime, or None when unset."""
+        return self._coordinator._last_rebuilt
