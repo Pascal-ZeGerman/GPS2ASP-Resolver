@@ -30,6 +30,7 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
 )
 from homeassistant.helpers.location import has_location
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 from homeassistant.util import location as location_util
 
@@ -56,7 +57,15 @@ from .gps2asp.signs.normalize import name_variants
 from .gps2asp.suspension import HolidayCalendar, NYC311Client, SuspensionInfo
 from .gps2asp.suspension.poller import NYC311AuthError
 
+from . import caldav_sync
+from .caldav_sync import CalDAVConfig
 from .const import (
+    CONF_CALDAV_CALENDAR,
+    CONF_CALDAV_EVENT_TITLE_TEMPLATE,
+    CONF_CALDAV_PASSWORD,
+    CONF_CALDAV_SAFETY_WINDOW,
+    CONF_CALDAV_URL,
+    CONF_CALDAV_USERNAME,
     CONF_DEBUG_DATETIME,
     CONF_DEBUG_LAT,
     CONF_DEBUG_LON,
@@ -72,6 +81,8 @@ from .const import (
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
     CONF_SUPPRESS_NOTIFICATIONS,
+    DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE,
+    DEFAULT_CALDAV_SAFETY_WINDOW,
     DEFAULT_DEBUG_DATETIME,
     DEFAULT_DEBUG_LAT,
     DEFAULT_DEBUG_LON,
@@ -84,6 +95,7 @@ from .const import (
     DEFAULT_STALE_TIMEOUT,
     DEFAULT_SUPPRESS_NOTIFICATIONS,
     DEFAULT_SUSPENSION_INTERVAL,
+    DOMAIN,
     GPS_DEBOUNCE_COOLDOWN,
     INDEX_DOWNLOAD_URL,
 )
@@ -246,6 +258,16 @@ class ASPParkingCoordinator:
         self._rebuild_lock: asyncio.Lock = asyncio.Lock()
         self._last_rebuilt: datetime | None = None
 
+        # Phase 34: CalDAV calendar sync (CALDAV-03..CALDAV-06).
+        # Lock is constructed inside __init__ (NOT at class scope — Pitfall 2).
+        self._caldav_store: Store | None = None  # set in async_start when configured
+        self._caldav_uid: str | None = None
+        self._caldav_error_notified: bool = False
+        self._last_suspension_state: bool = False  # refreshed in async_start
+        self._caldav_lock: asyncio.Lock = asyncio.Lock()
+        self._caldav_write_task: asyncio.Task[None] | None = None
+        self._caldav_delete_task: asyncio.Task[None] | None = None
+
         # Debouncer: coalesce rapid GPS updates into a single pipeline run
         self._debouncer = Debouncer(
             hass,
@@ -366,7 +388,7 @@ class ASPParkingCoordinator:
         today = self._get_now().date()
         holiday_info = self._holiday_calendar.is_suspended(today)
         if holiday_info.is_suspended:
-            self.data.suspension_state = holiday_info
+            self._async_apply_suspension_state(holiday_info)
 
         api_key = self.entry.options.get(CONF_NYC311_API_KEY)
         if api_key:
@@ -418,7 +440,7 @@ class ASPParkingCoordinator:
                     bridge_state.state,
                     self.data.suspension_state.reason,
                 )
-            self.data.suspension_state = _bridge_info
+            self._async_apply_suspension_state(_bridge_info)
 
             # D-11: Log bridge active
             logger.debug(
@@ -460,6 +482,18 @@ class ASPParkingCoordinator:
         self._last_rebuilt = await self.hass.async_add_executor_job(
             _sync_read_build_timestamp, INDEX_DIR
         )
+
+        # Phase 34: CalDAV Store load — CALDAV-06 / Pitfall 5.
+        # Only when CONF_CALDAV_URL is present (D-02: absent URL = complete no-op).
+        if self.entry.options.get(CONF_CALDAV_URL):
+            self._caldav_store = Store(
+                self.hass,
+                version=1,
+                key=f"{DOMAIN}_caldav_{self.entry.entry_id}",
+            )
+            raw = await self._caldav_store.async_load()
+            self._caldav_uid = (raw or {}).get("uid")  # Pitfall 5: coerce None → {}
+            self._last_suspension_state = self.data.suspension_state.is_suspended
 
         logger.info(
             "ASP Parking coordinator started: tracking %s, "
@@ -654,10 +688,67 @@ class ASPParkingCoordinator:
         new_state = event.data.get("new_state")
         if new_state is None:
             return
-        self.data.suspension_state = self._bridge_state_to_info(
-            new_state.state, new_state.attributes
+        self._async_apply_suspension_state(
+            self._bridge_state_to_info(new_state.state, new_state.attributes)
         )
         self._async_notify_entities()
+
+    @callback
+    def _async_apply_suspension_state(self, new: SuspensionInfo) -> None:
+        """Choke-point for all suspension_state mutations (D-08 / Pitfall 8 / T-34-06).
+
+        Replaces all six direct mutation sites so every state transition passes
+        through one place. On a False → True transition with a stored CalDAV
+        event, a delete background task is spawned to remove the event from
+        the calendar.
+
+        Args:
+            new: The new SuspensionInfo to apply.
+        """
+        was_suspended = self._last_suspension_state
+        self.data.suspension_state = new
+        self._last_suspension_state = new.is_suspended
+
+        # D-08: on False → True transition, delete the active CalDAV event.
+        # No-op when: (a) was already suspended, (b) no stored UID, (c) no store.
+        if (
+            new.is_suspended
+            and not was_suspended
+            and self._caldav_uid is not None
+            and self._caldav_store is not None
+        ):
+            self._caldav_delete_task = self.entry.async_create_background_task(
+                self.hass,
+                ASPParkingCoordinator._async_caldav_delete_current(self),
+                name="asp_parking_caldav_delete_on_suspension",
+            )
+
+    async def _async_caldav_delete_current(self) -> None:
+        """Delete the active CalDAV event by stored UID.
+
+        Full implementation in Task 2. This stub allows Task 1's suspension
+        transition tests to spawn-and-await the coroutine without crashing.
+        """
+        # Task 2 fills this in with the actual delete + Store.save({}) + error handling.
+        pass
+
+    async def _async_caldav_hook_after_resolve(self, schedule: ScheduleResult) -> None:
+        """Hook called after a successful resolve to write/delete CalDAV event.
+
+        STUB — full implementation in Task 2.
+        Decides whether to spawn a write or delete background task.
+        """
+        # Task 2 fills this in.
+        pass
+
+    async def _maybe_delete_caldav_on_move(self) -> None:
+        """Safety-window guard: delete CalDAV event when position changes.
+
+        STUB — full implementation in Task 2.
+        Checks whether the safety window has passed and spawns a delete task.
+        """
+        # Task 2 fills this in.
+        pass
 
     # ------------------------------------------------------------------
     # Entity callback management
@@ -926,7 +1017,7 @@ class ASPParkingCoordinator:
         try:
             info = await self._nyc311_client.fetch_status()
             if info.is_suspended:
-                self.data.suspension_state = info
+                self._async_apply_suspension_state(info)
                 self._async_notify_entities()
         except NYC311AuthError:
             logger.warning("NYC 311 API auth error during startup, failing open")
@@ -1064,8 +1155,8 @@ class ASPParkingCoordinator:
             bridge_state = self.hass.states.get(self._nyc311_bridge_entity)
             if bridge_state is not None and bridge_state.state in ("on", "off"):
                 # Bridge healthy: re-apply its state, skip holiday calendar + 311 API
-                self.data.suspension_state = self._bridge_state_to_info(
-                    bridge_state.state, bridge_state.attributes
+                self._async_apply_suspension_state(
+                    self._bridge_state_to_info(bridge_state.state, bridge_state.attributes)
                 )
                 self._async_notify_entities()
                 return
@@ -1085,7 +1176,7 @@ class ASPParkingCoordinator:
                 logger.warning("311 suspension poll failed, failing open")
                 info = SuspensionInfo(is_suspended=False, reason=None, source="none")
 
-        self.data.suspension_state = info
+        self._async_apply_suspension_state(info)
         self._async_notify_entities()
 
     async def _async_maybe_send_notification(self, schedule: ScheduleResult) -> None:
