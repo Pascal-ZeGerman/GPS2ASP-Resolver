@@ -115,14 +115,16 @@ def _sync_extract_zip(zip_path: Path, dest_dir: Path) -> None:
     ``__init__.py::_sync_download`` (lines 90-96); only the variable name
     ``_INDEX_DIR`` changes to the parameter ``dest_dir``.
     """
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    resolved_base = dest_dir.resolve()
+    resolved_base.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path) as zf:
-        resolved_base = dest_dir.resolve()
         for name in zf.namelist():
             member_path = (resolved_base / name).resolve()
             if not str(member_path).startswith(str(resolved_base) + os.sep):
                 raise ValueError(f"ZIP path traversal attempt: {name!r}")
-            zf.extract(name, dest_dir)
+            # Extract to resolved_base (not raw dest_dir) so the validated
+            # path and the written path are always the same directory (CR-02).
+            zf.extract(name, resolved_base)
 
 
 def _sync_download_and_extract(index_dir: Path, url: str) -> None:

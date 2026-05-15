@@ -230,7 +230,10 @@ async def test_async_do_rebuild_flips_is_rebuilding_around_work(
     D-06: finally block MUST reset the flag even on success.
     Pitfall 4: never leave the flag True (would brick the button).
     """
-    stub = _make_coord_stub(is_rebuilding=False)
+    # CR-01 fix: async_request_rebuild now sets _is_rebuilding=True before
+    # spawning the task, so tests calling _async_do_rebuild directly must
+    # pre-set the flag to simulate the state the caller establishes.
+    stub = _make_coord_stub(is_rebuilding=True)
     spies = _install_executor_spies(monkeypatch)
 
     captured_during = {}
@@ -251,9 +254,9 @@ async def test_async_do_rebuild_flips_is_rebuilding_around_work(
     assert stub._is_rebuilding is False, (
         "_is_rebuilding must be reset to False in finally block (D-06)"
     )
-    # entry+exit notifications
-    assert stub._async_notify_entities.call_count >= 2, (
-        "Entities notified at least twice (entry + finally)"
+    # finally-block notification (entry notify moved to async_request_rebuild)
+    assert stub._async_notify_entities.call_count >= 1, (
+        "Entities notified at least once in finally block"
     )
 
 
@@ -430,7 +433,8 @@ async def test_async_do_rebuild_failure_path_creates_error_notification_with_dis
       - notifies entities in the finally block
       - does NOT propagate the exception (swallows per RESEARCH skeleton)
     """
-    stub = _make_coord_stub(is_rebuilding=False)
+    # CR-01 fix: pre-set flag as async_request_rebuild would have done.
+    stub = _make_coord_stub(is_rebuilding=True)
     spies = _install_executor_spies(
         monkeypatch,
         download_raises=RuntimeError("network down"),
@@ -483,7 +487,7 @@ async def test_async_do_rebuild_failure_path_creates_error_notification_with_dis
         "_is_rebuilding must be False after method returns even on failure (D-06)"
     )
 
-    # Entities notified in finally
-    assert stub._async_notify_entities.call_count >= 2, (
-        "Entities notified at least twice (entry + finally) even on failure"
+    # Entities notified in finally (entry notify moved to async_request_rebuild)
+    assert stub._async_notify_entities.call_count >= 1, (
+        "Entities notified at least once in finally block even on failure"
     )

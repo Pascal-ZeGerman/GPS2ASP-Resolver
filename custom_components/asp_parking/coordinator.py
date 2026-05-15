@@ -498,6 +498,10 @@ class ASPParkingCoordinator:
                 "ASP Parking: rebuild already in progress -- press ignored"
             )
             return
+        # Set the flag BEFORE spawning so a second call during the same
+        # event-loop turn cannot bypass the guard (CR-01 / IDX-02).
+        self._is_rebuilding = True
+        self._async_notify_entities()
         # Construct the coroutine via the class to keep this method testable
         # with a SimpleNamespace stub that binds only async_request_rebuild
         # (tests/test_coordinator_rebuild.py).  Behaviourally identical to
@@ -532,8 +536,6 @@ class ASPParkingCoordinator:
         )
 
         async with self._rebuild_lock:
-            self._is_rebuilding = True
-            self._async_notify_entities()
             pn_create(
                 self.hass,
                 "Rebuilding NYC spatial index (~15 MB compressed). "
