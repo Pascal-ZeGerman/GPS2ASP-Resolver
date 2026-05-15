@@ -14,6 +14,7 @@ the real coordinator/spatial-index never has to load.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -21,6 +22,10 @@ from types import SimpleNamespace
 import pytest
 
 from custom_components.asp_parking.const import (
+    CONF_CALDAV_CALENDAR,
+    CONF_CALDAV_PASSWORD,
+    CONF_CALDAV_URL,
+    CONF_CALDAV_USERNAME,
     CONF_DEBUG_LAT,
     CONF_DEBUG_LON,
     CONF_NYC311_API_KEY,
@@ -206,3 +211,59 @@ async def test_state_section_iso_datetime(hass, enable_custom_integrations) -> N
     assert out["last_resolve"]["last_resolved"] == "2026-05-01T12:00:00+00:00"
     assert out["last_error"]["last_error_time"] == "2026-05-01T13:30:00+00:00"
     assert out["last_error"]["last_error"] == "boom"
+
+
+# ---------------------------------------------------------------------------
+# Phase 34 — CalDAV credential redaction (T-34-05 mitigation)
+# ---------------------------------------------------------------------------
+
+
+async def test_diagnostics_redacts_caldav_credentials(
+    hass, enable_custom_integrations
+) -> None:
+    """CONF_CALDAV_USERNAME and CONF_CALDAV_PASSWORD MUST be redacted (T-34-05).
+
+    Regression guard: ensures the literal username/password strings never appear
+    anywhere in the JSON-serialised diagnostics output. URL + calendar URL are
+    NOT credentials (they identify the server/calendar, often shared as docs)
+    and MUST pass through unredacted as a sanity check that the entry actually
+    loaded.
+    """
+    from custom_components.asp_parking.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    entry = _make_entry(
+        hass,
+        options={
+            CONF_CALDAV_URL: "https://srv.example.com/dav/",
+            CONF_CALDAV_USERNAME: "alice@example.com",
+            CONF_CALDAV_PASSWORD: "supersecret123",
+            CONF_CALDAV_CALENDAR: "https://srv.example.com/dav/cal/work/",
+        },
+    )
+
+    result = await async_get_config_entry_diagnostics(hass, entry)
+
+    serialised = json.dumps(result)
+
+    # Anti-leak: the literal credential strings MUST NOT appear anywhere.
+    assert "supersecret123" not in serialised, "Password leaked into diagnostics"
+    assert "alice@example.com" not in serialised, "Username leaked into diagnostics"
+
+    # Sanity check that the entry was actually loaded (defends against a
+    # false-positive redaction test where the entry is empty).
+    assert (
+        "https://srv.example.com/dav/" in serialised
+    ), "CalDAV URL should not be redacted (URL is not credentials)"
+
+    # Keys MUST be present in the output with HA's redaction sentinel as value.
+    assert result["config"][CONF_CALDAV_PASSWORD] == "**REDACTED**"
+    assert result["config"][CONF_CALDAV_USERNAME] == "**REDACTED**"
+
+    # URL + calendar URL are NOT credentials — they must pass through unredacted.
+    assert result["config"][CONF_CALDAV_URL] == "https://srv.example.com/dav/"
+    assert (
+        result["config"][CONF_CALDAV_CALENDAR]
+        == "https://srv.example.com/dav/cal/work/"
+    )

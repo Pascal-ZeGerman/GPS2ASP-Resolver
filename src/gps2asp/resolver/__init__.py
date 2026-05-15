@@ -57,6 +57,7 @@ __all__ = [
     "ResolutionDebugInfo",
     "SegmentCandidate",
     "ResolutionError",
+    "SegmentCandidate",
     "OutsideNYCError",
     "NoSegmentFoundError",
     "AmbiguousResolutionError",
