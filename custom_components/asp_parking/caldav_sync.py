@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-import caldav.aio  # noqa: F401 — module-top import enforces CALDAV-08 statically
-from caldav.lib import error as caldav_error  # noqa: F401 — used by Task 2 async API
+import caldav.aio
+from caldav.lib import error as caldav_error
 from icalendar import Calendar, Event
 
 logger = logging.getLogger(__name__)
@@ -204,3 +204,180 @@ def build_vevent_ical(
     ev.add("dtstamp", datetime.now(timezone.utc))
     cal.add_component(ev)
     return cal.to_ical().decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Internal CalDAV helpers
+# ---------------------------------------------------------------------------
+
+
+async def _get_calendar(client: Any, calendar_url: str) -> Any:
+    """Resolve a calendar by URL using the authenticated principal.
+
+    Uses ``principal.calendar(cal_url=...)`` for single-calendar lookup
+    (no extra collection roundtrip — the principal already knows the
+    calendar-home-set URL after ``get_principal``).
+    """
+    principal = await client.get_principal()
+    return await principal.calendar(cal_url=calendar_url)
+
+
+async def _delete_uid_quiet(cal: Any, uid: str) -> None:
+    """Delete an event by UID; treat NotFoundError as success.
+
+    "Already gone" is a perfectly fine end-state for a delete call (e.g.
+    the user manually removed the event from their calendar app between
+    our last write and this delete). We must not surface this as an error.
+    """
+    try:
+        evt = await cal.event_by_uid(uid)
+        await evt.delete()
+    except caldav_error.NotFoundError:
+        return
+
+
+def _sanitise(message: str, password: str) -> str:
+    """Replace the user's password in an error string with ``***``.
+
+    Defence-in-depth for T-34-01/T-34-02 — caldav 3.2.0 internally strips
+    embedded ``user:pass@`` from URLs via ``self.url.unauth()``, but the
+    wrapped exception text from upstream may still contain the credential
+    if the server echoed it back. This is a cheap belt-and-braces step.
+    """
+    if not password:
+        return message
+    return message.replace(password, "***")
+
+
+# ---------------------------------------------------------------------------
+# Public CalDAV API
+# ---------------------------------------------------------------------------
+
+
+async def validate_connection(
+    *, url: str, username: str, password: str
+) -> None:
+    """Probe the CalDAV server with the given credentials.
+
+    Raises:
+        CalDAVAuthError: on any failure — auth, network, TLS, DNS, etc.
+            The original exception is chained via ``__cause__``. Any
+            occurrence of ``password`` in the wrapped message is masked
+            with ``***`` (T-34-01 / T-34-02 defence-in-depth).
+    """
+    try:
+        async with caldav.aio.AsyncDAVClient(
+            url=url, username=username, password=password,
+        ) as client:
+            await client.get_principal()
+    except caldav_error.AuthorizationError as err:
+        raise CalDAVAuthError(
+            f"Authentication failed: {_sanitise(str(err), password)}"
+        ) from err
+    except caldav_error.DAVError as err:
+        raise CalDAVAuthError(
+            f"Server error: {_sanitise(str(err), password)}"
+        ) from err
+    except Exception as err:  # noqa: BLE001 — wrap everything (D-03)
+        raise CalDAVAuthError(
+            f"Connection error: {_sanitise(str(err), password)}"
+        ) from err
+
+
+async def list_calendars(
+    *, url: str, username: str, password: str
+) -> list[tuple[str, str]]:
+    """Return ``[(calendar_url, display_name), ...]`` for the authenticated principal.
+
+    Falls back to ``str(cal.url)`` for the display name when
+    ``cal.get_display_name()`` raises (some CalDAV servers either don't
+    expose a display-name property or return a 500 for it).
+
+    Empty list = the server authenticated successfully but exposed no
+    calendars on this principal.
+    """
+    async with caldav.aio.AsyncDAVClient(
+        url=url, username=username, password=password,
+    ) as client:
+        principal = await client.get_principal()
+        calendars = await principal.calendars()
+        result: list[tuple[str, str]] = []
+        for cal in calendars:
+            try:
+                name = await cal.get_display_name()
+            except Exception:  # noqa: BLE001 — fall back to URL for any failure
+                name = ""
+            result.append((str(cal.url), name or str(cal.url)))
+        return result
+
+
+async def write_or_update_event(
+    *,
+    config: CalDAVConfig,
+    entry_id: str,
+    schedule: Any,
+    stored_uid: str | None,
+) -> str:
+    """Idempotent write of the upcoming cleaning-window VEVENT.
+
+    Behaviour (D-07):
+
+    * If ``stored_uid == derive_uid(entry_id, window.start_datetime)``: the
+      window has not changed since the last write. We re-issue a single
+      ``add_event`` so the server-side state stays in sync (any drift the
+      user introduced manually is overwritten).
+    * If ``stored_uid != new_uid``: the window has shifted. We DELETE the
+      stored UID first (silent on NotFoundError) and THEN create the new
+      event — never the other way around, to avoid brief duplicates.
+
+    Args:
+        config: connection + content configuration.
+        entry_id: HA config entry ID, fed into :func:`derive_uid`.
+        schedule: a ScheduleFound-shaped object with ``next_window`` set.
+        stored_uid: the UID we wrote on the previous cycle, loaded from
+            :class:`homeassistant.helpers.storage.Store` by the caller.
+
+    Returns:
+        The new UID. The caller MUST persist this via the Store before
+        the next cycle so D-07's delete-then-create order can run.
+    """
+    window = schedule.next_window
+    new_uid = derive_uid(entry_id, window.start_datetime)
+
+    async with caldav.aio.AsyncDAVClient(
+        url=config.url, username=config.username, password=config.password,
+    ) as client:
+        cal = await _get_calendar(client, config.calendar_url)
+
+        if stored_uid and stored_uid != new_uid:
+            await _delete_uid_quiet(cal, stored_uid)
+
+        ical_text = build_vevent_ical(
+            uid=new_uid,
+            window=window,
+            title=render_title(config.title_template, schedule),
+            description=render_description(schedule),
+        )
+        await cal.add_event(ical=ical_text)
+
+    return new_uid
+
+
+async def delete_event(
+    *,
+    url: str,
+    username: str,
+    password: str,
+    calendar_url: str,
+    uid: str,
+) -> None:
+    """Delete the event identified by ``uid`` from ``calendar_url``.
+
+    Silent on NotFoundError (already gone is fine). All other exceptions
+    propagate to the caller for surfacing as a notification (D-09/D-10).
+    """
+    async with caldav.aio.AsyncDAVClient(
+        url=url, username=username, password=password,
+    ) as client:
+        cal = await _get_calendar(client, calendar_url)
+        await _delete_uid_quiet(cal, uid)
