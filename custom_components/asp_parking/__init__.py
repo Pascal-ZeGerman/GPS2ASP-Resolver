@@ -14,7 +14,15 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN, INDEX_DOWNLOAD_URL, PLATFORMS
+from .const import (
+    CONF_CALDAV_CALENDAR,
+    CONF_CALDAV_PASSWORD,
+    CONF_CALDAV_URL,
+    CONF_CALDAV_USERNAME,
+    DOMAIN,
+    INDEX_DOWNLOAD_URL,
+    PLATFORMS,
+)
 from .coordinator import ASPParkingCoordinator
 from .index_io import (
     INDEX_DIR,
@@ -211,6 +219,66 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Unload entity platforms
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Clean up the CalDAV event before HA forgets this config entry (CALDAV-07).
+
+    Note: this runs AFTER async_unload_entry — runtime_data is no longer
+    available; we must reconstruct the Store from scratch.
+
+    Best-effort guarantees (Phase 34 Plan 05):
+      - D-02 zero-cost no-op when CONF_CALDAV_URL is absent.
+      - Pitfall 5: empty/missing Store data is gracefully handled — no
+        delete_event call, no exception raised.
+      - On caldav_sync.delete_event failure, the exception is caught +
+        logged at WARNING; the Store file is STILL removed (T-34-13
+        mitigation — leave a clean state for any future re-install).
+      - Credentials are NEVER included in the failure log line (T-34-01).
+    """
+    # D-02 guard FIRST — zero-cost no-op when CalDAV was never configured.
+    if not entry.options.get(CONF_CALDAV_URL):
+        return
+
+    # Lazy imports inside the function body — caldav has a ~25 MB transitive
+    # dep tree (RESEARCH §finding 2) and homeassistant.helpers.storage is
+    # only needed on the rare remove-entry path; keep module-top imports
+    # focused on the hot setup path.
+    from homeassistant.helpers.storage import Store
+
+    from . import caldav_sync
+
+    # Reconstruct Store using the SAME storage_key Plan 04 uses in
+    # async_start — same Store namespace.
+    store = Store(hass, version=1, key=f"{DOMAIN}_caldav_{entry.entry_id}")
+    raw = await store.async_load()
+    # Pitfall 5 coercion: handle first-load (None) and empty-dict cases.
+    uid = (raw or {}).get("uid")
+
+    if uid:
+        password = entry.options.get(CONF_CALDAV_PASSWORD, "")
+        try:
+            await caldav_sync.delete_event(
+                url=entry.options[CONF_CALDAV_URL],
+                username=entry.options.get(CONF_CALDAV_USERNAME, ""),
+                password=password,
+                calendar_url=entry.options.get(CONF_CALDAV_CALENDAR, ""),
+                uid=uid,
+            )
+        except Exception:  # noqa: BLE001 — best-effort: never block uninstall
+            # T-34-01 / T-34-08: the log line excludes username, password,
+            # URL, and the raw exception object (which could embed creds).
+            # Only the UID — a deterministic hash — is included so the user
+            # can locate the orphan event manually if needed.
+            logger.warning(
+                "ASP Parking: CalDAV delete during remove failed; "
+                "manual cleanup may be needed (uid=%s)",
+                uid,
+            )
+
+    # ALWAYS remove the Store file — even on delete failure — to leave a
+    # clean state (T-34-13 mitigation; test_async_remove_entry_continues_when_delete_fails).
+    await store.async_remove()
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
