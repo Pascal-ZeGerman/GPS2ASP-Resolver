@@ -723,32 +723,179 @@ class ASPParkingCoordinator:
                 name="asp_parking_caldav_delete_on_suspension",
             )
 
+    async def _async_caldav_write_or_update(self, schedule: ScheduleResult) -> None:
+        """Write or update the CalDAV VEVENT for the upcoming cleaning window.
+
+        Wraps ``caldav_sync.write_or_update_event`` with:
+        - asyncio.Lock serialisation (T-34-07 — no concurrent writes)
+        - Store persistence after each successful write (CALDAV-06)
+        - D-09 single-fire persistent notification per failure streak
+        - T-34-01/T-34-05 password sanitisation in logs + notifications
+        """
+        from homeassistant.components.persistent_notification import (
+            async_create as pn_create,
+            async_dismiss as pn_dismiss,
+        )
+
+        config = CalDAVConfig.from_options(self.entry.options)
+        password = config.password
+
+        async with self._caldav_lock:
+            try:
+                new_uid = await caldav_sync.write_or_update_event(
+                    config=config,
+                    entry_id=self.entry.entry_id,
+                    schedule=schedule,
+                    stored_uid=self._caldav_uid,
+                )
+                # Success: persist UID and dismiss any active error notification
+                self._caldav_uid = new_uid
+                await self._caldav_store.async_save({"uid": new_uid})  # type: ignore[union-attr]
+                if self._caldav_error_notified:
+                    pn_dismiss(self.hass, "asp_parking_caldav_error")
+                    self._caldav_error_notified = False
+            except Exception as err:  # noqa: BLE001
+                sanitised = str(err)
+                if password:
+                    sanitised = sanitised.replace(password, "***")
+                logger.warning("ASP Parking: CalDAV write failed: %s", sanitised)
+                if not self._caldav_error_notified:
+                    pn_create(
+                        self.hass,
+                        f"CalDAV sync failed: {sanitised}. Your ASP schedule is still active.",
+                        title="ASP Parking: CalDAV Sync Failed",
+                        notification_id="asp_parking_caldav_error",
+                    )
+                    self._caldav_error_notified = True
+
     async def _async_caldav_delete_current(self) -> None:
         """Delete the active CalDAV event by stored UID.
 
-        Full implementation in Task 2. This stub allows Task 1's suspension
-        transition tests to spawn-and-await the coroutine without crashing.
+        Wraps ``caldav_sync.delete_event`` with:
+        - asyncio.Lock serialisation (T-34-07)
+        - Store clear after successful delete (CALDAV-06)
+        - D-09 single-fire persistent notification per failure streak
+        - T-34-01/T-34-05 password sanitisation
         """
-        # Task 2 fills this in with the actual delete + Store.save({}) + error handling.
-        pass
+        if self._caldav_uid is None or self._caldav_store is None:
+            return  # Nothing to delete
+
+        from homeassistant.components.persistent_notification import (
+            async_create as pn_create,
+            async_dismiss as pn_dismiss,
+        )
+
+        password = self.entry.options.get(CONF_CALDAV_PASSWORD, "")
+
+        async with self._caldav_lock:
+            try:
+                await caldav_sync.delete_event(
+                    url=self.entry.options[CONF_CALDAV_URL],
+                    username=self.entry.options.get(CONF_CALDAV_USERNAME, ""),
+                    password=password,
+                    calendar_url=self.entry.options.get(CONF_CALDAV_CALENDAR, ""),
+                    uid=self._caldav_uid,
+                )
+                # Success: clear UID + store, dismiss any active error notification
+                self._caldav_uid = None
+                await self._caldav_store.async_save({})
+                if self._caldav_error_notified:
+                    pn_dismiss(self.hass, "asp_parking_caldav_error")
+                    self._caldav_error_notified = False
+            except Exception as err:  # noqa: BLE001
+                sanitised = str(err)
+                if password:
+                    sanitised = sanitised.replace(password, "***")
+                logger.warning("ASP Parking: CalDAV delete failed: %s", sanitised)
+                if not self._caldav_error_notified:
+                    pn_create(
+                        self.hass,
+                        f"CalDAV sync failed: {sanitised}. Your ASP schedule is still active.",
+                        title="ASP Parking: CalDAV Sync Failed",
+                        notification_id="asp_parking_caldav_error",
+                    )
+                    self._caldav_error_notified = True
 
     async def _async_caldav_hook_after_resolve(self, schedule: ScheduleResult) -> None:
-        """Hook called after a successful resolve to write/delete CalDAV event.
+        """Decide whether to spawn a CalDAV write or delete after a successful resolve.
 
-        STUB — full implementation in Task 2.
-        Decides whether to spawn a write or delete background task.
+        Called synchronously from ``_async_resolve_pipeline`` after
+        ``_async_maybe_send_notification``. Spawns a background task (Pitfall 10
+        — never awaited inline; all CalDAV I/O is off the event loop).
+
+        Guards (D-02, Pitfall 4, CALDAV-04):
+        - No CalDAV configured (_caldav_store is None) → no-op
+        - Suspended → no write (raw suspension_state.is_suspended, not schedule.suspended)
+        - ScheduleFound with next_window → spawn write task
+        - Any other schedule type → spawn delete task (no active window)
         """
-        # Task 2 fills this in.
-        pass
+        if self._caldav_store is None:
+            return  # D-02: CalDAV not configured
+
+        if self.data.suspension_state.is_suspended:
+            return  # Pitfall 4: gate on raw suspension flag
+
+        # Duck-type check: any schedule-like object with a non-None next_window
+        # qualifies for a write. This covers both the real ScheduleFound dataclass
+        # and SimpleNamespace stubs used in tests. The real pipeline only passes
+        # ScheduleFound here (compute_schedule returns NoASPSchedule etc. otherwise),
+        # so this is equivalent to isinstance(schedule, ScheduleFound) in practice.
+        next_window = getattr(schedule, "next_window", None)
+        if next_window is not None:
+            # Write/update the VEVENT for the upcoming cleaning window
+            self._caldav_write_task = self.entry.async_create_background_task(
+                self.hass,
+                ASPParkingCoordinator._async_caldav_write_or_update(self, schedule),
+                name="asp_parking_caldav_write",
+            )
+        else:
+            # No active window (NoASPSchedule, NoMatchSchedule, etc.) — delete any stale event
+            self._caldav_delete_task = self.entry.async_create_background_task(
+                self.hass,
+                ASPParkingCoordinator._async_caldav_delete_current(self),
+                name="asp_parking_caldav_delete_on_move",
+            )
 
     async def _maybe_delete_caldav_on_move(self) -> None:
-        """Safety-window guard: delete CalDAV event when position changes.
+        """Safety-window guard: delete CalDAV event when the car has moved early.
 
-        STUB — full implementation in Task 2.
-        Checks whether the safety window has passed and spawns a delete task.
+        Called from ``_async_on_gps_update`` after the movement-threshold gate
+        passes. Checks whether the current time is OUTSIDE the safety window
+        (i.e., there is still enough time to move); if so, deletes the event
+        so the calendar doesn't show a stale entry.
+
+        CALDAV-03 / CALDAV-05 contract:
+        - Outside safety window (> safety_window_minutes before next_move_dt):
+          spawn asp_parking_caldav_delete_on_move
+        - Inside safety window (≤ safety_window_minutes before next_move_dt):
+          no-op (user is moving as instructed; don't remove the reminder)
         """
-        # Task 2 fills this in.
-        pass
+        if self._caldav_uid is None or self._caldav_store is None:
+            return  # Nothing to delete or CalDAV not configured
+
+        schedule = self.data.schedule_result
+        # Duck-type: any schedule with a non-None next_window has an active event to protect.
+        if schedule is None or getattr(schedule, "next_window", None) is None:
+            return  # No active window to protect
+
+        safety_min = int(
+            self.entry.options.get(CONF_CALDAV_SAFETY_WINDOW, DEFAULT_CALDAV_SAFETY_WINDOW)
+        )
+        from .util import now_ha_local
+
+        boundary = schedule.next_window.start_datetime - timedelta(minutes=safety_min)
+        now = now_ha_local()
+
+        if now >= boundary:
+            # Inside the safety window — do NOT delete (car is on its way)
+            return
+
+        # Outside the safety window — the car is moving early; delete the CalDAV event
+        self._caldav_delete_task = self.entry.async_create_background_task(
+            self.hass,
+            ASPParkingCoordinator._async_caldav_delete_current(self),
+            name="asp_parking_caldav_delete_on_move",
+        )
 
     # ------------------------------------------------------------------
     # Entity callback management
@@ -833,6 +980,11 @@ class ASPParkingCoordinator:
         # Store pending coordinates and trigger debounced pipeline
         self._pending_lat = new_lat
         self._pending_lon = new_lon
+
+        # Phase 34 / CALDAV-05: if a CalDAV event is active and the car has moved
+        # far enough before the safety window, delete the stale event.
+        self.hass.async_create_task(self._maybe_delete_caldav_on_move())
+
         self.hass.async_create_task(self._debouncer.async_call())
 
     # ------------------------------------------------------------------
@@ -935,6 +1087,10 @@ class ASPParkingCoordinator:
 
             # --- Notification (Phase 24, D-12/D-14/D-15/D-16) ---
             await self._async_maybe_send_notification(schedule)
+
+            # --- CalDAV sync (Phase 34, CALDAV-04) --- Pitfall 10: hook is
+            # async but spawns background task; never awaited inline.
+            await self._async_caldav_hook_after_resolve(schedule)
 
             logger.info(
                 "Pipeline resolved: %s (%s side), %d signs, schedule=%s",
