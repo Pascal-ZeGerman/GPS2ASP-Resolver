@@ -1752,11 +1752,12 @@ class TestNyc311Bridge:
             return_value=SuspensionInfo(is_suspended=False, reason=None, source="none")
         )
 
+        coord_data = ASPParkingData()
         coord = SimpleNamespace(
             hass=SimpleNamespace(
                 states=SimpleNamespace(get=MagicMock(return_value=mock_bridge_state))
             ),
-            data=ASPParkingData(),
+            data=coord_data,
             _nyc311_bridge_entity="binary_sensor.nyc311_asp_suspended",
             _nyc311_client=mock_client,
             _holiday_calendar=mock_holiday,
@@ -1766,6 +1767,9 @@ class TestNyc311Bridge:
             ),
             _bridge_state_to_info=staticmethod(
                 ASPParkingCoordinator._bridge_state_to_info
+            ),
+            _async_apply_suspension_state=lambda new: setattr(
+                coord_data, "suspension_state", new
             ),
         )
 
@@ -1804,11 +1808,12 @@ class TestNyc311Bridge:
             return_value=SuspensionInfo(is_suspended=False, reason=None, source="none")
         )
 
+        coord_data = ASPParkingData()
         coord = SimpleNamespace(
             hass=SimpleNamespace(
                 states=SimpleNamespace(get=MagicMock(return_value=mock_bridge_state))
             ),
-            data=ASPParkingData(),
+            data=coord_data,
             _nyc311_bridge_entity="binary_sensor.nyc311_asp_suspended",
             _nyc311_client=mock_client,
             _holiday_calendar=mock_holiday,
@@ -1818,6 +1823,9 @@ class TestNyc311Bridge:
             ),
             _bridge_state_to_info=staticmethod(
                 ASPParkingCoordinator._bridge_state_to_info
+            ),
+            _async_apply_suspension_state=lambda new: setattr(
+                coord_data, "suspension_state", new
             ),
         )
 
