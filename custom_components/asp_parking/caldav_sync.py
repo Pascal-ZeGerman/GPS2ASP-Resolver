@@ -232,8 +232,14 @@ async def _delete_uid_quiet(cal: Any, uid: str) -> None:
     try:
         evt = await cal.event_by_uid(uid)
         await evt.delete()
-    except caldav_error.NotFoundError:
-        return
+    except (caldav_error.NotFoundError, caldav_error.DAVError) as exc:
+        # Some CalDAV servers return a generic DAVError with status 404 instead
+        # of the specific NotFoundError subclass. Treat both as "already gone".
+        if isinstance(exc, caldav_error.NotFoundError):
+            return
+        if hasattr(exc, "status") and exc.status == 404:
+            return
+        raise
 
 
 def _sanitise(message: str, password: str) -> str:
@@ -295,20 +301,39 @@ async def list_calendars(
 
     Empty list = the server authenticated successfully but exposed no
     calendars on this principal.
+
+    Raises:
+        CalDAVAuthError: on any auth, network, or TLS failure — same contract
+            as validate_connection. Password is sanitised from the message.
     """
-    async with caldav.aio.AsyncDAVClient(
-        url=url, username=username, password=password,
-    ) as client:
-        principal = await client.get_principal()
-        calendars = await principal.calendars()
-        result: list[tuple[str, str]] = []
-        for cal in calendars:
-            try:
-                name = await cal.get_display_name()
-            except Exception:  # noqa: BLE001 — fall back to URL for any failure
-                name = ""
-            result.append((str(cal.url), name or str(cal.url)))
-        return result
+    try:
+        async with caldav.aio.AsyncDAVClient(
+            url=url, username=username, password=password,
+        ) as client:
+            principal = await client.get_principal()
+            calendars = await principal.calendars()
+            result: list[tuple[str, str]] = []
+            for cal in calendars:
+                try:
+                    name = await cal.get_display_name()
+                except Exception:  # noqa: BLE001 — fall back to URL for any failure
+                    name = ""
+                result.append((str(cal.url), name or str(cal.url)))
+            return result
+    except CalDAVAuthError:
+        raise
+    except caldav_error.AuthorizationError as err:
+        raise CalDAVAuthError(
+            f"Authentication failed: {_sanitise(str(err), password)}"
+        ) from err
+    except caldav_error.DAVError as err:
+        raise CalDAVAuthError(
+            f"Server error: {_sanitise(str(err), password)}"
+        ) from err
+    except Exception as err:  # noqa: BLE001 — wrap everything (D-03)
+        raise CalDAVAuthError(
+            f"Connection error: {_sanitise(str(err), password)}"
+        ) from err
 
 
 async def write_or_update_event(

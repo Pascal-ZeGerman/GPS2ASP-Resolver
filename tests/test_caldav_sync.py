@@ -453,6 +453,60 @@ async def test_write_or_update_event_idempotent_same_uid():
     )
 
 
+async def test_write_or_update_event_first_write_no_stored_uid():
+    """Finding 9: stored_uid=None (first write) — no delete call, one add_event call.
+
+    This is the most common production path (first CalDAV write after setup)
+    and must not attempt to delete any previous event.
+    """
+    cs = _require_caldav_sync()
+
+    start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
+    schedule = _make_schedule_found(start=start)
+
+    mock_event = MagicMock()
+    mock_event.delete = AsyncMock()
+    mock_cal = AsyncMock()
+    mock_cal.add_event = AsyncMock()
+    mock_cal.event_by_uid = AsyncMock(return_value=mock_event)
+
+    mock_principal = AsyncMock()
+    mock_principal.calendar = AsyncMock(return_value=mock_cal)
+    mock_client = AsyncMock()
+    mock_client.get_principal = AsyncMock(return_value=mock_principal)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("caldav.aio.AsyncDAVClient", return_value=mock_client):
+        config = SimpleNamespace(
+            url="https://example.com/dav/",
+            username="user",
+            password="pw",
+            calendar_url="https://example.com/dav/cal/",
+            title_template="ASP: {street}",
+            safety_window_minutes=15,
+        )
+        returned_uid = await cs.write_or_update_event(
+            config=config,
+            entry_id="entry_abc",
+            schedule=schedule,
+            stored_uid=None,  # first write — no prior event
+        )
+
+    # No delete call must be made (stored_uid is None → guard `if stored_uid and ...` is False)
+    mock_event.delete.assert_not_called()
+    mock_cal.event_by_uid.assert_not_called()
+
+    # One add_event call must be made
+    assert mock_cal.add_event.call_count == 1, (
+        f"Expected 1 add_event call on first write; got {mock_cal.add_event.call_count}"
+    )
+
+    # Returned UID must be deterministic
+    expected_uid = cs.derive_uid("entry_abc", start)
+    assert returned_uid == expected_uid
+
+
 async def test_write_or_update_event_deletes_old_then_creates_new():
     """D-07: stored_uid != new_uid → delete old, THEN create new (order matters)."""
     cs = _require_caldav_sync()

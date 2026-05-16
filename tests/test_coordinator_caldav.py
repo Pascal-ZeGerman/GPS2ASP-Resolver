@@ -75,6 +75,15 @@ def _require_caldav_sync():
 # ---------------------------------------------------------------------------
 
 
+def _background_task_sink(hass, coro, *, name=""):
+    """Consume the coroutine to suppress RuntimeWarning."""
+    try:
+        coro.close()
+    except Exception:
+        pass
+    return MagicMock()
+
+
 def _make_suspension_info(*, is_suspended: bool = False):
     """Build a SuspensionInfo. Falls back to SimpleNamespace if the real
     class isn't on sys.path yet (still useful for collection time)."""
@@ -158,7 +167,7 @@ def _make_coord_stub_caldav(
 
     entry = SimpleNamespace(
         entry_id="test_entry_caldav",
-        async_create_background_task=MagicMock(),
+        async_create_background_task=MagicMock(side_effect=_background_task_sink),
         options=options,
     )
 
@@ -189,7 +198,8 @@ def _make_coord_stub_caldav(
         ),
         _caldav_store=None if no_caldav_config else store,
         _caldav_uid=caldav_uid,
-        _caldav_error_notified=False,
+        _caldav_write_error_notified=False,
+        _caldav_delete_error_notified=False,
         _caldav_lock=asyncio.Lock(),
         _caldav_write_task=None,
         _caldav_delete_task=None,
@@ -251,6 +261,22 @@ async def test_resolve_skips_write_when_caldav_url_absent():
 
     assert stub.entry.async_create_background_task.call_count == 0, (
         "D-02: absent CONF_CALDAV_URL must spawn no background tasks"
+    )
+
+
+async def test_resolve_with_no_next_window_spawns_delete():
+    """CALDAV-04: when schedule has no next_window (NoASPSchedule etc.), spawn delete task."""
+    stub = _make_coord_stub_caldav(caldav_uid="abc@asp-parking.local")
+    # Build a schedule-like object with no next_window
+    no_window_schedule = SimpleNamespace(status="no_asp_schedule", next_window=None)
+
+    hook = _bind(stub, "_async_caldav_hook_after_resolve")
+    await hook(no_window_schedule)
+
+    assert stub.entry.async_create_background_task.call_count == 1
+    name = stub.entry.async_create_background_task.call_args.kwargs.get("name")
+    assert name == "asp_parking_caldav_delete_on_move", (
+        f"No active window must spawn delete task; got name={name!r}"
     )
 
 
@@ -435,7 +461,7 @@ async def test_caldav_failure_notifies_once_per_streak(monkeypatch):
         f"notification_id must be 'asp_parking_caldav_error'; "
         f"got kwargs={called_kwargs} args={called_args}"
     )
-    assert stub._caldav_error_notified is True
+    assert stub._caldav_write_error_notified is True
 
 
 async def test_caldav_success_dismisses_notification_and_resets_flag(monkeypatch):
@@ -444,7 +470,7 @@ async def test_caldav_success_dismisses_notification_and_resets_flag(monkeypatch
     via store.async_save({'uid': new_uid})."""
     _require_caldav_sync()
     stub = _make_coord_stub_caldav()
-    stub._caldav_error_notified = True
+    stub._caldav_write_error_notified = True
     schedule = stub.data.schedule_result
 
     pn_create = MagicMock()
@@ -477,6 +503,80 @@ async def test_caldav_success_dismisses_notification_and_resets_flag(monkeypatch
         f"dismiss notification_id must be 'asp_parking_caldav_error'; "
         f"got kwargs={dismiss_kwargs} args={dismiss_args}"
     )
-    assert stub._caldav_error_notified is False
+    assert stub._caldav_write_error_notified is False
     assert stub._caldav_uid == new_uid
     stub._caldav_store.async_save.assert_awaited_once_with({"uid": new_uid})
+
+
+async def test_caldav_delete_failure_notifies_once_per_streak(monkeypatch):
+    """D-09 (delete path): two consecutive delete failures → exactly ONE notification.
+
+    The notification ID for delete failures is 'asp_parking_caldav_delete_error',
+    separate from the write-path 'asp_parking_caldav_error'.
+    """
+    _require_caldav_sync()
+    stub = _make_coord_stub_caldav(caldav_uid="abc@asp-parking.local")
+
+    pn_create = MagicMock()
+    pn_dismiss = MagicMock()
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.components.persistent_notification",
+        SimpleNamespace(async_create=pn_create, async_dismiss=pn_dismiss),
+    )
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.delete_event",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("server down"),
+    ):
+        delete = _bind(stub, "_async_caldav_delete_current")
+        await delete("abc@asp-parking.local")
+        # Second call while the streak is unresolved
+        await delete("abc@asp-parking.local")
+
+    assert pn_create.call_count == 1, (
+        f"Expected exactly one notification for delete failure streak; got {pn_create.call_count}"
+    )
+    notification_id = pn_create.call_args.kwargs.get("notification_id") or (
+        pn_create.call_args.args[-1] if pn_create.call_args.args else None
+    )
+    assert notification_id == "asp_parking_caldav_delete_error", (
+        f"Delete failures must use 'asp_parking_caldav_delete_error'; got {notification_id!r}"
+    )
+    assert stub._caldav_delete_error_notified is True
+
+
+async def test_caldav_delete_success_clears_store_pop_not_wipe(monkeypatch):
+    """Finding 8: successful delete uses pop-then-save, not async_save({}).
+
+    Verifies that async_save is called with a dict that had 'uid' popped,
+    rather than a bare empty dict (which would wipe any future store keys).
+    """
+    _require_caldav_sync()
+    stub = _make_coord_stub_caldav(caldav_uid="abc@asp-parking.local")
+    # Simulate a store that has uid + a hypothetical future key
+    stub._caldav_store.async_load = AsyncMock(
+        return_value={"uid": "abc@asp-parking.local", "future_key": "preserved"}
+    )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.components.persistent_notification",
+        SimpleNamespace(async_create=MagicMock(), async_dismiss=MagicMock()),
+    )
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.delete_event",
+        new_callable=AsyncMock,
+    ):
+        delete = _bind(stub, "_async_caldav_delete_current")
+        await delete("abc@asp-parking.local")
+
+    # async_save must have been called with uid removed but other keys intact
+    stub._caldav_store.async_save.assert_awaited_once()
+    saved_data = stub._caldav_store.async_save.call_args.args[0]
+    assert "uid" not in saved_data, "uid key must be removed from store on successful delete"
+    assert saved_data.get("future_key") == "preserved", (
+        "Future store keys must be preserved (pop-then-save, not async_save({}))"
+    )

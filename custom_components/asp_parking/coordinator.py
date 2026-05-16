@@ -262,7 +262,8 @@ class ASPParkingCoordinator:
         # Lock is constructed inside __init__ (NOT at class scope — Pitfall 2).
         self._caldav_store: Store | None = None  # set in async_start when configured
         self._caldav_uid: str | None = None
-        self._caldav_error_notified: bool = False
+        self._caldav_write_error_notified: bool = False
+        self._caldav_delete_error_notified: bool = False
         self._last_suspension_state: bool = False  # refreshed in async_start
         self._caldav_lock: asyncio.Lock = asyncio.Lock()
         self._caldav_write_task: asyncio.Task[None] | None = None
@@ -381,6 +382,18 @@ class ASPParkingCoordinator:
         )
         self._listeners.append(unsub_interval)
 
+        # Phase 34: CalDAV Store pre-load — must happen BEFORE first suspension check
+        # so _caldav_uid is available when _async_apply_suspension_state fires the
+        # False→True delete guard on startup (Finding 5 fix).
+        if self.entry.options.get(CONF_CALDAV_URL):
+            self._caldav_store = Store(
+                self.hass,
+                version=1,
+                key=f"{DOMAIN}_caldav_{self.entry.entry_id}",
+            )
+            raw = await self._caldav_store.async_load()
+            self._caldav_uid = (raw or {}).get("uid")
+
         # --- Suspension startup ---
         self._holiday_calendar = HolidayCalendar()
         await self._holiday_calendar.load()
@@ -477,23 +490,15 @@ class ASPParkingCoordinator:
                 self._parking_radius_m,
             )
 
+        # Phase 34: capture final suspension state AFTER all startup checks.
+        if self._caldav_store is not None:
+            self._last_suspension_state = self.data.suspension_state.is_suspended
+
         # Phase 33: pre-populate _last_rebuilt from build_info.json so the
         # last_rebuilt sensor is non-None on first startup (RESEARCH Open Q3).
         self._last_rebuilt = await self.hass.async_add_executor_job(
             _sync_read_build_timestamp, INDEX_DIR
         )
-
-        # Phase 34: CalDAV Store load — CALDAV-06 / Pitfall 5.
-        # Only when CONF_CALDAV_URL is present (D-02: absent URL = complete no-op).
-        if self.entry.options.get(CONF_CALDAV_URL):
-            self._caldav_store = Store(
-                self.hass,
-                version=1,
-                key=f"{DOMAIN}_caldav_{self.entry.entry_id}",
-            )
-            raw = await self._caldav_store.async_load()
-            self._caldav_uid = (raw or {}).get("uid")  # Pitfall 5: coerce None → {}
-            self._last_suspension_state = self.data.suspension_state.is_suspended
 
         logger.info(
             "ASP Parking coordinator started: tracking %s, "
@@ -625,9 +630,10 @@ class ASPParkingCoordinator:
 
             except Exception as err:  # noqa: BLE001
                 pn_dismiss(self.hass, "asp_parking_index_rebuild")
+                _err_summary = err.strerror if isinstance(err, OSError) else type(err).__name__
                 pn_create(
                     self.hass,
-                    f"Failed to rebuild spatial index: {err}. "
+                    f"Failed to rebuild spatial index: {_err_summary}. "
                     "Your existing index is still active.",
                     title="ASP Parking: Index Rebuild Failed",
                     notification_id="asp_parking_index_rebuild_error",
@@ -717,9 +723,10 @@ class ASPParkingCoordinator:
             and self._caldav_uid is not None
             and self._caldav_store is not None
         ):
+            _uid_snapshot = self._caldav_uid
             self._caldav_delete_task = self.entry.async_create_background_task(
                 self.hass,
-                ASPParkingCoordinator._async_caldav_delete_current(self),
+                ASPParkingCoordinator._async_caldav_delete_current(self, _uid_snapshot),
                 name="asp_parking_caldav_delete_on_suspension",
             )
 
@@ -751,33 +758,34 @@ class ASPParkingCoordinator:
                 # Success: persist UID and dismiss any active error notification
                 self._caldav_uid = new_uid
                 await self._caldav_store.async_save({"uid": new_uid})  # type: ignore[union-attr]
-                if self._caldav_error_notified:
+                if self._caldav_write_error_notified:
                     pn_dismiss(self.hass, "asp_parking_caldav_error")
-                    self._caldav_error_notified = False
+                    self._caldav_write_error_notified = False
             except Exception as err:  # noqa: BLE001
                 sanitised = str(err)
                 if password:
                     sanitised = sanitised.replace(password, "***")
                 logger.warning("ASP Parking: CalDAV write failed: %s", sanitised)
-                if not self._caldav_error_notified:
+                if not self._caldav_write_error_notified:
                     pn_create(
                         self.hass,
                         f"CalDAV sync failed: {sanitised}. Your ASP schedule is still active.",
                         title="ASP Parking: CalDAV Sync Failed",
                         notification_id="asp_parking_caldav_error",
                     )
-                    self._caldav_error_notified = True
+                    self._caldav_write_error_notified = True
 
-    async def _async_caldav_delete_current(self) -> None:
+    async def _async_caldav_delete_current(self, uid_to_delete: str | None = None) -> None:
         """Delete the active CalDAV event by stored UID.
 
-        Wraps ``caldav_sync.delete_event`` with:
-        - asyncio.Lock serialisation (T-34-07)
-        - Store clear after successful delete (CALDAV-06)
-        - D-09 single-fire persistent notification per failure streak
-        - T-34-01/T-34-05 password sanitisation
+        Args:
+            uid_to_delete: UID captured at spawn time (Finding 1 race fix). When
+                provided, used instead of reading self._caldav_uid inside the lock,
+                so a concurrent write cannot redirect the delete to the new event.
         """
-        if self._caldav_uid is None or self._caldav_store is None:
+        # Prefer the explicitly passed snapshot; fall back to current field.
+        uid = uid_to_delete if uid_to_delete is not None else self._caldav_uid
+        if uid is None or self._caldav_store is None:
             return  # Nothing to delete
 
         from homeassistant.components.persistent_notification import (
@@ -785,36 +793,47 @@ class ASPParkingCoordinator:
             async_dismiss as pn_dismiss,
         )
 
+        # Finding 4: use .get() — bare subscript raises KeyError if CalDAV URL
+        # removed from options between task spawn and execution.
+        url = self.entry.options.get(CONF_CALDAV_URL, "")
+        if not url:
+            return  # CalDAV deconfigured between task spawn and execution
         password = self.entry.options.get(CONF_CALDAV_PASSWORD, "")
 
         async with self._caldav_lock:
             try:
                 await caldav_sync.delete_event(
-                    url=self.entry.options[CONF_CALDAV_URL],
+                    url=url,
                     username=self.entry.options.get(CONF_CALDAV_USERNAME, ""),
                     password=password,
                     calendar_url=self.entry.options.get(CONF_CALDAV_CALENDAR, ""),
-                    uid=self._caldav_uid,
+                    uid=uid,
                 )
-                # Success: clear UID + store, dismiss any active error notification
-                self._caldav_uid = None
-                await self._caldav_store.async_save({})
-                if self._caldav_error_notified:
-                    pn_dismiss(self.hass, "asp_parking_caldav_error")
-                    self._caldav_error_notified = False
+                # Success: clear UID only if it still matches what we deleted (Finding 1).
+                if self._caldav_uid == uid:
+                    self._caldav_uid = None
+                # Finding 8: pop-then-save preserves future store keys.
+                data = await self._caldav_store.async_load() or {}
+                data.pop("uid", None)
+                await self._caldav_store.async_save(data)
+                # Finding 3: dismiss delete-specific notification.
+                if self._caldav_delete_error_notified:
+                    pn_dismiss(self.hass, "asp_parking_caldav_delete_error")
+                    self._caldav_delete_error_notified = False
             except Exception as err:  # noqa: BLE001
                 sanitised = str(err)
                 if password:
                     sanitised = sanitised.replace(password, "***")
                 logger.warning("ASP Parking: CalDAV delete failed: %s", sanitised)
-                if not self._caldav_error_notified:
+                # Finding 3: separate flag + notification ID from write path.
+                if not self._caldav_delete_error_notified:
                     pn_create(
                         self.hass,
                         f"CalDAV sync failed: {sanitised}. Your ASP schedule is still active.",
                         title="ASP Parking: CalDAV Sync Failed",
-                        notification_id="asp_parking_caldav_error",
+                        notification_id="asp_parking_caldav_delete_error",
                     )
-                    self._caldav_error_notified = True
+                    self._caldav_delete_error_notified = True
 
     async def _async_caldav_hook_after_resolve(self, schedule: ScheduleResult) -> None:
         """Decide whether to spawn a CalDAV write or delete after a successful resolve.
@@ -850,9 +869,10 @@ class ASPParkingCoordinator:
             )
         else:
             # No active window (NoASPSchedule, NoMatchSchedule, etc.) — delete any stale event
+            _uid_snapshot = self._caldav_uid
             self._caldav_delete_task = self.entry.async_create_background_task(
                 self.hass,
-                ASPParkingCoordinator._async_caldav_delete_current(self),
+                ASPParkingCoordinator._async_caldav_delete_current(self, _uid_snapshot),
                 name="asp_parking_caldav_delete_on_move",
             )
 
@@ -891,9 +911,10 @@ class ASPParkingCoordinator:
             return
 
         # Outside the safety window — the car is moving early; delete the CalDAV event
+        _uid_snapshot = self._caldav_uid
         self._caldav_delete_task = self.entry.async_create_background_task(
             self.hass,
-            ASPParkingCoordinator._async_caldav_delete_current(self),
+            ASPParkingCoordinator._async_caldav_delete_current(self, _uid_snapshot),
             name="asp_parking_caldav_delete_on_move",
         )
 
@@ -983,7 +1004,11 @@ class ASPParkingCoordinator:
 
         # Phase 34 / CALDAV-05: if a CalDAV event is active and the car has moved
         # far enough before the safety window, delete the stale event.
-        self.hass.async_create_task(self._maybe_delete_caldav_on_move())
+        self.entry.async_create_background_task(
+            self.hass,
+            self._maybe_delete_caldav_on_move(),
+            name="asp_parking_caldav_move_guard",
+        )
 
         self.hass.async_create_task(self._debouncer.async_call())
 
@@ -1178,7 +1203,7 @@ class ASPParkingCoordinator:
         except NYC311AuthError:
             logger.warning("NYC 311 API auth error during startup, failing open")
         except Exception:  # noqa: BLE001
-            logger.warning("NYC 311 startup fetch failed, failing open")
+            logger.warning("NYC 311 startup fetch failed, failing open", exc_info=True)
 
     # ------------------------------------------------------------------
     # Phase 26: parking-area sign cache pre-seeding
@@ -1322,6 +1347,10 @@ class ASPParkingCoordinator:
         today = self._get_now().date()
 
         if self._holiday_calendar is None:
+            logger.error(
+                "ASP Parking: suspension poll skipped — holiday calendar not initialized "
+                "(this is a bug; please report it)"
+            )
             return
         info = self._holiday_calendar.is_suspended(today)
 
