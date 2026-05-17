@@ -108,7 +108,7 @@
           "caldav_event_title_template": "Event title template"
         },
         "data_description": {
-          "caldav_url": "CalDAV server URL (e.g., https://nextcloud.example.com/remote.php/dav/).",
+          "caldav_url": "CalDAV server URL. Supports Nextcloud, Fastmail, iCloud, and other CalDAV-compatible servers.",
           "caldav_username": "CalDAV account username.",
           "caldav_password": "CalDAV account password or app-specific password.",
           "caldav_safety_window": "Position changes within this window before the next move time will NOT delete the calendar event. Default 15 minutes.",
