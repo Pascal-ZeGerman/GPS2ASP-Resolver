@@ -8,23 +8,39 @@ and sets up an options update listener for reconfiguration.
 from __future__ import annotations
 
 import logging
-import zipfile
-from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN, INDEX_DOWNLOAD_URL, PLATFORMS
+from .const import (
+    CONF_CALDAV_CALENDAR,
+    CONF_CALDAV_PASSWORD,
+    CONF_CALDAV_URL,
+    CONF_CALDAV_USERNAME,
+    DOMAIN,
+    INDEX_DOWNLOAD_URL,
+    PLATFORMS,
+)
 from .coordinator import ASPParkingCoordinator
+from .index_io import (
+    INDEX_DIR,
+    INDEX_FILES,
+    _sync_atomic_swap,
+    _sync_cleanup_stale,
+    _sync_download_and_extract,
+)
 
 logger = logging.getLogger(__name__)
 
-_INDEX_DIR = Path(__file__).parent / "gps2asp" / "data" / "index"
-_INDEX_FILES = ("segments.idx", "segments.dat", "segments.json", "graph.json")
 _DOWNLOAD_TASK_KEY = f"{DOMAIN}_index_task"
 _IMPORT_ERROR_ISSUE_ID = "gps2asp_import_error"
+# Per-entry cache of CalDAV options captured at setup time.  Keyed by
+# f"{DOMAIN}_caldav_opts_{entry.entry_id}" so multiple instances never clash.
+# Used by _async_options_updated to access the OLD credentials after HA has
+# already written the new options to entry.options.
+_CALDAV_OPTIONS_CACHE_KEY_TPL = f"{DOMAIN}_caldav_opts_{{entry_id}}"
 
 
 async def _async_ensure_index(hass: HomeAssistant) -> None:
@@ -40,7 +56,7 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
     # Dismiss any stale error notification from a previous failed download attempt
     pn_dismiss(hass, "asp_parking_index_error")
 
-    if all((_INDEX_DIR / f).exists() for f in _INDEX_FILES):
+    if all((INDEX_DIR / f).exists() for f in INDEX_FILES):
         return
 
     task = hass.data.get(_DOWNLOAD_TASK_KEY)
@@ -62,13 +78,20 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
 
 
 async def _async_download_index(hass: HomeAssistant) -> None:
-    """Download and extract the spatial index ZIP from the GitHub release."""
+    """Download and extract the spatial index ZIP from the GitHub release.
+
+    Phase 33 D-01: this first-time-setup flow now consumes the same shared
+    sync helpers from ``index_io.py`` that the manual rebuild flow uses
+    (single source of truth for zip-slip safety + atomic swap). The
+    first-time-setup notification IDs (``asp_parking_index_download`` /
+    ``asp_parking_index_error``) remain DISTINCT from the rebuild-flow IDs
+    by design -- different UX for different lifecycle events (RESEARCH
+    Pitfall 7).
+    """
     from homeassistant.components.persistent_notification import (
         async_create as pn_create,
         async_dismiss as pn_dismiss,
     )
-
-    import httpx
 
     pn_create(
         hass,
@@ -77,31 +100,18 @@ async def _async_download_index(hass: HomeAssistant) -> None:
         notification_id="asp_parking_index_download",
     )
 
-    def _sync_download() -> None:
-        _INDEX_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = _INDEX_DIR / "_download.zip"
-        try:
-            with httpx.Client(timeout=300, follow_redirects=True) as client:
-                with client.stream("GET", INDEX_DOWNLOAD_URL) as resp:
-                    resp.raise_for_status()
-                    with open(tmp, "wb") as f:
-                        for chunk in resp.iter_bytes(chunk_size=65536):
-                            f.write(chunk)
-            with zipfile.ZipFile(tmp) as zf:
-                resolved_base = _INDEX_DIR.resolve()
-                for name in zf.namelist():
-                    member_path = (resolved_base / name).resolve()
-                    if not str(member_path).startswith(str(resolved_base) + "/"):
-                        raise ValueError(f"ZIP path traversal attempt: {name!r}")
-                    zf.extract(name, _INDEX_DIR)
-        finally:
-            tmp.unlink(missing_ok=True)
-
     try:
-        await hass.async_add_executor_job(_sync_download)
+        # D-01 single source of truth: same three sync helpers the manual
+        # rebuild flow uses (coordinator._async_do_rebuild). cleanup_stale
+        # is idempotent — safe on a fresh install where no _tmp/_bak exist.
+        await hass.async_add_executor_job(_sync_cleanup_stale, INDEX_DIR)
+        await hass.async_add_executor_job(
+            _sync_download_and_extract, INDEX_DIR, INDEX_DOWNLOAD_URL
+        )
+        await hass.async_add_executor_job(_sync_atomic_swap, INDEX_DIR)
         hass.data.pop(_DOWNLOAD_TASK_KEY, None)
         pn_dismiss(hass, "asp_parking_index_download")
-        logger.info("ASP Parking: spatial index downloaded to %s", _INDEX_DIR)
+        logger.info("ASP Parking: spatial index downloaded to %s", INDEX_DIR)
     except Exception as err:
         hass.data.pop(_DOWNLOAD_TASK_KEY, None)
         pn_dismiss(hass, "asp_parking_index_download")
@@ -179,6 +189,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = coordinator
     await coordinator.async_start()
 
+    # Snapshot the CalDAV-relevant options so _async_options_updated can access
+    # the OLD credentials after HA has already written new options to entry.options.
+    _cache_key = _CALDAV_OPTIONS_CACHE_KEY_TPL.format(entry_id=entry.entry_id)
+    hass.data[_cache_key] = dict(entry.options)
+
     # Forward entity platforms (sensor, binary_sensor)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -216,13 +231,149 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Clean up the CalDAV event before HA forgets this config entry (CALDAV-07).
+
+    Note: this runs AFTER async_unload_entry — runtime_data is no longer
+    available; we must reconstruct the Store from scratch.
+
+    Best-effort guarantees (Phase 34 Plan 05):
+      - D-02 zero-cost no-op when CONF_CALDAV_URL is absent.
+      - Pitfall 5: empty/missing Store data is gracefully handled — no
+        delete_event call, no exception raised.
+      - On caldav_sync.delete_event failure, the exception is caught +
+        logged at WARNING; the Store file is STILL removed (T-34-13
+        mitigation — leave a clean state for any future re-install).
+      - Credentials are NEVER included in the failure log line (T-34-01).
+    """
+    # D-02 guard FIRST — zero-cost no-op when CalDAV was never configured.
+    if not entry.options.get(CONF_CALDAV_URL):
+        return
+
+    # Lazy imports inside the function body — caldav has a ~25 MB transitive
+    # dep tree (RESEARCH §finding 2) and homeassistant.helpers.storage is
+    # only needed on the rare remove-entry path; keep module-top imports
+    # focused on the hot setup path.
+    from homeassistant.helpers.storage import Store
+
+    from . import caldav_sync
+
+    # Reconstruct Store using the SAME storage_key Plan 04 uses in
+    # async_start — same Store namespace.
+    store: Store[dict[str, str]] = Store(
+        hass, version=1, key=f"{DOMAIN}_caldav_{entry.entry_id}"
+    )
+    raw = await store.async_load()
+    # Pitfall 5 coercion: handle first-load (None) and empty-dict cases.
+    uid = (raw or {}).get("uid")
+
+    if uid:
+        password = entry.options.get(CONF_CALDAV_PASSWORD, "")
+        try:
+            await caldav_sync.delete_event(
+                url=entry.options[CONF_CALDAV_URL],
+                username=entry.options.get(CONF_CALDAV_USERNAME, ""),
+                password=password,
+                calendar_url=entry.options.get(CONF_CALDAV_CALENDAR, ""),
+                uid=uid,
+            )
+        except Exception:  # noqa: BLE001 — best-effort: never block uninstall
+            # T-34-01 / T-34-08: the log line excludes username, password,
+            # URL, and the raw exception object (which could embed creds).
+            # Only the UID — a deterministic hash — is included so the user
+            # can locate the orphan event manually if needed.
+            logger.warning(
+                "ASP Parking: CalDAV delete during remove failed; "
+                "manual cleanup may be needed (uid=%s)",
+                uid,
+            )
+
+    # ALWAYS remove the Store file — even on delete failure — to leave a
+    # clean state (T-34-13 mitigation; test_async_remove_entry_continues_when_delete_fails).
+    await store.async_remove()
+
+
+async def _async_caldav_cleanup_on_deconfigure(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    old_options: dict,
+) -> None:
+    """Delete the stored CalDAV event when the user removes the CalDAV URL.
+
+    Mirrors the pattern from async_remove_entry but uses the OLD credentials
+    (captured before HA overwrote entry.options) so the delete call can reach
+    the server. Called only when old CalDAV URL was set and new URL is absent.
+
+    Best-effort: all exceptions are caught so the subsequent reload always runs.
+      - Pitfall 5: empty/missing Store data (no uid) → no delete attempt.
+      - On delete failure: log at WARNING, continue. Store uid key is removed
+        regardless to avoid a stale pointer on the next setup cycle.
+      - T-34-01: credentials are never included in log output.
+    """
+    # Lazy imports — same reasoning as in async_remove_entry: heavy dep tree
+    # (caldav + icalendar) should not appear in the hot setup-entry path.
+    from homeassistant.helpers.storage import Store
+
+    from . import caldav_sync
+
+    # Reconstruct the Store using the same key the coordinator uses in async_start.
+    store: Store[dict[str, str]] = Store(
+        hass, version=1, key=f"{DOMAIN}_caldav_{entry.entry_id}"
+    )
+    raw = await store.async_load()
+    uid = (raw or {}).get("uid")
+
+    if not uid:
+        # Nothing stored — CalDAV was configured but no event was ever written.
+        return
+
+    password = old_options.get(CONF_CALDAV_PASSWORD, "")
+    try:
+        await caldav_sync.delete_event(
+            url=old_options[CONF_CALDAV_URL],
+            username=old_options.get(CONF_CALDAV_USERNAME, ""),
+            password=password,
+            calendar_url=old_options.get(CONF_CALDAV_CALENDAR, ""),
+            uid=uid,
+        )
+    except Exception:  # noqa: BLE001 — best-effort; never block reload
+        # T-34-01 / T-34-08: no URL, username, password, or raw exception in log.
+        logger.warning(
+            "ASP Parking: CalDAV delete on deconfigure failed; "
+            "manual cleanup may be needed (uid=%s)",
+            uid,
+        )
+
+    # Clear the uid from the Store so the next setup cycle starts clean.
+    # Pop-then-save pattern (Finding 8) preserves any other future store keys.
+    data = (raw or {}).copy()
+    data.pop("uid", None)
+    await store.async_save(data)
+
+
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update by reloading the integration.
 
-    This ensures the coordinator picks up new threshold values.
+    If the user removed the CalDAV URL (transition from set → empty), clean up
+    the stored calendar event using the OLD credentials before reloading.  This
+    prevents orphan events from accumulating on the server (CALDAV-07 extension).
+
+    The old options are read from hass.data (snapshot written in async_setup_entry)
+    because entry.options already reflects the NEW values by the time this listener
+    fires.
 
     Args:
         hass: Home Assistant instance.
         entry: Config entry whose options were updated.
     """
+    _cache_key = _CALDAV_OPTIONS_CACHE_KEY_TPL.format(entry_id=entry.entry_id)
+    old_options: dict = hass.data.get(_cache_key, {})
+
+    old_caldav_url = old_options.get(CONF_CALDAV_URL, "")
+    new_caldav_url = entry.options.get(CONF_CALDAV_URL, "")
+
+    if old_caldav_url and not new_caldav_url:
+        # CalDAV URL was removed — clean up the orphan calendar event before reload.
+        await _async_caldav_cleanup_on_deconfigure(hass, entry, old_options)
+
     await hass.config_entries.async_reload(entry.entry_id)

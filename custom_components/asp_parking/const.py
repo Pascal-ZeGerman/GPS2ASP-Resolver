@@ -5,7 +5,7 @@ from __future__ import annotations
 DOMAIN = "asp_parking"
 VERSION = "3.1.0"
 
-PLATFORMS = ["sensor", "binary_sensor", "switch"]
+PLATFORMS = ["sensor", "binary_sensor", "switch", "button"]
 
 # Config entry data keys
 CONF_DEVICE_TRACKER = "device_tracker"
@@ -62,3 +62,17 @@ INDEX_DOWNLOAD_URL = (
     "https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver"
     "/releases/download/index-v1/index.zip"
 )
+
+# CalDAV calendar sync (Phase 34) — CALDAV-01..08
+CONF_CALDAV_URL = "caldav_url"
+DEFAULT_CALDAV_URL = None
+CONF_CALDAV_USERNAME = "caldav_username"
+DEFAULT_CALDAV_USERNAME = ""
+CONF_CALDAV_PASSWORD = "caldav_password"
+DEFAULT_CALDAV_PASSWORD = ""
+CONF_CALDAV_CALENDAR = "caldav_calendar"
+DEFAULT_CALDAV_CALENDAR = ""
+CONF_CALDAV_SAFETY_WINDOW = "caldav_safety_window"
+DEFAULT_CALDAV_SAFETY_WINDOW = 15  # minutes; D-04 / CALDAV-03
+CONF_CALDAV_EVENT_TITLE_TEMPLATE = "caldav_event_title_template"
+DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE = "ASP: {street}"  # D-04

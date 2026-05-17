@@ -25,6 +25,14 @@ def merge_windows(windows: list[TimeWindow]) -> WeeklySchedule:
     within each day using conservative logic (earliest start, latest end).
     Source sign lists are concatenated for merged windows.
 
+    Note on provenance representations:
+        TimeWindow.source_sign: semicolon-joined string of contributing sign
+            descriptions for this merged window (e.g. "SIGN A; SIGN B").
+        ScheduleFound.source_signs: the raw pre-merge list of all sign
+            descriptions on the block.
+        These two are different representations of provenance and are not
+        expected to be identical.
+
     Args:
         windows: Flat list of TimeWindow objects from all parsed signs.
 

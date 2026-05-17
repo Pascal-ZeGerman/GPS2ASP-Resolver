@@ -73,12 +73,14 @@
         "data": {
           "debug_lat": "Override latitude",
           "debug_lon": "Override longitude",
-          "debug_datetime": "Override current date/time"
+          "debug_datetime": "Override current date/time",
+          "suppress_notifications": "Suppress notifications in debug mode"
         },
         "data_description": {
           "debug_lat": "Fake GPS latitude for testing. Both lat and lon must be set together.",
           "debug_lon": "Fake GPS longitude for testing. Both lat and lon must be set together.",
-          "debug_datetime": "Replace the current date/time for schedule and suspension checks."
+          "debug_datetime": "Replace the current date/time for schedule and suspension checks.",
+          "suppress_notifications": "When enabled, push notifications are silenced while debug overrides are active. Prevents test runs from sending alerts to your phone."
         }
       },
       "parking_area": {
@@ -94,13 +96,40 @@
           "parking_lon": "Longitude of your usual parking area.",
           "parking_radius": "How far around the center to pre-fetch sign data, in meters. Larger radii pre-fetch more blocks but make more API calls to NYC Open Data. For radii above 1000 m, a NYC Open Data app token is recommended to avoid rate limits (set via the NYC_OPEN_DATA_APP_TOKEN environment variable on your HA host)."
         }
+      },
+      "caldav": {
+        "title": "CalDAV Calendar Sync (Optional)",
+        "description": "Sync next-move events to a CalDAV calendar (Nextcloud, iCloud, Radicale, etc.). Leave URL blank to disable.",
+        "data": {
+          "caldav_url": "Server URL",
+          "caldav_username": "Username",
+          "caldav_password": "Password",
+          "caldav_safety_window": "Safety window",
+          "caldav_event_title_template": "Event title template"
+        },
+        "data_description": {
+          "caldav_url": "CalDAV server URL. Supports Nextcloud, Fastmail, iCloud, and other CalDAV-compatible servers.",
+          "caldav_username": "CalDAV account username.",
+          "caldav_password": "CalDAV account password or app-specific password.",
+          "caldav_safety_window": "Position changes within this window before the next move time will NOT delete the calendar event. Default 15 minutes.",
+          "caldav_event_title_template": "Title template. Placeholders: {street}, {time}, {side}. Default: ASP: {street}."
+        }
+      },
+      "caldav_calendar": {
+        "title": "Select CalDAV Calendar",
+        "description": "Choose which calendar to write next-move events to.",
+        "data": {
+          "caldav_calendar": "Calendar"
+        }
       }
     },
     "error": {
       "movement_threshold_too_small": "Must be at least 1 m.",
       "refresh_interval_too_small": "Must be at least 1 h.",
       "stale_timeout_too_small": "Must be at least 1 h.",
-      "invalid_api_key": "Invalid API key — check your NYC 311 API portal subscription key."
+      "invalid_api_key": "Invalid API key — check your NYC 311 API portal subscription key.",
+      "caldav_auth_failed": "Could not authenticate with the CalDAV server. Check the URL, username, and password.",
+      "caldav_invalid_template": "Invalid title template. Use only plain text and supported placeholders: {street}, {side}, {time}."
     }
   },
   "entity": {
@@ -137,16 +166,27 @@
       },
       "last_error": {
         "name": "Last Error"
+      },
+      "index_last_rebuilt": {
+        "name": "Index Last Rebuilt"
       }
     },
     "binary_sensor": {
       "active_now": {
         "name": "ASP Active Now"
+      },
+      "index_rebuilding": {
+        "name": "Index Rebuilding"
       }
     },
     "switch": {
       "debug_switch": {
         "name": "Debug Mode"
+      }
+    },
+    "button": {
+      "rebuild_index": {
+        "name": "Rebuild Index"
       }
     }
   },

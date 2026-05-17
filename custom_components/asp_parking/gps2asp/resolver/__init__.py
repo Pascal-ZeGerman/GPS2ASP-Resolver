@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from .confidence import (
     DEFAULT_CONFIDENCE_THRESHOLD,
+    _NEAR_INTERSECTION_THRESHOLD_FT,
     compute_confidence,
     is_confident,
     resolve_effective_width,
@@ -48,17 +49,14 @@ from .side_resolver import (
 )
 from .spatial_index import SpatialIndex
 
-# Named constants for spatial search and ambiguity classification
-_NEAR_INTERSECTION_THRESHOLD_FT: float = 30.0  # ~10m: block-face ambiguity zone
-
 __all__ = [
     "resolve",
     "convert",
     "resolve_segment",
     "ResolutionResult",
+    "ResolutionDebugInfo",
     "SegmentCandidate",
     "ResolutionError",
-    "SegmentCandidate",
     "OutsideNYCError",
     "NoSegmentFoundError",
     "AmbiguousResolutionError",

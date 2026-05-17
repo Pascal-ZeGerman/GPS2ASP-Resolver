@@ -43,12 +43,14 @@ def determine_side(
         point_x: State Plane X coordinate of the GPS point (feet).
         point_y: State Plane Y coordinate of the GPS point (feet).
         segment: Shapely LineString of the street centerline (State Plane).
-        nominaldir: Nominal compass direction from CSCL data (used as hint,
-            but geometry is authoritative for angle computation).
+        nominaldir: Nominal compass direction from CSCL data. Currently not used
+            in the computation — the geometry cross-product is the sole determinant.
+            The parameter is retained in the signature for future use as a tiebreaker.
 
     Returns:
         Compass direction side: "N", "S", "E", or "W".
     """
+    _ = nominaldir  # not currently used; geometry cross-product is sole determinant
     point = Point(point_x, point_y)
 
     # Project point onto segment to find the closest point on the line
@@ -77,14 +79,18 @@ def determine_side(
     # Compute segment angle in degrees (0=East, 90=North, 180=West, 270=South)
     angle = math.degrees(math.atan2(dy, dx)) % 360
 
-    # Map cross product sign to compass direction based on segment orientation
+    # Map cross product sign to compass direction based on segment orientation.
+    # cross == 0: point is exactly on centerline; side is arbitrary here.
+    # The caller's confidence scoring returns 0.0 in this case and raises
+    # AmbiguousResolutionError upstream, so this code path is not reachable
+    # in normal operation.
     if 315 <= angle or angle < 45:
         # Segment runs roughly East: left=N, right=S
         return "N" if cross > 0 else "S"
-    elif 45 <= angle < 135:
+    elif angle < 135:
         # Segment runs roughly North: left=W, right=E
         return "W" if cross > 0 else "E"
-    elif 135 <= angle < 225:
+    elif angle < 225:
         # Segment runs roughly West: left=S, right=N
         return "S" if cross > 0 else "N"
     else:  # 225 <= angle < 315

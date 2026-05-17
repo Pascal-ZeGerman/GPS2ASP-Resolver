@@ -8,18 +8,22 @@ Provides ASPNextMoveTimeSensor which maps coordinator data to a sensor state:
 
 Rich attributes cover schedule, location, window, metadata, and error groups.
 
-Also provides 9 diagnostic sensors for debugging and dashboards:
+Also provides 10 diagnostic sensors for debugging and dashboards:
 ASPCarNameSensor, ASPVINSensor, ASPLatitudeSensor, ASPLongitudeSensor,
 ASPResolvedStreetSensor, ASPResolutionStatusSensor,
 ASPConfidenceScoreSensor, ASPSODALevelSensor, ASPLastResolvedSensor,
-ASPLastErrorSensor.
+ASPLastErrorSensor, ASPIndexLastRebuiltSensor (Phase 33, IDX-03).
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -38,6 +42,7 @@ from .gps2asp.suspension import apply_suspension
 
 from .const import CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT, DOMAIN, VERSION
 from .coordinator import ASPParkingCoordinator
+from .util import now_ha_local
 
 
 async def async_setup_entry(
@@ -61,6 +66,8 @@ async def async_setup_entry(
             ASPSODALevelSensor(coordinator),
             ASPLastResolvedSensor(coordinator),
             ASPLastErrorSensor(coordinator),
+            # Phase 33 IDX-03: spatial-index last-rebuilt timestamp sensor
+            ASPIndexLastRebuiltSensor(coordinator),
         ]
     )
 
@@ -105,17 +112,36 @@ class ASPNextMoveTimeSensor(SensorEntity):
             sw_version=VERSION,
         )
 
-    def _format_move_time(self, dt: datetime) -> str:
-        """Return human-friendly move time string, with urgency prefix if <12h away."""
+    def _format_move_time(self, dt: datetime, today: date | None = None) -> str:
+        """Return human-friendly move time string with date-aware tier.
+
+        Three tiers (FMT-01, D-01):
+          - Today    -> "\u26a0 Today, 8:30 AM"
+          - Tomorrow -> "Tomorrow, 8:30 AM"
+          - Other    -> "Friday (5/15), 8:30 AM"
+
+        All date comparisons use HA's configured local timezone via
+        now_ha_local(); the 12-hour seconds heuristic is removed (D-02).
+
+        ``today`` may be pre-captured by the caller (e.g. extra_state_attributes)
+        so that a single snapshot is shared across multiple reads, eliminating a
+        midnight race where native_value and extra_state_attributes resolve "today"
+        independently and can disagree for one state cycle (WR-03).
+        """
         local_dt = dt_util.as_local(dt)
-        seconds_until = (dt_util.as_utc(dt) - dt_util.utcnow()).total_seconds()
-        time_str = local_dt.strftime("%I:%M %p").lstrip(
-            "0"
-        )  # e.g. "8:00 AM" (no leading zero, portable)
-        if seconds_until < 12 * 3600:
-            return f"\u26a0 Today {time_str}"
-        day_str = local_dt.strftime("%a")  # "Mon", "Tue", etc.
-        return f"{day_str} {time_str}"
+        if today is None:
+            today = now_ha_local().date()
+        target_date = local_dt.date()
+        time_str = local_dt.strftime("%I:%M %p").lstrip("0")
+
+        if target_date == today:
+            return f"\u26a0 Today, {time_str}"
+        if target_date == today + timedelta(days=1):
+            return f"Tomorrow, {time_str}"
+
+        weekday = local_dt.strftime("%A")
+        md = f"{local_dt.month}/{local_dt.day}"
+        return f"{weekday} ({md}), {time_str}"
 
     @property
     def native_value(self) -> str | None:
@@ -123,7 +149,9 @@ class ASPNextMoveTimeSensor(SensorEntity):
 
         Maps coordinator data to one of:
         - Human-friendly time string (ScheduleFound or ASPActiveNow)
-          Normal: "Mon 8:00 AM", Urgent (<12h): "⚠ Today 8:00 AM"
+          Today: "⚠ Today, 8:30 AM"
+          Tomorrow: "Tomorrow, 8:30 AM"
+          Other: "Thursday (5/3), 8:30 AM"
         - "No restrictions" (NoASPSchedule, NoMatchSchedule, AllUnparseable)
         - "Outside coverage area" (special_state)
         - "No street match" (special_state)
@@ -198,6 +226,20 @@ class ASPNextMoveTimeSensor(SensorEntity):
         """
         data = self._coordinator.data
         attrs: dict[str, str | float | int | list | None] = {}
+
+        # Capture "today" once so that native_value (_format_move_time) and
+        # extra_state_attributes share the same date snapshot. Without this,
+        # a midnight boundary crossed between the two property reads produces a
+        # transient inconsistency (WR-03: urgency/"next_move_is_today" and the
+        # display string can disagree for one HA state cycle).
+        today = now_ha_local().date()
+
+        # Date-relationship booleans (D-06: always present, default False)
+        # Set defaults BEFORE branching so attributes are present even when no
+        # concrete _move_dt exists (Claude's discretion: never None, never omitted).
+        attrs["next_move_is_today"] = False
+        attrs["next_move_is_tomorrow"] = False
+
         schedule = data.schedule_result
 
         # Lazy merge suspension at read time
@@ -240,17 +282,22 @@ class ASPNextMoveTimeSensor(SensorEntity):
 
             attrs["schedule_summary"] = schedule.summary
 
-            # Urgency attribute — only when a concrete move datetime exists
+            # Urgency + date-relationship booleans — only when a concrete move
+            # datetime exists. Single source-of-truth derivation (Pitfall 4):
+            # is_today / is_tomorrow drive both urgency and the new booleans.
             _move_dt: datetime | None = None
             if isinstance(schedule, ScheduleFound) and schedule.next_window is not None:
                 _move_dt = schedule.next_window.start_datetime
             elif isinstance(schedule, ASPActiveNow):
                 _move_dt = schedule.active_window.end_datetime
             if _move_dt is not None:
-                seconds_until = (
-                    dt_util.as_utc(_move_dt) - dt_util.utcnow()
-                ).total_seconds()
-                attrs["urgency"] = "high" if seconds_until < 12 * 3600 else "normal"
+                local_dt = dt_util.as_local(_move_dt)
+                target_date = local_dt.date()
+                is_today = target_date == today
+                is_tomorrow = target_date == today + timedelta(days=1)
+                attrs["urgency"] = "high" if is_today else "normal"
+                attrs["next_move_is_today"] = is_today
+                attrs["next_move_is_tomorrow"] = is_tomorrow
 
             # --- Location group ---
             attrs["street_name"] = schedule.on_street
@@ -567,3 +614,30 @@ class ASPLastErrorSensor(_ASPDiagnosticSensor):
     def native_value(self) -> str | None:
         """Return the last error string, or None if no error."""
         return self._coordinator.data.last_error
+
+
+class ASPIndexLastRebuiltSensor(_ASPDiagnosticSensor):
+    """Diagnostic sensor exposing the spatial-index build timestamp (Phase 33, IDX-03).
+
+    Surfaces ``coordinator._last_rebuilt`` -- a tz-aware datetime populated
+    at ``async_start`` (from ``build_info.json``) and after each successful
+    manual rebuild. With ``SensorDeviceClass.TIMESTAMP`` HA renders the
+    value as a relative time string ("X days ago") in the UI.
+
+    RESEARCH Pitfall 6: the TIMESTAMP device class REJECTS naive datetimes.
+    The coordinator's ``_sync_read_build_timestamp`` helper guarantees the
+    parsed value is tz-aware, so ``native_value`` can pass through unchanged.
+    """
+
+    _attr_icon = "mdi:clock-check"
+    _attr_translation_key = "index_last_rebuilt"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator: ASPParkingCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_index_last_rebuilt"
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return tz-aware build_timestamp datetime, or None when unset."""
+        return self._coordinator._last_rebuilt

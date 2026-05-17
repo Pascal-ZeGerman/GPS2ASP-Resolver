@@ -58,7 +58,7 @@ _PREFIX_RE = re.compile(
 
 # Suffix: arrows (<->, -->) and optional SUPERSEDES clause.
 _SUFFIX_RE = re.compile(
-    r"\s*(?:<-+>|--+>)\s*(?:\(SUPERSEDES\s+[^)]+\))?\s*$",
+    r"\s*(?:<-+>|--+>)\s*(?:\(SUPERSEDES\s+[^)]+\))?\s*$",  # lgtm[py/bad-tag-filter]
     re.IGNORECASE,
 )
 

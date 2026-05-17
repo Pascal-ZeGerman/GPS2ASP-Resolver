@@ -12,6 +12,7 @@ both flows in sync.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import voluptuous as vol
@@ -19,7 +20,52 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
+# Phase 34: caldav_sync is provided by Plan 02 (parallel wave). Import at
+# module level so unittest.mock.patch("...config_flow.caldav_sync.*") can
+# resolve the attribute. In the brief window before Plan 02 merges (and
+# in case the optional caldav dependency is missing at runtime) we fall
+# back to a sentinel module so config_flow remains importable; the new
+# caldav step methods will surface a translated error if invoked before
+# Plan 02 lands.
+try:
+    from . import caldav_sync
+except ImportError:  # pragma: no cover - parallel-wave merge fallback
+    import sys as _sys
+    import types as _types
+
+    caldav_sync = _types.ModuleType(  # type: ignore[assignment]
+        "custom_components.asp_parking.caldav_sync"
+    )
+
+    class _MissingCalDAVAuthError(Exception):
+        """Fallback CalDAVAuthError until Plan 02's module is merged."""
+
+    async def _missing_validate_connection(
+        *, url: str, username: str, password: str
+    ) -> None:  # pragma: no cover
+        raise _MissingCalDAVAuthError(
+            "caldav_sync module not yet installed; rerun setup after merge"
+        )
+
+    async def _missing_list_calendars(
+        *, url: str, username: str, password: str
+    ) -> list[tuple[str, str]]:  # pragma: no cover
+        return []
+
+    caldav_sync.CalDAVAuthError = _MissingCalDAVAuthError  # type: ignore[assignment, misc]
+    caldav_sync.validate_connection = _missing_validate_connection  # type: ignore[attr-defined]
+    caldav_sync.list_calendars = _missing_list_calendars  # type: ignore[attr-defined]
+    # Register in sys.modules so `from custom_components.asp_parking import
+    # caldav_sync` (and submodule imports from tests) resolve to this stub.
+    _sys.modules["custom_components.asp_parking.caldav_sync"] = caldav_sync
+
 from .const import (
+    CONF_CALDAV_CALENDAR,
+    CONF_CALDAV_EVENT_TITLE_TEMPLATE,
+    CONF_CALDAV_PASSWORD,
+    CONF_CALDAV_SAFETY_WINDOW,
+    CONF_CALDAV_URL,
+    CONF_CALDAV_USERNAME,
     CONF_DEBUG_DATETIME,
     CONF_DEBUG_LAT,
     CONF_DEBUG_LON,
@@ -35,6 +81,8 @@ from .const import (
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
     CONF_SUPPRESS_NOTIFICATIONS,
+    DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE,
+    DEFAULT_CALDAV_SAFETY_WINDOW,
     DEFAULT_MOVEMENT_THRESHOLD,
     DEFAULT_NOTIFY_LEAD_TIME,
     DEFAULT_NOTIFY_SERVICE,
@@ -45,6 +93,11 @@ from .const import (
 )
 from .gps2asp.suspension import NYC311Client
 from .gps2asp.suspension.poller import NYC311AuthError
+
+# Allowed characters in a CalDAV event title template: printable text plus
+# the {placeholder} syntax. Rejects attribute access ({x.y}) and index
+# access ({x[y]}) to prevent unintended format_map surface area.
+_TEMPLATE_RE = re.compile(r"^[^{}]*(?:\{[A-Za-z_][A-Za-z0-9_]*\}[^{}]*)*$")
 
 
 def _settings_schema(
@@ -417,7 +470,8 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 options.pop(CONF_PARKING_LAT, None)
                 options.pop(CONF_PARKING_LON, None)
                 options.pop(CONF_PARKING_RADIUS, None)
-            return self.async_create_entry(title="", data=options)
+            self._options = options
+            return await self.async_step_caldav()
 
         opts = self.config_entry.options
         # NOTE: step="any" is used (not 0.000001) because HA 2026.2.3's
@@ -494,4 +548,187 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
             step_id="parking_area",
             data_schema=vol.Schema(parking_schema),
             errors=errors,
+        )
+
+    async def async_step_caldav(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """CalDAV credentials step (Phase 34 — CALDAV-01).
+
+        Submitting an empty URL is a complete no-op (D-02): all CalDAV keys
+        are stripped from options and the entry is created without any
+        CalDAV state. Otherwise we probe the server via
+        caldav_sync.validate_connection. ANY probe failure (auth, network,
+        DNS, TLS) is mapped to the same translated error key
+        ``caldav_auth_failed`` (D-03 — never leak server details).
+
+        T-34-02 mitigation: bad credentials are NEVER persisted because the
+        ``if not errors`` gate is the ONLY code path that writes to
+        ``self._options``. T-34-01 mitigation: the password form default is
+        hardcoded to ``""`` so a re-render after error does NOT echo it back.
+        """
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            url = (user_input.get(CONF_CALDAV_URL) or "").strip()
+            if not url:
+                # D-02: empty URL = complete no-op. Strip any pre-existing
+                # CalDAV keys carried in self._options so the entry has no
+                # CalDAV state at all.
+                options = {**getattr(self, "_options", {})}
+                for k in (
+                    CONF_CALDAV_URL,
+                    CONF_CALDAV_USERNAME,
+                    CONF_CALDAV_PASSWORD,
+                    CONF_CALDAV_CALENDAR,
+                    CONF_CALDAV_SAFETY_WINDOW,
+                    CONF_CALDAV_EVENT_TITLE_TEMPLATE,
+                ):
+                    options.pop(k, None)
+                return self.async_create_entry(title="", data=options)
+
+            username = user_input.get(CONF_CALDAV_USERNAME, "") or ""
+            password = user_input.get(CONF_CALDAV_PASSWORD, "") or ""
+
+            try:
+                await caldav_sync.validate_connection(
+                    url=url, username=username, password=password
+                )
+            except caldav_sync.CalDAVAuthError:
+                errors["base"] = "caldav_auth_failed"
+            except Exception:  # noqa: BLE001
+                # D-03: treat ALL probe failures the same — never leak
+                # server-internal details (DNS, TLS, etc.) to the UI.
+                errors["base"] = "caldav_auth_failed"
+
+            if not errors:
+                # Stash validated creds into self._options for the
+                # caldav_calendar step. NOTE: this writes to the in-memory
+                # accumulator; entry.options is not mutated until
+                # async_create_entry is called by the calendar step.
+                safety_window = int(
+                    user_input.get(
+                        CONF_CALDAV_SAFETY_WINDOW, DEFAULT_CALDAV_SAFETY_WINDOW
+                    )
+                )
+                template = (
+                    user_input.get(CONF_CALDAV_EVENT_TITLE_TEMPLATE)
+                    or DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE
+                )
+                if not _TEMPLATE_RE.fullmatch(template):
+                    errors[CONF_CALDAV_EVENT_TITLE_TEMPLATE] = "caldav_invalid_template"
+            if not errors:
+                self._options[CONF_CALDAV_URL] = url
+                self._options[CONF_CALDAV_USERNAME] = username
+                self._options[CONF_CALDAV_PASSWORD] = password
+                self._options[CONF_CALDAV_SAFETY_WINDOW] = safety_window
+                self._options[CONF_CALDAV_EVENT_TITLE_TEMPLATE] = template
+                return await self.async_step_caldav_calendar()
+
+        opts = self.config_entry.options
+        caldav_schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_CALDAV_URL,
+                    default=opts.get(CONF_CALDAV_URL, "") or "",
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(
+                        type=selector.TextSelectorType.URL,
+                    )
+                ),
+                vol.Optional(
+                    CONF_CALDAV_USERNAME,
+                    default=opts.get(CONF_CALDAV_USERNAME, "") or "",
+                ): selector.TextSelector(),
+                # T-34-01: password default is HARDCODED to "" — never echo
+                # back what the user just typed (or what is stored).
+                vol.Optional(
+                    CONF_CALDAV_PASSWORD,
+                    default="",
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(
+                        type=selector.TextSelectorType.PASSWORD,
+                    )
+                ),
+                vol.Optional(
+                    CONF_CALDAV_SAFETY_WINDOW,
+                    default=opts.get(
+                        CONF_CALDAV_SAFETY_WINDOW, DEFAULT_CALDAV_SAFETY_WINDOW
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0,
+                        max=240,
+                        step=1,
+                        unit_of_measurement="min",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_CALDAV_EVENT_TITLE_TEMPLATE,
+                    default=opts.get(
+                        CONF_CALDAV_EVENT_TITLE_TEMPLATE,
+                        DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE,
+                    ),
+                ): selector.TextSelector(),
+            }
+        )
+        return self.async_show_form(
+            step_id="caldav",
+            data_schema=caldav_schema,
+            errors=errors,
+        )
+
+    async def async_step_caldav_calendar(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """CalDAV calendar selection step (Phase 34 — CALDAV-02).
+
+        Populates a dropdown from caldav_sync.list_calendars() using the
+        just-validated creds (still in self._options, not yet persisted).
+        Submitting a selection commits the entire self._options dict to
+        entry.options via async_create_entry.
+
+        Pitfall 6 fallback: any error during list_calendars defensively
+        re-shows the credentials form rather than presenting an empty
+        dropdown the user cannot escape from.
+        """
+        if user_input is not None:
+            self._options[CONF_CALDAV_CALENDAR] = user_input[CONF_CALDAV_CALENDAR]
+            return self.async_create_entry(title="", data=self._options)
+
+        try:
+            calendars = await caldav_sync.list_calendars(
+                url=self._options[CONF_CALDAV_URL],
+                username=self._options[CONF_CALDAV_USERNAME],
+                password=self._options[CONF_CALDAV_PASSWORD],
+            )
+        except Exception:  # noqa: BLE001
+            # Pitfall 6: defensive fallback — re-show credentials step
+            # rather than render an empty dropdown the user can't escape.
+            return await self.async_step_caldav()
+
+        options_list = [
+            selector.SelectOptionDict(value=url, label=name or url)
+            for (url, name) in calendars
+        ]
+        current = self.config_entry.options.get(CONF_CALDAV_CALENDAR, "") or ""
+        default_value = (
+            current if current else (options_list[0]["value"] if options_list else "")
+        )
+        return self.async_show_form(
+            step_id="caldav_calendar",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_CALDAV_CALENDAR,
+                        default=default_value,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=options_list,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
         )

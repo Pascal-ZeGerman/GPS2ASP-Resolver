@@ -27,7 +27,8 @@ from __future__ import annotations
 import logging
 import math
 
-# Named constant for intersection proximity threshold (must match resolver/__init__.py)
+# Named constant for intersection proximity threshold (single source of truth;
+# imported by resolver/__init__.py for _classify_ambiguity())
 _NEAR_INTERSECTION_THRESHOLD_FT: float = 30.0  # ~10m: block-face ambiguity zone
 
 # Default confidence threshold: 0.33 (lowered for testing — permits PROSPECT PL score of 0.57)

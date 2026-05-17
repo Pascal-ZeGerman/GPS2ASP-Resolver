@@ -51,14 +51,14 @@ Always use `.venv/bin/python` and `.venv/bin/pytest` — system Python is extern
 - `client.py`: `SODAClient` — async httpx client for [NYC Open Data parking signs](https://data.cityofnewyork.us/resource/nfid-uabd.json), 3-level fallback query strategy (exact 4-field → relaxed cross-street swapped → on_street-only + client-side filter), pagination + exponential backoff
 - `graph.py`: `StreetGraph` — street adjacency graph from `data/index/graph.json` for Level 4 mid-span BFS matching (Phase 11)
 - `normalize.py`: Street name normalization between CSCL and SODA formats
-- `models.py`: `SignRetrievalResult`, `SignRetrievalSuccess`, `NoMatch` (frozen dataclasses)
+- `models.py`: `SignRetrievalResult`, `SignRetrievalSuccess`, `NoMatchFound` (frozen dataclasses)
 
 **Stage 3 — `schedule/`**: Signs → parsed schedule + next move
 - `parser.py`: Regex parser for SODA sign description text → `TimeWindow` objects
 - `merge.py`: Deduplicates overlapping time windows across multiple signs
 - `next_move.py`: Computes next upcoming cleaning window (NYC-local timezone)
 - `summary.py`: Human-readable schedule string (e.g., `"Mon 8–9:30 AM, Thu 11:30 AM–1 PM"`)
-- `models.py`: `ScheduleResult` union (`ScheduleFound`, `ASPActiveNow`, `NoASP`, `NoMatch`, `AllUnparseable`)
+- `models.py`: `ScheduleResult` union (`ScheduleFound`, `ASPActiveNow`, `NoASPSchedule`, `NoMatchSchedule`, `AllUnparseable`)
 
 **Entry point — `pipeline.py`**: `resolve_asp(lat, lon, debug=False)` wires all three stages. Returns `ASPResult` (lean) or `ASPDebugResult` (full intermediate state).
 

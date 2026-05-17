@@ -8,10 +8,13 @@ AllUnparseable) pass through unchanged.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from typing import Literal
 
 from ..schedule.models import ASPActiveNow, ScheduleFound, ScheduleResult
 from . import SuspensionInfo
+
+logger = logging.getLogger(__name__)
 
 
 def apply_suspension(
@@ -46,7 +49,11 @@ def apply_suspension(
     elif info.source in ("emergency", "ha_nyc311"):
         resolution_reason = "suspended_emergency"
     else:
-        resolution_reason = "suspended_holiday"  # fallback for unknown source
+        logger.debug(
+            "apply_suspension: unknown source %r — defaulting to 'suspended_holiday'",
+            info.source,
+        )
+        resolution_reason = "suspended_holiday"
 
     return dataclasses.replace(
         schedule,

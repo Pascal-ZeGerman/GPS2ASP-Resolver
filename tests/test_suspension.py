@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -13,6 +13,7 @@ from gps2asp.suspension import (
     HolidayCalendar,
     SuspensionInfo,
     _extract_reason,
+    _get_fallback,
     _parse_ics,
     FALLBACK_2026,
 )
@@ -166,3 +167,174 @@ def test_datetime_safety() -> None:
     # Should have extracted date(2026, 7, 4) regardless of datetime input
     assert date(2026, 7, 4) in holidays
     assert holidays[date(2026, 7, 4)] == "Independence Day"
+
+
+# ---------------------------------------------------------------------------
+# New edge-case tests
+# ---------------------------------------------------------------------------
+
+# 1. load() raises mid-execution, then is_suspended() called before _loaded is set
+
+
+async def test_load_parse_error_leaves_unloaded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If _parse_ics raises during load(), _loaded stays False and is_suspended warns."""
+    import logging
+
+    # A minimal but valid-enough bytes payload so _fetch_ics "succeeds"
+    dummy_bytes = b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"
+
+    mock_response = AsyncMock()
+    mock_response.content = dummy_bytes
+    mock_response.raise_for_status = lambda: None
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("gps2asp.suspension.httpx.AsyncClient", return_value=mock_client):
+        with patch("gps2asp.suspension._parse_ics", side_effect=ValueError("bad ics")):
+            cal = HolidayCalendar()
+            with pytest.raises(ValueError, match="bad ics"):
+                await cal.load(year=2026)
+
+    # _loaded must still be False because the exception prevented reaching self._loaded = True
+    assert cal._loaded is False
+
+    # Now call is_suspended — it should warn and return not-suspended
+    with caplog.at_level(logging.WARNING, logger="gps2asp.suspension"):
+        result = cal.is_suspended(date(2026, 1, 1))
+
+    assert any("before load()" in r.message for r in caplog.records)
+    assert result == SuspensionInfo(is_suspended=False, reason=None, source="none")
+
+
+# 2. load() called twice replaces holidays (idempotent replacement, not accumulation)
+
+_ICS_JAN1_ONLY = (
+    b"BEGIN:VCALENDAR\r\n"
+    b"VERSION:2.0\r\n"
+    b"BEGIN:VEVENT\r\n"
+    b"DTSTART;VALUE=DATE:20260101\r\n"
+    b"DESCRIPTION:Alternate Side Parking suspended for New Year's Day. Parking meters will not be in effect.\r\n"
+    b"END:VEVENT\r\n"
+    b"END:VCALENDAR\r\n"
+)
+
+_ICS_JUL4_ONLY = (
+    b"BEGIN:VCALENDAR\r\n"
+    b"VERSION:2.0\r\n"
+    b"BEGIN:VEVENT\r\n"
+    b"DTSTART;VALUE=DATE:20260704\r\n"
+    b"DESCRIPTION:Alternate Side Parking suspended for Independence Day. Parking meters will not be in effect.\r\n"
+    b"END:VEVENT\r\n"
+    b"END:VCALENDAR\r\n"
+)
+
+
+def _make_mock_client(responses: list[bytes]) -> AsyncMock:
+    """Return an AsyncMock httpx.AsyncClient that yields successive byte payloads."""
+    side_effects = []
+    for content in responses:
+        mock_resp = AsyncMock()
+        mock_resp.content = content
+        mock_resp.raise_for_status = lambda: None
+        side_effects.append(mock_resp)
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=side_effects)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    return mock_client
+
+
+async def test_load_twice_replaces_not_accumulates() -> None:
+    """Second load() replaces _holidays entirely; Jan 1 gone, Jul 4 present."""
+    mock_client = _make_mock_client([_ICS_JAN1_ONLY, _ICS_JUL4_ONLY])
+
+    with patch("gps2asp.suspension.httpx.AsyncClient", return_value=mock_client):
+        cal = HolidayCalendar()
+        await cal.load(year=2026)
+        # After first load: Jan 1 present
+        assert date(2026, 1, 1) in cal._holidays
+
+        await cal.load(year=2026)
+        # After second load: Jul 4 present, Jan 1 gone
+        assert date(2026, 7, 4) in cal._holidays
+        assert date(2026, 1, 1) not in cal._holidays
+        assert len(cal._holidays) == 1
+
+
+# 3. is_suspended(None) — None as check_date does not raise
+
+
+def test_is_suspended_none_date() -> None:
+    """is_suspended(None) returns not-suspended without raising."""
+    cal = HolidayCalendar()
+    cal._loaded = True
+    cal._holidays = {}
+    result = cal.is_suspended(None)  # type: ignore[arg-type]
+    assert result == SuspensionInfo(is_suspended=False, reason=None, source="none")
+
+
+# 4. is_suspended with a datetime instead of date — dict lookup misses
+
+
+def test_is_suspended_datetime_key_miss() -> None:
+    """Passing a datetime (not date) to is_suspended causes a dict miss — returns False."""
+    cal = HolidayCalendar()
+    cal._loaded = True
+    cal._holidays = {date(2026, 1, 1): "New Year's Day"}
+
+    dt = datetime(2026, 1, 1, 8, 0)
+    result = cal.is_suspended(dt)  # type: ignore[arg-type]
+    # datetime != date for dict lookup, so the holiday is not found
+    assert result.is_suspended is False
+    assert result.source == "none"
+
+
+# 5. _get_fallback(year) for an unknown year returns empty dict and load() succeeds
+
+
+def test_get_fallback_unknown_year() -> None:
+    """_get_fallback returns {} for any year without a hardcoded calendar."""
+    assert _get_fallback(2099) == {}
+    assert _get_fallback(2000) == {}
+    assert _get_fallback(1999) == {}
+
+
+async def test_load_unknown_year_uses_empty_fallback() -> None:
+    """load(year=2099) with httpx failure falls back to empty dict; is_suspended returns False."""
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=httpx.TransportError("Network error"))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("gps2asp.suspension.httpx.AsyncClient", return_value=mock_client):
+        cal = HolidayCalendar()
+        await cal.load(year=2099)
+
+    assert cal._loaded is True
+    assert cal._holidays == {}
+    assert cal.is_suspended(date(2099, 1, 1)).is_suspended is False
+
+
+# 6. load(year=2025) with httpx failure uses correct fallback (empty for unknown years)
+
+
+async def test_load_year_2025_uses_correct_fallback() -> None:
+    """load(year=2025) uses _get_fallback(2025); holidays match the fallback exactly."""
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=httpx.TransportError("Network error"))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("gps2asp.suspension.httpx.AsyncClient", return_value=mock_client):
+        cal = HolidayCalendar()
+        await cal.load(year=2025)
+
+    assert cal._loaded is True
+    expected = _get_fallback(2025)
+    assert cal._holidays == expected

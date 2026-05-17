@@ -23,7 +23,7 @@ async def resolve_asp(
     lon: float,
     debug: Literal[False] = ...,
     suspension_status: SuspensionInfo | None = ...,
-) -> ASPResult: ...
+) -> ASPResult: ...  # lgtm[py/ineffectual-statement]
 
 
 @overload
@@ -32,7 +32,7 @@ async def resolve_asp(
     lon: float,
     debug: Literal[True],
     suspension_status: SuspensionInfo | None = ...,
-) -> ASPDebugResult: ...
+) -> ASPDebugResult: ...  # lgtm[py/ineffectual-statement]
 
 
 async def resolve_asp(
@@ -66,6 +66,7 @@ async def resolve_asp(
     Raises:
         OutsideNYCError: Coordinates are outside NYC bounding box.
         NoSegmentFoundError: No street segment found within 164ft.
+        IndexNotFoundError: Spatial index files are absent (index not built).
         SODAAPIError: SODA API returned errors after retries.
         IncompleteResultsError: SODA pagination was interrupted.
     """
