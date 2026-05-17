@@ -234,7 +234,7 @@ async def test_async_do_rebuild_flips_is_rebuilding_around_work(
     # spawning the task, so tests calling _async_do_rebuild directly must
     # pre-set the flag to simulate the state the caller establishes.
     stub = _make_coord_stub(is_rebuilding=True)
-    spies = _install_executor_spies(monkeypatch)
+    _install_executor_spies(monkeypatch)
 
     captured_during = {}
 
@@ -292,7 +292,7 @@ async def test_async_do_rebuild_sets_last_rebuilt_from_executor(
     """_last_rebuilt is populated from _sync_read_build_timestamp after swap."""
     fixed_dt = datetime(2026, 3, 3, 15, 9, 11, tzinfo=timezone.utc)
     stub = _make_coord_stub(is_rebuilding=False)
-    spies = _install_executor_spies(monkeypatch, build_timestamp_return=fixed_dt)
+    _install_executor_spies(monkeypatch, build_timestamp_return=fixed_dt)
 
     async def _executor_dispatch(fn, *args, **kwargs):
         return fn(*args, **kwargs)
@@ -685,7 +685,7 @@ async def test_async_do_rebuild_success_resets_flag_and_sets_last_rebuilt(
     """
     fixed_dt = datetime(2026, 5, 18, 12, 0, tzinfo=timezone.utc)
     stub = _make_coord_stub(is_rebuilding=True)
-    spies = _install_executor_spies(monkeypatch, build_timestamp_return=fixed_dt)
+    _install_executor_spies(monkeypatch, build_timestamp_return=fixed_dt)
 
     async def _executor_dispatch(fn, *args, **kwargs):
         return fn(*args, **kwargs)

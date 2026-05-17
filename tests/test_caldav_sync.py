@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import inspect
 import re
-from datetime import datetime, time, timezone
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
