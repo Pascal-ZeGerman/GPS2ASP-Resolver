@@ -260,7 +260,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     # Reconstruct Store using the SAME storage_key Plan 04 uses in
     # async_start — same Store namespace.
-    store: Store[dict[str, str]] = Store(hass, version=1, key=f"{DOMAIN}_caldav_{entry.entry_id}")
+    store: Store[dict[str, str]] = Store(
+        hass, version=1, key=f"{DOMAIN}_caldav_{entry.entry_id}"
+    )
     raw = await store.async_load()
     # Pitfall 5 coercion: handle first-load (None) and empty-dict cases.
     uid = (raw or {}).get("uid")
@@ -315,7 +317,9 @@ async def _async_caldav_cleanup_on_deconfigure(
     from . import caldav_sync
 
     # Reconstruct the Store using the same key the coordinator uses in async_start.
-    store: Store[dict[str, str]] = Store(hass, version=1, key=f"{DOMAIN}_caldav_{entry.entry_id}")
+    store: Store[dict[str, str]] = Store(
+        hass, version=1, key=f"{DOMAIN}_caldav_{entry.entry_id}"
+    )
     raw = await store.async_load()
     uid = (raw or {}).get("uid")
 
