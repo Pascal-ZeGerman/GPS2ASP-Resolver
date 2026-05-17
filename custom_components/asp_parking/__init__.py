@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 
 _DOWNLOAD_TASK_KEY = f"{DOMAIN}_index_task"
 _IMPORT_ERROR_ISSUE_ID = "gps2asp_import_error"
+# Per-entry cache of CalDAV options captured at setup time.  Keyed by
+# f"{DOMAIN}_caldav_opts_{entry.entry_id}" so multiple instances never clash.
+# Used by _async_options_updated to access the OLD credentials after HA has
+# already written the new options to entry.options.
+_CALDAV_OPTIONS_CACHE_KEY_TPL = f"{DOMAIN}_caldav_opts_{{entry_id}}"
 
 
 async def _async_ensure_index(hass: HomeAssistant) -> None:
@@ -184,6 +189,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = coordinator
     await coordinator.async_start()
 
+    # Snapshot the CalDAV-relevant options so _async_options_updated can access
+    # the OLD credentials after HA has already written new options to entry.options.
+    _cache_key = _CALDAV_OPTIONS_CACHE_KEY_TPL.format(entry_id=entry.entry_id)
+    hass.data[_cache_key] = dict(entry.options)
+
     # Forward entity platforms (sensor, binary_sensor)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -281,13 +291,85 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await store.async_remove()
 
 
+async def _async_caldav_cleanup_on_deconfigure(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    old_options: dict,
+) -> None:
+    """Delete the stored CalDAV event when the user removes the CalDAV URL.
+
+    Mirrors the pattern from async_remove_entry but uses the OLD credentials
+    (captured before HA overwrote entry.options) so the delete call can reach
+    the server. Called only when old CalDAV URL was set and new URL is absent.
+
+    Best-effort: all exceptions are caught so the subsequent reload always runs.
+      - Pitfall 5: empty/missing Store data (no uid) → no delete attempt.
+      - On delete failure: log at WARNING, continue. Store uid key is removed
+        regardless to avoid a stale pointer on the next setup cycle.
+      - T-34-01: credentials are never included in log output.
+    """
+    # Lazy imports — same reasoning as in async_remove_entry: heavy dep tree
+    # (caldav + icalendar) should not appear in the hot setup-entry path.
+    from homeassistant.helpers.storage import Store
+
+    from . import caldav_sync
+
+    # Reconstruct the Store using the same key the coordinator uses in async_start.
+    store = Store(hass, version=1, key=f"{DOMAIN}_caldav_{entry.entry_id}")
+    raw = await store.async_load()
+    uid = (raw or {}).get("uid")
+
+    if not uid:
+        # Nothing stored — CalDAV was configured but no event was ever written.
+        return
+
+    password = old_options.get(CONF_CALDAV_PASSWORD, "")
+    try:
+        await caldav_sync.delete_event(
+            url=old_options[CONF_CALDAV_URL],
+            username=old_options.get(CONF_CALDAV_USERNAME, ""),
+            password=password,
+            calendar_url=old_options.get(CONF_CALDAV_CALENDAR, ""),
+            uid=uid,
+        )
+    except Exception:  # noqa: BLE001 — best-effort; never block reload
+        # T-34-01 / T-34-08: no URL, username, password, or raw exception in log.
+        logger.warning(
+            "ASP Parking: CalDAV delete on deconfigure failed; "
+            "manual cleanup may be needed (uid=%s)",
+            uid,
+        )
+
+    # Clear the uid from the Store so the next setup cycle starts clean.
+    # Pop-then-save pattern (Finding 8) preserves any other future store keys.
+    data = (raw or {}).copy()
+    data.pop("uid", None)
+    await store.async_save(data)
+
+
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update by reloading the integration.
 
-    This ensures the coordinator picks up new threshold values.
+    If the user removed the CalDAV URL (transition from set → empty), clean up
+    the stored calendar event using the OLD credentials before reloading.  This
+    prevents orphan events from accumulating on the server (CALDAV-07 extension).
+
+    The old options are read from hass.data (snapshot written in async_setup_entry)
+    because entry.options already reflects the NEW values by the time this listener
+    fires.
 
     Args:
         hass: Home Assistant instance.
         entry: Config entry whose options were updated.
     """
+    _cache_key = _CALDAV_OPTIONS_CACHE_KEY_TPL.format(entry_id=entry.entry_id)
+    old_options: dict = hass.data.get(_cache_key, {})
+
+    old_caldav_url = old_options.get(CONF_CALDAV_URL, "")
+    new_caldav_url = entry.options.get(CONF_CALDAV_URL, "")
+
+    if old_caldav_url and not new_caldav_url:
+        # CalDAV URL was removed — clean up the orphan calendar event before reload.
+        await _async_caldav_cleanup_on_deconfigure(hass, entry, old_options)
+
     await hass.config_entries.async_reload(entry.entry_id)

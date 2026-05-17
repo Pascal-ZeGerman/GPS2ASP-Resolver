@@ -19,6 +19,8 @@ import caldav.aio
 from caldav.lib import error as caldav_error
 from icalendar import Calendar, Event
 
+from gps2asp.schedule.models import ScheduleFound
+
 logger = logging.getLogger(__name__)
 
 # RFC 5545 §3.7.3 — PRODID identifies the iCalendar implementation that
@@ -57,6 +59,17 @@ class CalDAVConfig:
     calendar_url: str
     title_template: str
     safety_window_minutes: int
+
+    def __post_init__(self) -> None:
+        """Validate fields at construction time (runs before the dataclass freeze)."""
+        if not self.url:
+            raise ValueError("CalDAVConfig.url must not be empty")
+        if not self.calendar_url:
+            raise ValueError("CalDAVConfig.calendar_url must not be empty")
+        if self.safety_window_minutes < 0:
+            raise ValueError(
+                f"CalDAVConfig.safety_window_minutes must be >= 0, got {self.safety_window_minutes}"
+            )
 
     @classmethod
     def from_options(cls, options: dict[str, Any]) -> "CalDAVConfig":
@@ -116,7 +129,7 @@ class _SafeDict(dict):
         return "{" + key + "}"
 
 
-def render_title(template: str, schedule: Any) -> str:
+def render_title(template: str, schedule: ScheduleFound) -> str:
     """Render the event title template against a ScheduleFound-shaped object.
 
     Supported placeholders: ``{street}``, ``{side}``, ``{time}``. Unknown
@@ -130,14 +143,17 @@ def render_title(template: str, schedule: Any) -> str:
     return template.format_map(_SafeDict(fields))
 
 
-def render_description(schedule: Any) -> str:
+def render_description(schedule: ScheduleFound) -> str:
     """Render the event DESCRIPTION line per D-06.
 
     Format: ``"{on_street} ({side_of_street} side)\\n{summary}"`` — used
     verbatim as the VEVENT description. icalendar handles any RFC 5545
     line-wrap escaping at serialisation time.
     """
-    return f"{schedule.on_street} ({schedule.side_of_street} side)\n{schedule.summary}"
+    on_street = getattr(schedule, "on_street", "") or ""
+    side_of_street = getattr(schedule, "side_of_street", "") or ""
+    summary = getattr(schedule, "summary", "") or ""
+    return f"{on_street} ({side_of_street} side)\n{summary}"
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +333,11 @@ async def list_calendars(
                 try:
                     name = await cal.get_display_name()
                 except Exception:  # noqa: BLE001 — fall back to URL for any failure
+                    logger.debug(
+                        "CalDAV: could not fetch display name for calendar %s, falling back to URL",
+                        cal.url,
+                        exc_info=True,
+                    )
                     name = ""
                 result.append((str(cal.url), name or str(cal.url)))
             return result
@@ -375,7 +396,14 @@ async def write_or_update_event(
         cal = await _get_calendar(client, config.calendar_url)
 
         if stored_uid and stored_uid != new_uid:
-            await _delete_uid_quiet(cal, stored_uid)
+            try:
+                await _delete_uid_quiet(cal, stored_uid)
+            except caldav_error.DAVError as exc:
+                status = getattr(exc, "status", "?")
+                logger.warning(
+                    "CalDAV: could not delete old event (status=%s), proceeding with create",
+                    status,
+                )
 
         ical_text = build_vevent_ical(
             uid=new_uid,

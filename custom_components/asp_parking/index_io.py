@@ -8,16 +8,21 @@ functions here are pure sync; the executor dispatch happens at the caller via
 
 Security note (zip-slip CVE class): ``_sync_extract_zip`` resolves every member
 path against the destination root and refuses any entry whose resolved path is
-not contained by ``dest_dir``. The check is byte-equivalent to the original
-implementation in ``__init__.py`` lines 90-96 and is exercised by the RED test
+not contained by ``dest_dir``. Uses ``Path.is_relative_to`` (Python 3.9+, HA
+requires 3.12+) to correctly handle both ``/`` and ``\\`` separators AND to
+accept directory entries that equal the base path. Exercised by the RED test
 ``tests/test_index_io.py::test_extract_zip_refuses_path_traversal``.
 
 Atomic swap (POSIX rename(2) / Windows MoveFileExW): ``_sync_atomic_swap`` uses
-``os.replace`` so the on-disk index directory is either fully old or fully new
-— never half-extracted. Per RESEARCH §"Atomic swap (sync helper)", the caller
-is responsible for preparing ``<index_dir>_tmp`` BEFORE calling swap; calling
-swap without a prepared tmp raises ``FileNotFoundError`` rather than silently
-succeeding.
+``os.replace`` so the on-disk index directory is either fully old or fully new.
+There is a narrow crash window between the two ``os.replace`` calls (step 3 and
+step 4): if a crash occurs after ``<index_dir>`` has been moved to
+``<index_dir>_bak`` but before ``<index_dir>_tmp`` has been promoted, the live
+index will be absent. ``_sync_cleanup_stale`` detects this and restores
+``<index_dir>_bak`` rather than wiping it. Per RESEARCH §"Atomic swap (sync
+helper)", the caller is responsible for preparing ``<index_dir>_tmp`` BEFORE
+calling swap; calling swap without a prepared tmp raises ``FileNotFoundError``
+rather than silently succeeding.
 """
 
 from __future__ import annotations
@@ -54,8 +59,10 @@ def _sync_atomic_swap(index_dir: Path) -> None:
       4. Move ``<index_dir>_tmp`` to ``<index_dir>`` via ``os.replace``.
       5. Best-effort remove ``<index_dir>_bak`` (``ignore_errors=True``).
 
-    Any exception leaves ``<index_dir>`` either fully old or fully new —
-    never half-extracted (D-02).
+    Crash window: a crash between steps 3 and 4 leaves ``<index_dir>``
+    absent (moved to ``_bak``) with ``_tmp`` still present. Call
+    ``_sync_cleanup_stale`` on startup to detect and recover from this
+    state — it restores ``_bak`` to ``<index_dir>`` rather than wiping it.
     """
     tmp = index_dir.parent / (index_dir.name + "_tmp")
     bak = index_dir.parent / (index_dir.name + "_bak")
@@ -82,19 +89,41 @@ def _sync_atomic_swap(index_dir: Path) -> None:
 
 
 def _sync_cleanup_stale(index_dir: Path) -> None:
-    """Remove stale rebuild artifacts (idempotent — never raises).
+    """Remove stale rebuild artifacts; restore backup if live index is missing.
 
-    Wipes ``<index_dir>_tmp``, ``<index_dir>_bak``, and
-    ``<index_dir>/_download.zip`` if any are present. Safe to call when the
-    index dir itself does not exist (RESEARCH Pitfall 5: crash-recovery
-    idempotency).
+    Handles RESEARCH Pitfall 5 (crash-recovery idempotency):
+
+    * ``<index_dir>_tmp`` — always wiped (stale extraction debris).
+    * ``<index_dir>_bak`` — behavior depends on whether ``<index_dir>`` exists:
+
+      - ``index_dir`` **present**: ``_bak`` is genuinely stale (swap completed
+        before the crash, or a prior cleanup left it). Wipe it.
+      - ``index_dir`` **absent** but ``_bak`` present: the crash hit the narrow
+        window in ``_sync_atomic_swap`` between the two ``os.replace`` calls —
+        ``index_dir`` was moved to ``_bak`` but ``_tmp`` was never promoted.
+        ``_bak`` is the LAST viable copy; restore it via ``os.replace``.
+
+    * ``<index_dir>/_download.zip`` — wiped if present (partial download).
+
+    Safe to call when the index dir itself does not exist. Never raises.
     """
     tmp = index_dir.parent / (index_dir.name + "_tmp")
     bak = index_dir.parent / (index_dir.name + "_bak")
     download_zip = index_dir / "_download.zip"
 
     shutil.rmtree(tmp, ignore_errors=True)
-    shutil.rmtree(bak, ignore_errors=True)
+
+    if bak.exists():
+        if index_dir.exists():
+            # Normal case: live index is present, _bak is genuinely stale.
+            shutil.rmtree(bak, ignore_errors=True)
+        else:
+            # Crash between the two os.replace calls — _bak is the only copy.
+            try:
+                os.replace(bak, index_dir)
+            except OSError:
+                shutil.rmtree(bak, ignore_errors=True)
+
     try:
         download_zip.unlink(missing_ok=True)
     except OSError:
@@ -107,20 +136,23 @@ def _sync_extract_zip(zip_path: Path, dest_dir: Path) -> None:
     """Extract ``zip_path`` into ``dest_dir`` with zip-slip protection.
 
     For every member, resolves ``(dest_dir / name)`` and asserts the result is
-    contained by ``dest_dir.resolve()``. Refuses path-traversal entries (e.g.
-    ``../escape.txt`` or ``../../../etc/passwd``) with ``ValueError`` BEFORE
-    writing anything to disk.
+    contained by ``dest_dir.resolve()`` using ``Path.is_relative_to`` (Python
+    3.9+, HA requires 3.12+). This correctly handles both ``/`` and ``\\``
+    path separators, so a Windows-style entry like ``..\\escape.txt`` is
+    caught on Linux where ``os.sep`` is ``/`` and the old ``startswith`` check
+    would have passed. Directory entries equal to the base path are also
+    accepted (``is_relative_to`` returns ``True`` for equal paths).
 
-    Preserves the exact safety check from the original
-    ``__init__.py::_sync_download`` (lines 90-96); only the variable name
-    ``_INDEX_DIR`` changes to the parameter ``dest_dir``.
+    Refuses path-traversal entries (e.g. ``../escape.txt`` or
+    ``../../../etc/passwd``) with ``ValueError`` BEFORE writing anything to
+    disk.
     """
-    resolved_base = dest_dir.resolve()
+    resolved_base = Path(dest_dir).resolve()
     resolved_base.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path) as zf:
         for name in zf.namelist():
             member_path = (resolved_base / name).resolve()
-            if not str(member_path).startswith(str(resolved_base) + os.sep):
+            if not member_path.is_relative_to(resolved_base):
                 raise ValueError(f"ZIP path traversal attempt: {name!r}")
             # Extract to resolved_base (not raw dest_dir) so the validated
             # path and the written path are always the same directory (CR-02).

@@ -630,7 +630,15 @@ class ASPParkingCoordinator:
 
             except Exception as err:  # noqa: BLE001
                 pn_dismiss(self.hass, "asp_parking_index_rebuild")
-                _err_summary = err.strerror if isinstance(err, OSError) else type(err).__name__
+                if isinstance(err, OSError):
+                    if err.strerror and err.filename:
+                        _err_summary = f"{err.strerror} ({err.filename})"
+                    elif err.strerror:
+                        _err_summary = err.strerror
+                    else:
+                        _err_summary = str(err)
+                else:
+                    _err_summary = str(err)
                 pn_create(
                     self.hass,
                     f"Failed to rebuild spatial index: {_err_summary}. "
@@ -745,9 +753,11 @@ class ASPParkingCoordinator:
         )
 
         config = CalDAVConfig.from_options(self.entry.options)
-        password = config.password
 
         async with self._caldav_lock:
+            if self.data.suspension_state.is_suspended:
+                logger.debug("CalDAV write skipped — suspension became active before lock acquired")
+                return
             try:
                 new_uid = await caldav_sync.write_or_update_event(
                     config=config,
@@ -763,13 +773,16 @@ class ASPParkingCoordinator:
                     self._caldav_write_error_notified = False
             except Exception as err:  # noqa: BLE001
                 sanitised = str(err)
-                if password:
-                    sanitised = sanitised.replace(password, "***")
+                if config.password:
+                    sanitised = sanitised.replace(config.password, "***")
+                if config.username:
+                    sanitised = sanitised.replace(config.username, "***")
                 logger.warning("ASP Parking: CalDAV write failed: %s", sanitised)
                 if not self._caldav_write_error_notified:
+                    _display = sanitised[:200] + ("…" if len(sanitised) > 200 else "")
                     pn_create(
                         self.hass,
-                        f"CalDAV sync failed: {sanitised}. Your ASP schedule is still active.",
+                        f"CalDAV sync failed: {_display}. Your ASP schedule is still active.",
                         title="ASP Parking: CalDAV Sync Failed",
                         notification_id="asp_parking_caldav_error",
                     )
@@ -799,12 +812,13 @@ class ASPParkingCoordinator:
         if not url:
             return  # CalDAV deconfigured between task spawn and execution
         password = self.entry.options.get(CONF_CALDAV_PASSWORD, "")
+        username = self.entry.options.get(CONF_CALDAV_USERNAME, "")
 
         async with self._caldav_lock:
             try:
                 await caldav_sync.delete_event(
                     url=url,
-                    username=self.entry.options.get(CONF_CALDAV_USERNAME, ""),
+                    username=username,
                     password=password,
                     calendar_url=self.entry.options.get(CONF_CALDAV_CALENDAR, ""),
                     uid=uid,
@@ -824,12 +838,15 @@ class ASPParkingCoordinator:
                 sanitised = str(err)
                 if password:
                     sanitised = sanitised.replace(password, "***")
-                logger.warning("ASP Parking: CalDAV delete failed: %s", sanitised)
+                if username:
+                    sanitised = sanitised.replace(username, "***")
+                logger.info("ASP Parking: CalDAV delete failed: %s", sanitised)
                 # Finding 3: separate flag + notification ID from write path.
                 if not self._caldav_delete_error_notified:
+                    _display = sanitised[:200] + ("…" if len(sanitised) > 200 else "")
                     pn_create(
                         self.hass,
-                        f"CalDAV sync failed: {sanitised}. Your ASP schedule is still active.",
+                        f"CalDAV sync failed: {_display}. Your ASP schedule is still active.",
                         title="ASP Parking: CalDAV Sync Failed",
                         notification_id="asp_parking_caldav_delete_error",
                     )
@@ -945,7 +962,10 @@ class ASPParkingCoordinator:
         try:
             self._entity_update_callbacks.remove(cb)
         except ValueError:
-            pass  # cb was never registered or already removed — safe to ignore
+            logger.debug(
+                "async_remove_update_callback: callback %r was not registered or already removed",
+                cb,
+            )
 
     @callback
     def _async_notify_entities(self) -> None:
@@ -1420,7 +1440,7 @@ class ASPParkingCoordinator:
             logger.info("ASP notification sent for window at %s", time_str)
         except Exception:  # noqa: BLE001
             logger.warning(
-                "Failed to send ASP notification via %s", self._notify_service
+                "Failed to send ASP notification via %s", self._notify_service, exc_info=True
             )
 
     # ------------------------------------------------------------------

@@ -477,7 +477,10 @@ async def test_write_or_update_event_first_write_no_stored_uid():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("caldav.aio.AsyncDAVClient", return_value=mock_client):
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=mock_client,
+    ):
         config = SimpleNamespace(
             url="https://example.com/dav/",
             username="user",
@@ -641,3 +644,149 @@ def test_no_sync_caldav_client_imported():
     assert "caldav.DAVClient(" not in src, (
         "CALDAV-08 regression: sync `caldav.DAVClient(...)` instantiation found in caldav_sync"
     )
+
+
+# ---------------------------------------------------------------------------
+# _sanitise — password masking (Fix 6)
+# ---------------------------------------------------------------------------
+
+
+def test_sanitise_empty_password_returns_message_unchanged():
+    """_sanitise with empty password returns the message as-is (no replacement)."""
+    from custom_components.asp_parking.caldav_sync import _sanitise
+
+    msg = "Connection error: https://user:secret@example.com/dav/"
+    assert _sanitise(msg, "") == msg
+
+
+def test_sanitise_password_present_is_replaced():
+    """_sanitise replaces the password with '***' when it appears in the message."""
+    from custom_components.asp_parking.caldav_sync import _sanitise
+
+    msg = "Authentication failed: bad password: mySecret"
+    result = _sanitise(msg, "mySecret")
+    assert "mySecret" not in result
+    assert "***" in result
+
+
+def test_sanitise_password_absent_returns_message_unchanged():
+    """_sanitise leaves the message unchanged when the password is not in it."""
+    from custom_components.asp_parking.caldav_sync import _sanitise
+
+    msg = "Connection error: timeout"
+    result = _sanitise(msg, "mySecret")
+    assert result == msg
+
+
+# ---------------------------------------------------------------------------
+# CalDAVConfig.from_options — construction + defaults (Fix 7)
+# ---------------------------------------------------------------------------
+
+
+def test_caldav_config_from_options_happy_path():
+    """from_options maps all option keys to the correct CalDAVConfig fields."""
+    from custom_components.asp_parking.caldav_sync import CalDAVConfig
+    from custom_components.asp_parking.const import (
+        CONF_CALDAV_CALENDAR,
+        CONF_CALDAV_EVENT_TITLE_TEMPLATE,
+        CONF_CALDAV_PASSWORD,
+        CONF_CALDAV_SAFETY_WINDOW,
+        CONF_CALDAV_URL,
+        CONF_CALDAV_USERNAME,
+    )
+
+    options = {
+        CONF_CALDAV_URL: "https://example.com/dav/",
+        CONF_CALDAV_USERNAME: "alice",
+        CONF_CALDAV_PASSWORD: "s3cr3t",
+        CONF_CALDAV_CALENDAR: "https://example.com/dav/personal/",
+        CONF_CALDAV_SAFETY_WINDOW: 30,
+        CONF_CALDAV_EVENT_TITLE_TEMPLATE: "Parking: {street}",
+    }
+
+    cfg = CalDAVConfig.from_options(options)
+
+    assert cfg.url == "https://example.com/dav/"
+    assert cfg.username == "alice"
+    assert cfg.password == "s3cr3t"
+    assert cfg.calendar_url == "https://example.com/dav/personal/"
+    assert cfg.safety_window_minutes == 30
+    assert cfg.title_template == "Parking: {street}"
+
+
+def test_caldav_config_from_options_missing_url_raises_key_error():
+    """from_options raises KeyError when CONF_CALDAV_URL is absent."""
+    from custom_components.asp_parking.caldav_sync import CalDAVConfig
+
+    with pytest.raises(KeyError):
+        CalDAVConfig.from_options({})
+
+
+def test_caldav_config_from_options_default_values():
+    """from_options uses correct defaults for optional fields.
+
+    A calendar_url is supplied so __post_init__ validation passes; the test
+    focuses on the defaults for username, password, safety_window_minutes, and
+    title_template which are all truly optional.
+    """
+    from custom_components.asp_parking.caldav_sync import CalDAVConfig
+    from custom_components.asp_parking.const import (
+        CONF_CALDAV_CALENDAR,
+        CONF_CALDAV_URL,
+        DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE,
+        DEFAULT_CALDAV_SAFETY_WINDOW,
+    )
+
+    cfg = CalDAVConfig.from_options(
+        {
+            CONF_CALDAV_URL: "https://example.com/dav/",
+            CONF_CALDAV_CALENDAR: "https://example.com/dav/personal/",
+        }
+    )
+
+    assert cfg.username == ""
+    assert cfg.password == ""
+    assert cfg.safety_window_minutes == DEFAULT_CALDAV_SAFETY_WINDOW
+    assert cfg.title_template == DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE
+
+
+# ---------------------------------------------------------------------------
+# _delete_uid_quiet — DAVError with status 404 treated as success (Fix 8)
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_event_treats_dav_error_404_as_success():
+    """_delete_uid_quiet treats a generic DAVError with status==404 as 'not found'.
+
+    Some CalDAV servers return a plain DAVError (not the NotFoundError subclass)
+    for a 404 status code. Both must be silenced.
+    """
+    cs = _require_caldav_sync()
+    from caldav.lib import error as caldav_error
+
+    dav_err = caldav_error.DAVError("404 Not Found")
+    dav_err.status = 404
+
+    cal = AsyncMock()
+    cal.event_by_uid = AsyncMock(side_effect=dav_err)
+    principal = SimpleNamespace(
+        calendar=AsyncMock(return_value=cal),
+        calendars=AsyncMock(return_value=[]),
+    )
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        # Must NOT raise — DAVError with status 404 is treated as "already gone"
+        await cs.delete_event(
+            url="https://srv/dav/",
+            username="u",
+            password="p",
+            calendar_url="https://srv/cal/work/",
+            uid="abc@asp-parking.local",
+        )

@@ -35,6 +35,7 @@ from custom_components.asp_parking.index_io import (  # noqa: E402
     INDEX_FILES,
     _sync_atomic_swap,
     _sync_cleanup_stale,
+    _sync_download_and_extract,
     _sync_extract_zip,
     _sync_read_build_timestamp,
 )
@@ -327,3 +328,106 @@ def test_read_build_timestamp_returns_none_when_key_missing(tmp_path: Path):
     (idx / "build_info.json").write_text(json.dumps({"other_key": "value"}))
 
     assert _sync_read_build_timestamp(idx) is None
+
+
+# ---------------------------------------------------------------------------
+# _sync_download_and_extract — failure paths
+# ---------------------------------------------------------------------------
+
+
+def test_sync_download_and_extract_http_error_cleans_zip(tmp_path: Path) -> None:
+    """HTTP error propagates; zip file is removed by the finally block."""
+    import httpx
+    from unittest.mock import MagicMock, patch
+
+    index_dir = tmp_path / "index"
+    zip_path = tmp_path / "index_tmp" / "_download.zip"
+
+    # Build a mock streaming response that raises on raise_for_status.
+    mock_resp = MagicMock()
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "403 Forbidden", request=MagicMock(), response=MagicMock()
+    )
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.stream.return_value = mock_resp
+
+    with patch("custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client):
+        with pytest.raises(httpx.HTTPStatusError):
+            _sync_download_and_extract(index_dir, "https://example.com/index.zip")
+
+    # The finally block must have removed the (never-written) zip path.
+    assert not zip_path.exists()
+
+
+def test_sync_download_and_extract_extraction_failure_propagates(tmp_path: Path) -> None:
+    """If _sync_extract_zip raises, the exception propagates and the zip is removed."""
+    from unittest.mock import MagicMock, patch
+
+    index_dir = tmp_path / "index"
+
+    # Build a mock streaming response that succeeds but yields no bytes.
+    mock_resp = MagicMock()
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.iter_bytes.return_value = iter([])  # no chunks → empty zip file
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.stream.return_value = mock_resp
+
+    with patch("custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client):
+        with patch(
+            "custom_components.asp_parking.index_io._sync_extract_zip",
+            side_effect=ValueError("bad zip"),
+        ):
+            with pytest.raises(ValueError, match="bad zip"):
+                _sync_download_and_extract(index_dir, "https://example.com/index.zip")
+
+    # The finally block must have removed the zip even after extraction failure.
+    zip_path = tmp_path / "index_tmp" / "_download.zip"
+    assert not zip_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# _sync_cleanup_stale — crash-recovery: _bak restore / wipe behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_sync_cleanup_stale_restores_bak_when_index_absent(tmp_path: Path) -> None:
+    """If index_dir is missing but _bak exists, restore _bak to index_dir.
+
+    This recovers from the crash window in _sync_atomic_swap where index_dir
+    was moved to _bak but _tmp was never promoted — leaving _bak as the only
+    viable copy of the index.
+    """
+    index_dir = tmp_path / "index"
+    bak = tmp_path / "index_bak"
+    bak.mkdir()
+    (bak / "segments.idx").write_text("data")
+
+    assert not index_dir.exists()
+    _sync_cleanup_stale(index_dir)
+
+    assert index_dir.exists()
+    assert (index_dir / "segments.idx").read_text() == "data"
+    assert not bak.exists()
+
+
+def test_sync_cleanup_stale_wipes_bak_when_index_present(tmp_path: Path) -> None:
+    """If both index_dir and _bak exist, _bak is the stale copy and gets wiped."""
+    index_dir = tmp_path / "index"
+    index_dir.mkdir()
+    bak = tmp_path / "index_bak"
+    bak.mkdir()
+
+    _sync_cleanup_stale(index_dir)
+
+    assert index_dir.exists()
+    assert not bak.exists()
