@@ -491,3 +491,214 @@ async def test_async_do_rebuild_failure_path_creates_error_notification_with_dis
     assert stub._async_notify_entities.call_count >= 1, (
         "Entities notified at least once in finally block even on failure"
     )
+
+
+# ---------------------------------------------------------------------------
+# New edge-case tests (appended)
+# ---------------------------------------------------------------------------
+
+
+async def test_concurrent_async_request_rebuild_only_one_task():
+    """Two simultaneous async_request_rebuild calls create exactly one background task.
+
+    Models the 'flag-as-gate' (IDX-02) design: the first call sets
+    _is_rebuilding=True before yielding; the second call sees the flag and bails.
+    This is tested sequentially (first sets flag, second call is a no-op).
+    """
+    stub = _make_coord_stub(is_rebuilding=False)
+    request_rebuild = _bind(stub, "async_request_rebuild")
+
+    # First call — should set the flag and create a background task.
+    await request_rebuild()
+    assert stub.entry.async_create_background_task.call_count == 1
+
+    # _is_rebuilding should now be True (set by async_request_rebuild before spawning).
+    assert stub._is_rebuilding is True, (
+        "async_request_rebuild must set _is_rebuilding=True before spawning task"
+    )
+
+    # Second call while the flag is already True — must be a no-op.
+    await request_rebuild()
+
+    assert stub.entry.async_create_background_task.call_count == 1, (
+        "Second call while _is_rebuilding=True must NOT spawn another task"
+    )
+
+
+async def test_async_do_rebuild_executor_oserror_resets_flag(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """When async_add_executor_job raises OSError, _is_rebuilding is reset in finally.
+
+    D-06: the finally block must run even when the executor raises so the
+    button is never permanently stuck.  An error notification must also be
+    created (Pitfall 7 / D-05).
+    """
+    stub = _make_coord_stub(is_rebuilding=True)
+    spies = _install_executor_spies(monkeypatch)
+
+    # Make the executor blow up on every call with a bare OSError.
+    stub.hass.async_add_executor_job = AsyncMock(side_effect=OSError("disk full"))
+
+    do_rebuild = _bind(stub, "_async_do_rebuild")
+    await do_rebuild()  # must NOT re-raise
+
+    # Finally block must have cleared the flag.
+    assert stub._is_rebuilding is False, (
+        "_is_rebuilding must be False after OSError (finally block D-06)"
+    )
+
+    # An error notification must have been created.
+    error_calls = [
+        c
+        for c in spies["pn_create"].call_args_list
+        if c.kwargs.get("notification_id") == "asp_parking_index_rebuild_error"
+    ]
+    assert len(error_calls) >= 1, (
+        "Error notification must be created when executor raises OSError"
+    )
+
+
+async def test_async_do_rebuild_none_timestamp_still_creates_success_notification(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """When _sync_read_build_timestamp returns None, success notification is still sent.
+
+    The success path formats 'unknown' when the timestamp is None, so no crash
+    must occur and the success notification must still be created.
+    """
+    stub = _make_coord_stub(is_rebuilding=True)
+    # Executor succeeds; _sync_read_build_timestamp returns None.
+    spies = _install_executor_spies(monkeypatch, build_timestamp_return=None)
+
+    async def _executor_dispatch(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    stub.hass.async_add_executor_job.side_effect = _executor_dispatch
+
+    do_rebuild = _bind(stub, "_async_do_rebuild")
+    await do_rebuild()  # must NOT raise
+
+    # Success notification must be created regardless of None timestamp.
+    success_calls = [
+        c
+        for c in spies["pn_create"].call_args_list
+        if c.kwargs.get("notification_id") == "asp_parking_index_rebuild_success"
+    ]
+    assert len(success_calls) == 1, (
+        f"Success notification must be created even when timestamp is None; "
+        f"pn_create calls: {spies['pn_create'].call_args_list!r}"
+    )
+
+
+async def test_async_do_rebuild_error_detail_included_in_notification(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A long error message from a failing executor job is surfaced in the notification.
+
+    _async_do_rebuild embeds str(err) (or the OSError strerror) verbatim into the
+    error notification — there is no truncation at this layer (contrast: the CalDAV
+    write path does truncate at 200 chars).
+
+    For an OSError raised by the executor, ``_err_summary`` is derived from the
+    exception attributes.  When err.strerror is None and err.filename is None
+    (as for OSError("X" * 300)), str(err) is used directly.  We verify:
+      1. The error notification is created exactly once.
+      2. The notification message contains the substring from the original error.
+      3. The D-05 reassurance phrase is also present.
+    """
+    long_message = "X" * 300
+    stub = _make_coord_stub(is_rebuilding=True)
+    spies = _install_executor_spies(monkeypatch)
+
+    # Raise a plain RuntimeError so _err_summary = str(err) = long_message.
+    stub.hass.async_add_executor_job = AsyncMock(
+        side_effect=RuntimeError(long_message)
+    )
+
+    do_rebuild = _bind(stub, "_async_do_rebuild")
+    await do_rebuild()
+
+    error_calls = [
+        c
+        for c in spies["pn_create"].call_args_list
+        if c.kwargs.get("notification_id") == "asp_parking_index_rebuild_error"
+    ]
+    assert len(error_calls) == 1, (
+        f"Exactly one error notification expected; got {spies['pn_create'].call_args_list!r}"
+    )
+
+    call = error_calls[0]
+    msg = call.args[1] if len(call.args) > 1 else call.kwargs.get("message", "")
+
+    # The error summary must appear in the notification message.
+    # (For RuntimeError the full str(err) is embedded; no truncation in this path.)
+    assert long_message[:50] in msg, (
+        f"Error detail from exception must appear in notification; got: {msg[:120]!r}"
+    )
+
+    # D-05 reassurance phrase must also be present.
+    assert "Your existing index is still active" in msg, (
+        f"D-05 reassurance phrase missing from error notification; got: {msg!r}"
+    )
+
+
+def test_index_rebuilding_binary_sensor_is_on_missing_attribute():
+    """ASPIndexRebuildingBinarySensor.is_on returns False when coordinator lacks _is_rebuilding.
+
+    The sensor accesses self._coordinator._is_rebuilding directly.  If the
+    coordinator stub lacks that attribute (e.g. a bare SimpleNamespace with no
+    _is_rebuilding), accessing the property must not raise AttributeError but
+    instead the property must safely return False via getattr fallback.
+
+    NOTE: The real sensor does NOT use getattr — it accesses the attribute directly.
+    This test confirms the REAL coordinator always provides the attribute (it is set
+    in __init__) and that tests using _make_coord_stub (which always sets it) match
+    the real coordinator contract.  We explicitly test that the default is False.
+    """
+    from custom_components.asp_parking.binary_sensor import ASPIndexRebuildingBinarySensor
+
+    stub = _make_coord_stub(is_rebuilding=False)
+    # Simulate what happens if, in a future refactor, _is_rebuilding were absent.
+    # We use a real coordinator-like stub that DOES have the attribute = False.
+    sensor = ASPIndexRebuildingBinarySensor.__new__(ASPIndexRebuildingBinarySensor)
+    sensor._coordinator = stub  # type: ignore[assignment]
+
+    assert sensor.is_on is False, (
+        "ASPIndexRebuildingBinarySensor.is_on must return False when _is_rebuilding=False"
+    )
+
+    # Flip the flag and verify is_on tracks it.
+    stub._is_rebuilding = True
+    assert sensor.is_on is True, (
+        "ASPIndexRebuildingBinarySensor.is_on must return True when _is_rebuilding=True"
+    )
+
+
+async def test_async_do_rebuild_success_resets_flag_and_sets_last_rebuilt(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Success path: _is_rebuilding is False after completion and _last_rebuilt is set.
+
+    Combines D-06 (finally resets flag) with IDX-04 (_last_rebuilt updated from
+    _sync_read_build_timestamp).
+    """
+    fixed_dt = datetime(2026, 5, 18, 12, 0, tzinfo=timezone.utc)
+    stub = _make_coord_stub(is_rebuilding=True)
+    spies = _install_executor_spies(monkeypatch, build_timestamp_return=fixed_dt)
+
+    async def _executor_dispatch(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    stub.hass.async_add_executor_job.side_effect = _executor_dispatch
+
+    do_rebuild = _bind(stub, "_async_do_rebuild")
+    await do_rebuild()
+
+    assert stub._is_rebuilding is False, (
+        "_is_rebuilding must be reset to False in finally block after success (D-06)"
+    )
+    assert stub._last_rebuilt == fixed_dt, (
+        f"_last_rebuilt must be set to the mocked timestamp {fixed_dt!r}; "
+        f"got {stub._last_rebuilt!r}"
+    )

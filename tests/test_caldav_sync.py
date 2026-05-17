@@ -790,3 +790,274 @@ async def test_delete_event_treats_dav_error_404_as_success():
             calendar_url="https://srv/cal/work/",
             uid="abc@asp-parking.local",
         )
+
+
+# ---------------------------------------------------------------------------
+# New edge-case tests (11 cases)
+# ---------------------------------------------------------------------------
+
+
+async def test_validate_connection_timeout_raises_caldav_auth_error():
+    """Edge 1: asyncio.TimeoutError → CalDAVAuthError with 'Connection error:' prefix.
+
+    TimeoutError is not an AuthorizationError or DAVError so it falls through to
+    the generic Exception handler which prefixes 'Connection error:'.
+    The password must NOT appear in the exception message (_sanitise defence).
+    """
+    cs = _require_caldav_sync()
+    import asyncio
+
+    password = "supersecret"
+    fake_client = AsyncMock()
+    fake_client.__aenter__ = AsyncMock(side_effect=asyncio.TimeoutError("timed out"))
+    fake_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        with pytest.raises(cs.CalDAVAuthError) as exc_info:
+            await cs.validate_connection(
+                url="https://example.com/dav/", username="user", password=password
+            )
+
+    msg = str(exc_info.value)
+    assert msg.startswith("Connection error:"), (
+        f"Expected 'Connection error:' prefix; got {msg!r}"
+    )
+    assert password not in msg, (
+        f"Password must be sanitised from error message; got {msg!r}"
+    )
+
+
+async def test_list_calendars_empty_list():
+    """Edge 2: principal.calendars() returns [] → list_calendars returns [] without raising."""
+    cs = _require_caldav_sync()
+
+    principal = SimpleNamespace(calendars=AsyncMock(return_value=[]))
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        result = await cs.list_calendars(
+            url="https://srv/dav/", username="u", password="p"
+        )
+
+    assert result == [], f"Expected empty list; got {result!r}"
+
+
+async def test_list_calendars_get_display_name_raises_generic_exception():
+    """Edge 3: get_display_name() raises Exception → fallback to str(url), no propagation."""
+    cs = _require_caldav_sync()
+
+    cal = SimpleNamespace(
+        url="https://srv/cal/broken/",
+        get_display_name=AsyncMock(side_effect=Exception("server error")),
+    )
+    principal = SimpleNamespace(calendars=AsyncMock(return_value=[cal]))
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        result = await cs.list_calendars(
+            url="https://srv/dav/", username="u", password="p"
+        )
+
+    assert len(result) == 1, f"Expected 1 calendar entry; got {result!r}"
+    url_out, name_out = result[0]
+    assert url_out == "https://srv/cal/broken/"
+    assert name_out == str(cal.url), (
+        f"Fallback name must be str(url); got name={name_out!r}"
+    )
+
+
+async def test_write_or_update_event_add_event_raises_propagates():
+    """Edge 4: delete succeeds (stored_uid differs) but add_event raises → exception propagates."""
+    cs = _require_caldav_sync()
+
+    entry_id = "entry_abc"
+    start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
+    window = _make_cleaning_window(start=start, end=start.replace(hour=9, minute=30))
+    schedule = _make_schedule_found(start=start)
+    object.__setattr__(schedule, "next_window", window)
+
+    stored_uid = "old-uid-that-differs@asp-parking.local"
+    new_uid = cs.derive_uid(entry_id, window.start_datetime)
+    assert stored_uid != new_uid
+
+    # Delete path: event_by_uid returns an event whose delete() succeeds
+    old_event = AsyncMock()
+    old_event.delete = AsyncMock(return_value=None)
+
+    cal = AsyncMock()
+    cal.event_by_uid = AsyncMock(return_value=old_event)
+    cal.add_event = AsyncMock(side_effect=Exception("server full"))
+
+    principal = SimpleNamespace(
+        calendar=AsyncMock(return_value=cal),
+        calendars=AsyncMock(return_value=[]),
+    )
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    config = cs.CalDAVConfig(
+        url="https://srv/dav/",
+        username="u",
+        password="p",
+        calendar_url="https://srv/cal/work/",
+        title_template="ASP: {street}",
+        safety_window_minutes=15,
+    )
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        with pytest.raises(Exception, match="server full"):
+            await cs.write_or_update_event(
+                config=config,
+                entry_id=entry_id,
+                schedule=schedule,
+                stored_uid=stored_uid,
+            )
+
+
+def test_build_vevent_ical_naive_datetime_no_tzid():
+    """Edge 5: naive start_datetime (no tzinfo) → no raise, no TZID= in output (floating DTSTART)."""
+    cs = _require_caldav_sync()
+
+    naive_start = datetime(2026, 5, 18, 8, 0)  # no tzinfo
+    naive_end = datetime(2026, 5, 18, 9, 30)   # no tzinfo
+    window = _make_cleaning_window(start=naive_start, end=naive_end)
+
+    ical = cs.build_vevent_ical(
+        uid="test-uid@asp-parking.local",
+        window=window,
+        title="T",
+        description="D",
+    )
+    text = ical.decode() if isinstance(ical, (bytes, bytearray)) else ical
+
+    assert isinstance(text, str), f"Expected str output; got {type(ical)}"
+    # Floating DTSTART documents the behavior: no TZID= for naive datetimes
+    assert "TZID=" not in text, (
+        "Naive datetime should produce a floating DTSTART (no TZID); got TZID= in output"
+    )
+
+
+def test_render_title_rfc5545_reserved_chars_in_street_name():
+    """Edge 6: RFC 5545 reserved chars ';' and ',' in street name pass through literally."""
+    cs = _require_caldav_sync()
+    schedule = _make_schedule_found(on_street="PROSPECT; PARK, ST")
+
+    # Must not raise
+    title = cs.render_title("ASP: {street}", schedule)
+
+    assert ";" in title, f"Semicolon must appear literally in title; got {title!r}"
+    assert "," in title, f"Comma must appear literally in title; got {title!r}"
+    assert "PROSPECT; PARK, ST" in title
+
+
+def test_derive_uid_naive_datetime_no_raise():
+    """Edge 7: naive window_start (no tzinfo) → no raise; .timestamp() works for naive datetimes."""
+    cs = _require_caldav_sync()
+
+    naive_start = datetime(2026, 5, 18, 8, 0)  # no tzinfo
+
+    # Must not raise
+    uid = cs.derive_uid("entry-123", naive_start)
+
+    assert uid.endswith("@asp-parking.local"), (
+        f"UID must end with '@asp-parking.local'; got {uid!r}"
+    )
+    assert re.match(r"^[0-9a-f]{32}@asp-parking\.local$", uid), (
+        f"UID shape mismatch: {uid!r}"
+    )
+
+
+async def test_delete_uid_quiet_non_404_dav_error_reraises():
+    """Edge 8: _delete_uid_quiet with DAVError status=403 → exception is re-raised (not swallowed)."""
+    cs = _require_caldav_sync()
+    from caldav.lib import error as caldav_error
+
+    exc = caldav_error.DAVError("403 Forbidden")
+    exc.status = 403
+
+    cal = AsyncMock()
+    cal.event_by_uid = AsyncMock(side_effect=exc)
+    principal = SimpleNamespace(
+        calendar=AsyncMock(return_value=cal),
+        calendars=AsyncMock(return_value=[]),
+    )
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        with pytest.raises(caldav_error.DAVError):
+            await cs.delete_event(
+                url="https://srv/dav/",
+                username="u",
+                password="p",
+                calendar_url="https://srv/cal/work/",
+                uid="abc@asp-parking.local",
+            )
+
+
+def test_sanitise_password_with_regex_metacharacters():
+    """Edge 9: password with regex metacharacters → str.replace is literal (not regex).
+
+    '.' and '*' are regex metacharacters but _sanitise uses str.replace so they
+    are matched literally, not as pattern wildcards.
+    """
+    from custom_components.asp_parking.caldav_sync import _sanitise
+
+    password = "my.pass*word?"
+    message = f"error: {password} is wrong"
+
+    result = _sanitise(message, password)
+
+    assert result == "error: *** is wrong", (
+        f"Expected literal replacement; got {result!r}"
+    )
+
+
+def test_caldav_config_post_init_large_safety_window_no_raise():
+    """Edge 10: safety_window_minutes=9999 → no exception (no upper-bound enforcement)."""
+    from custom_components.asp_parking.caldav_sync import CalDAVConfig
+
+    # Must not raise — CalDAVConfig only enforces >= 0, not an upper bound
+    cfg = CalDAVConfig(
+        url="http://x",
+        username="u",
+        password="p",
+        calendar_url="http://x/cal/",
+        title_template="T",
+        safety_window_minutes=9999,
+    )
+
+    assert cfg.safety_window_minutes == 9999
+
+
+def test_caldav_config_from_options_missing_url_key_error():
+    """Edge 11: CalDAVConfig.from_options({}) → KeyError (bare subscript on missing CONF_CALDAV_URL)."""
+    from custom_components.asp_parking.caldav_sync import CalDAVConfig
+
+    with pytest.raises(KeyError):
+        CalDAVConfig.from_options({})

@@ -463,3 +463,156 @@ class TestCliDryRun:
         assert not stale_file.exists(), "stale vendor file should have been deleted"
         # Summary must mention the deleted count.
         assert "deleted 1 stale file" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# New edge-case tests (7 additional)
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeSourceEdgeCases:
+    """Edge cases for normalize_source not covered by the main oracle suite."""
+
+    # --- Edge case 1: trailing inline comment survives rewrite ---------------
+
+    def test_inline_comment_survives_after_import(self) -> None:
+        """The regex replaces only the matched ``from gps2asp.X import `` prefix;
+        everything after `` import `` (including an inline ``# noqa`` comment)
+        is left verbatim.
+        """
+        line_in = "from gps2asp.pipeline import resolve_asp  # noqa: E402\n"
+        line_out = "from .pipeline import resolve_asp  # noqa: E402\n"
+        result = normalize_source(Path("__init__.py"), line_in)
+        assert result == line_out
+
+    # --- Edge case 2: semicolon-compound import on one line ------------------
+
+    def test_semicolon_compound_import_only_column_zero_match_is_rewritten(
+        self,
+    ) -> None:
+        """re.MULTILINE makes ``^`` match at the start of a line, not after a
+        semicolon. The second ``from gps2asp.c`` is NOT column-zero so it is
+        NOT rewritten by the regex.
+        """
+        line_in = "from gps2asp.a import b; from gps2asp.c import d\n"
+        line_out = "from .a import b; from gps2asp.c import d\n"
+        result = normalize_source(Path("__init__.py"), line_in)
+        assert result == line_out
+
+    # --- Edge case 3: bare ``import gps2asp.X`` is not matched ---------------
+
+    def test_bare_import_without_from_is_untouched(self) -> None:
+        """The regex ``_FROM_GPS2ASP`` requires the line to start with
+        ``from gps2asp.`` — a bare ``import gps2asp.pipeline`` does NOT match
+        and must round-trip unchanged.
+        """
+        line_in = "import gps2asp.pipeline\n"
+        result = normalize_source(Path("__init__.py"), line_in)
+        assert result == line_in
+
+
+class TestCliEdgeCases:
+    """Edge-case integration tests for main() not covered by TestCliDryRun."""
+
+    # --- Edge case 4: dry-run with two drifted files -------------------------
+
+    def test_dry_run_reports_all_drifted_files(
+        self,
+        staged_trees: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """When two vendor files have drifted, exit code is 1 and both relative
+        paths appear in stdout.
+        """
+        src_root, vendor_root = staged_trees
+        # Two source files.
+        _stage_source(src_root, "alpha.py", "from gps2asp.pipeline import resolve_asp\n")
+        _stage_source(src_root, "beta.py", "from gps2asp.api_models import ASPResult\n")
+        # Both vendor counterparts contain stale/wrong text.
+        _stage_vendor(vendor_root, "alpha.py", "# wrong\n")
+        _stage_vendor(vendor_root, "beta.py", "# also wrong\n")
+
+        monkeypatch.setattr(sys, "argv", ["sync_vendored.py", "--dry-run"])
+        exit_code = sync_vendored.main()
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        assert "alpha.py" in captured.out
+        assert "beta.py" in captured.out
+
+    # --- Edge case 5: dry-run flags stale vendor-only file with [stale] ------
+
+    def test_dry_run_stale_vendor_only_file_shows_stale_prefix(
+        self,
+        staged_trees: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A vendor .py file with no src counterpart is listed in dry-run output
+        prefixed with ``[stale]``.
+        """
+        _src_root, vendor_root = staged_trees
+        # No source files — vendor has an orphan file.
+        _stage_vendor(vendor_root, "orphan_module.py", "# orphan\n")
+
+        monkeypatch.setattr(sys, "argv", ["sync_vendored.py", "--dry-run"])
+        exit_code = sync_vendored.main()
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        assert "[stale]" in captured.out
+        assert "orphan_module.py" in captured.out
+
+    # --- Edge case 6: UnicodeDecodeError on a source file propagates ---------
+
+    def test_unicode_decode_error_propagates_from_source_read(
+        self,
+        staged_trees: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The script has no try/except around read_text; a UnicodeDecodeError
+        must propagate unmodified (not swallowed silently).
+        """
+        src_root, _vendor_root = staged_trees
+        _stage_source(src_root, "broken.py", "# placeholder\n")
+
+        original_read_text = Path.read_text
+
+        def _raise_unicode(self: Path, *args, **kwargs):  # type: ignore[override]
+            if self.name == "broken.py":
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+            return original_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _raise_unicode)
+        monkeypatch.setattr(sys, "argv", ["sync_vendored.py"])
+
+        with pytest.raises(UnicodeDecodeError):
+            sync_vendored.main()
+
+    # --- Edge case 7: iter_source_files includes symlinks --------------------
+
+    def test_iter_source_files_includes_symlink(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """rglob('*.py') follows symlinks by default, so a symlink to a .py
+        file inside SRC_ROOT must appear in the iter_source_files() result.
+        """
+        src_root = tmp_path / "src" / "gps2asp"
+        src_root.mkdir(parents=True)
+        # Real file.
+        real_file = src_root / "real_module.py"
+        real_file.write_text("# real\n", encoding="utf-8")
+        # Symlink pointing to the real file.
+        link_file = src_root / "link_module.py"
+        link_file.symlink_to(real_file)
+
+        monkeypatch.setattr(sync_vendored, "SRC_ROOT", src_root)
+
+        result = sync_vendored.iter_source_files()
+        result_names = {p.name for p in result}
+
+        assert "real_module.py" in result_names
+        assert "link_module.py" in result_names

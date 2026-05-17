@@ -431,3 +431,242 @@ def test_sync_cleanup_stale_wipes_bak_when_index_present(tmp_path: Path) -> None
 
     assert index_dir.exists()
     assert not bak.exists()
+
+
+# ---------------------------------------------------------------------------
+# 9 new edge-case tests
+# ---------------------------------------------------------------------------
+
+
+def test_download_and_extract_bad_zip_propagates_and_cleans_up(tmp_path: Path) -> None:
+    """BadZipFile raised by _sync_extract_zip propagates; _download.zip is removed.
+
+    Edge-case 1: the finally block in _sync_download_and_extract must unlink
+    the zip file even when extraction raises zipfile.BadZipFile.
+    """
+    from unittest.mock import MagicMock, patch
+
+    index_dir = tmp_path / "index"
+    tmp_dir = tmp_path / "index_tmp"
+    zip_path = tmp_dir / "_download.zip"
+
+    mock_resp = MagicMock()
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.iter_bytes.return_value = iter([b"PK garbage"])
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.stream.return_value = mock_resp
+
+    with patch("custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client):
+        with patch(
+            "custom_components.asp_parking.index_io._sync_extract_zip",
+            side_effect=zipfile.BadZipFile("File is not a zip file"),
+        ):
+            with pytest.raises(zipfile.BadZipFile):
+                _sync_download_and_extract(index_dir, "https://example.com/index.zip")
+
+    # The finally block must have removed the zip even though extraction failed.
+    assert not zip_path.exists(), "_download.zip must be cleaned up by finally block"
+
+
+def test_download_and_extract_zip_with_no_index_files(tmp_path: Path) -> None:
+    """A ZIP containing only README.txt (no index files) extracts without error.
+
+    Edge-case 2: documents the missing validation gap — _sync_download_and_extract
+    has no post-extraction check for INDEX_FILES presence. The call completes
+    successfully and _tmp exists but contains no index artifacts.
+    """
+    import io
+    from unittest.mock import MagicMock, patch
+
+    index_dir = tmp_path / "index"
+    tmp_dir = tmp_path / "index_tmp"
+
+    # Build a real zip containing only README.txt.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("README.txt", "This is not an index.")
+    zip_bytes = buf.getvalue()
+
+    mock_resp = MagicMock()
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.iter_bytes.return_value = iter([zip_bytes])
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.stream.return_value = mock_resp
+
+    with patch("custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client):
+        # Must NOT raise — gap: no INDEX_FILES validation after extraction.
+        _sync_download_and_extract(index_dir, "https://example.com/index.zip")
+
+    assert tmp_dir.exists(), "_tmp directory must exist after extraction"
+    for fname in INDEX_FILES:
+        assert not (tmp_dir / fname).exists(), (
+            f"INDEX_FILE {fname!r} must NOT be present (gap: no validation)"
+        )
+
+
+def test_atomic_swap_propagates_oserror_from_os_replace(tmp_path: Path) -> None:
+    """OSError from os.replace propagates out of _sync_atomic_swap.
+
+    Edge-case 3: if the filesystem rejects the rename (e.g. EBUSY, EXDEV),
+    the raw OSError must surface to the caller rather than being swallowed.
+    """
+    from unittest.mock import patch
+
+    index_dir = tmp_path / "index"
+    index_dir.mkdir()
+    tmp_dir = tmp_path / "index_tmp"
+    tmp_dir.mkdir()
+
+    with patch(
+        "custom_components.asp_parking.index_io.os.replace",
+        side_effect=OSError("EBUSY"),
+    ):
+        with pytest.raises(OSError, match="EBUSY"):
+            _sync_atomic_swap(index_dir)
+
+
+def test_cleanup_stale_restores_empty_bak_when_index_absent(tmp_path: Path) -> None:
+    """Empty _bak is restored to index_dir when index_dir is absent.
+
+    Edge-case 4: the crash-recovery path in _sync_cleanup_stale calls
+    os.replace(bak, index_dir) even when _bak is an empty directory. The
+    result is that index_dir exists (as an empty dir) and _bak is gone.
+    """
+    index_dir = tmp_path / "index"
+    bak = tmp_path / "index_bak"
+    bak.mkdir()  # empty — no files inside
+
+    assert not index_dir.exists()
+
+    _sync_cleanup_stale(index_dir)
+
+    assert index_dir.exists(), "index_dir must be restored from _bak (even if empty)"
+    assert not bak.exists(), "_bak must be gone after restore"
+
+
+def test_cleanup_stale_wipes_bak_when_os_replace_raises(tmp_path: Path) -> None:
+    """When os.replace raises OSError during _bak restore, _bak is wiped.
+
+    Edge-case 5: _sync_cleanup_stale catches the OSError and falls back to
+    shutil.rmtree(_bak), so _bak disappears and index_dir remains absent.
+    The function must not re-raise.
+    """
+    from unittest.mock import patch
+
+    index_dir = tmp_path / "index"
+    bak = tmp_path / "index_bak"
+    bak.mkdir()
+    (bak / "segments.idx").write_text("data")
+
+    assert not index_dir.exists()
+
+    with patch(
+        "custom_components.asp_parking.index_io.os.replace",
+        side_effect=OSError("EBUSY"),
+    ):
+        # Must not raise.
+        _sync_cleanup_stale(index_dir)
+
+    assert not bak.exists(), "_bak must be wiped after os.replace failure"
+    assert not index_dir.exists(), "index_dir must remain absent"
+
+
+def test_read_build_timestamp_raises_on_integer_value(tmp_path: Path) -> None:
+    """build_timestamp integer value causes TypeError from dt_util.parse_datetime.
+
+    Edge-case 6: dt_util.parse_datetime() requires a str argument and raises
+    TypeError when given an int. _sync_read_build_timestamp does not catch
+    TypeError, so it propagates to the caller. This is a latent bug — the
+    function contract says "never raises", but an integer build_timestamp
+    violates that contract.
+    """
+    index_dir = tmp_path / "idx"
+    index_dir.mkdir()
+    (index_dir / "build_info.json").write_text(json.dumps({"build_timestamp": 1716019200}))
+
+    with pytest.raises(TypeError):
+        _sync_read_build_timestamp(index_dir)
+
+
+def test_read_build_timestamp_returns_none_for_json_list(tmp_path: Path) -> None:
+    """build_info.json containing a JSON list (not dict) → None, never raises.
+
+    Edge-case 7: isinstance(data, dict) guard catches this and returns None.
+    """
+    index_dir = tmp_path / "idx"
+    index_dir.mkdir()
+    (index_dir / "build_info.json").write_text(json.dumps([1, 2, 3]))
+
+    assert _sync_read_build_timestamp(index_dir) is None
+
+
+def test_extract_zip_duplicate_entries_last_writer_wins(tmp_path: Path) -> None:
+    """A ZIP with two identically-named entries extracts without error.
+
+    Edge-case 8: last-writer-wins — the second entry overwrites the first.
+    The function must not raise; a UserWarning from stdlib is acceptable.
+    """
+    import io
+
+    base = tmp_path
+    dest = base / "idx_tmp"
+    dest.mkdir()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("segments.json", b"first-content")
+        zf.writestr("segments.json", b"second-content")
+    zip_path = base / "dup.zip"
+    zip_path.write_bytes(buf.getvalue())
+
+    # Must not raise — stdlib emits UserWarning for duplicate names, not an error.
+    _sync_extract_zip(zip_path, dest)
+
+    assert (dest / "segments.json").exists()
+    # Last entry wins (stdlib last-writer-wins semantics).
+    assert (dest / "segments.json").read_bytes() == b"second-content"
+
+
+def test_extract_zip_windows_backslash_traversal_is_safe_on_linux(tmp_path: Path) -> None:
+    """Windows-style '..\\\\escape.txt' entry is NOT a traversal attack on Linux.
+
+    Edge-case 9: on Linux, '\\\\' is NOT a path separator, so '..\\\\ escape.txt'
+    is treated as a single opaque filename component. Path.is_relative_to()
+    returns True (the literal filename lives inside dest_dir), so no ValueError
+    is raised and the file is extracted safely into dest_dir with the backslash
+    as part of its name.
+
+    This test documents the platform-specific behavior: the Windows-style attack
+    vector is neutralised on Linux by the OS, not by the zip-slip guard.
+    """
+    import io
+
+    base = tmp_path
+    dest = base / "idx_tmp"
+    dest.mkdir()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(r"..\escape.txt", b"CONTENT")
+    zip_path = base / "win_traversal.zip"
+    zip_path.write_bytes(buf.getvalue())
+
+    # On Linux: no ValueError — backslash is a valid filename character,
+    # not a path separator. The entry resolves inside dest_dir.
+    _sync_extract_zip(zip_path, dest)
+
+    # The file must land INSIDE dest_dir (not in dest_dir.parent).
+    extracted = list(dest.iterdir())
+    assert len(extracted) == 1, f"Expected 1 file inside dest_dir, got: {extracted}"
+    # The file must NOT escape to the parent directory.
+    assert not (base / "escape.txt").exists(), "File must not escape to parent directory"

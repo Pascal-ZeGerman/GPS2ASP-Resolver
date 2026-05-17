@@ -31,7 +31,8 @@ Wave 0 expected RED state:
 from __future__ import annotations
 
 import datetime as dt
-from datetime import datetime, time, timedelta
+import inspect
+from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -442,3 +443,284 @@ class TestNewBooleanAttributes:
         assert "next_move_is_tomorrow" in attrs
         assert attrs["next_move_is_today"] is False
         assert attrs["next_move_is_tomorrow"] is False
+
+
+# ===========================================================================
+# Class 6: DST edge cases (EC-01, EC-02)
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestDSTEdgeCases:
+    """_format_move_time correctly classifies Today across DST boundaries.
+
+    Both spring-forward (2026-03-08) and fall-back (2026-11-01) are covered.
+    The UTC freeze times are derived from the tz-aware local times to ensure
+    the frozen wall clock lands at the expected local time regardless of what
+    DST offset is active at that instant.
+    """
+
+    def test_dst_spring_forward_same_day_is_today(self, nyc_timezone) -> None:
+        """Spring-forward day (2026-03-08): post-DST window on same day → 'Today'.
+
+        Spring-forward in NYC: at 02:00 EST clocks jump to 03:00 EDT.
+        Freeze at 08:30 EDT (12:30 UTC); window at 10:00 EDT (same calendar
+        date, same -04:00 offset). Both share date 2026-03-08 → 'Today'.
+        """
+        # 08:30 NYC EDT on 2026-03-08 = 12:30 UTC (NYC is -04:00 post-spring)
+        with freeze_time("2026-03-08 12:30:00"):
+            sensor = _make_stub_sensor()
+            # 10:00 NYC on the same spring-forward day
+            move_dt = datetime(2026, 3, 8, 10, 0, tzinfo=NYC_TZ)
+            result = sensor._format_move_time(move_dt)
+            assert result.startswith("⚠ Today,"), (
+                f"Expected result to start with '⚠ Today,' on DST spring-forward day; "
+                f"got {result!r}"
+            )
+
+    def test_dst_fall_back_same_day_is_today(self, nyc_timezone) -> None:
+        """Fall-back day (2026-11-01): repeated-hour window on same day → 'Today'.
+
+        Fall-back in NYC: at 02:00 EDT clocks fall back to 01:00 EST.
+        Freeze at 01:00 EDT (05:00 UTC, pre-fall-back); window at 02:00 EST
+        (07:00 UTC, post-fall-back). Both share date 2026-11-01 → 'Today'.
+        """
+        # 01:00 NYC EDT on 2026-11-01 = 05:00 UTC (still -04:00 before fall-back)
+        with freeze_time("2026-11-01 05:00:00"):
+            sensor = _make_stub_sensor()
+            # 02:00 NYC EST = 07:00 UTC (after the fall-back, -05:00 offset)
+            move_dt = datetime(2026, 11, 1, 7, 0, tzinfo=ZoneInfo("UTC"))
+            result = sensor._format_move_time(move_dt)
+            assert result.startswith("⚠ Today,"), (
+                f"Expected result to start with '⚠ Today,' on DST fall-back day; "
+                f"got {result!r}"
+            )
+
+
+# ===========================================================================
+# Class 7: Midnight and 1 AM time-string formatting (EC-03, EC-04)
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestMidnightAndEarlyHours:
+    """Verify lstrip('0') edge cases for 12:xx AM times (EC-03, EC-04).
+
+    ``strftime('%I:%M %p').lstrip('0')`` must NOT strip the leading digit of
+    '12:00 AM' (since '1' is not '0'), but MUST strip the leading zero from
+    '01:00 AM' → '1:00 AM'.
+    """
+
+    def test_midnight_formats_as_12_00_am(self, nyc_timezone) -> None:
+        """00:00 local → '12:00 AM' (lstrip('0') does not affect '12:xx AM').
+
+        Regression: a naive lstrip on '12:00 AM' could produce '2:00 AM'
+        if implemented as lstrip('012') instead of lstrip('0').
+        """
+        # Freeze at 07:00 NYC; midnight window on the same day is still 'Today'.
+        with freeze_time("2026-05-18 11:00:00"):  # 11:00 UTC = 07:00 EDT
+            sensor = _make_stub_sensor()
+            move_dt = datetime(2026, 5, 18, 0, 0, tzinfo=NYC_TZ)
+            result = sensor._format_move_time(move_dt)
+            # Time part is everything after the first ", "
+            time_part = result.split(", ", 1)[1]
+            assert time_part == "12:00 AM", (
+                f"Expected '12:00 AM' but got {time_part!r} in {result!r}; "
+                "lstrip('0') must not strip the '1' in '12:00 AM'."
+            )
+
+    def test_one_am_formats_with_leading_zero_stripped(self, nyc_timezone) -> None:
+        """01:00 local → '1:00 AM' (lstrip('0') strips the leading zero).
+
+        strftime('%I:%M %p') for 01:00 gives '01:00 AM'; lstrip('0') must
+        yield '1:00 AM', not '01:00 AM'.
+        """
+        with freeze_time("2026-05-18 11:00:00"):  # 11:00 UTC = 07:00 EDT
+            sensor = _make_stub_sensor()
+            move_dt = datetime(2026, 5, 18, 1, 0, tzinfo=NYC_TZ)
+            result = sensor._format_move_time(move_dt)
+            time_part = result.split(", ", 1)[1]
+            assert time_part == "1:00 AM", (
+                f"Expected '1:00 AM' but got {time_part!r} in {result!r}; "
+                "lstrip('0') must strip the leading zero from '01:00 AM'."
+            )
+
+
+# ===========================================================================
+# Class 8: Two-arg _format_move_time midnight-race regression (EC-05)
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestFormatMoveTimeTwoArgForm:
+    """_format_move_time(move_dt, today=...) exercises the midnight-race fix (WR-03).
+
+    The production sensor pre-captures ``today`` once in extra_state_attributes
+    and passes it as the second argument to _format_move_time so that
+    native_value and extra_state_attributes share a single date snapshot.
+    This test directly exercises that code path.
+    """
+
+    def test_explicit_today_matches_today_tier(self, nyc_timezone) -> None:
+        """Passing explicit today=date(2026, 5, 18) with a same-day move_dt → 'Today'.
+
+        The two-arg form exists to eliminate the midnight-race window described
+        in WR-03. Calling _format_move_time with a pre-captured date must
+        produce the same result as the no-arg form when the dates agree.
+        """
+        # Detect whether _format_move_time accepts a 'today' kwarg.
+        sig = inspect.signature(_make_stub_sensor()._format_move_time)
+        has_today_param = "today" in sig.parameters
+
+        if not has_today_param:
+            pytest.xfail(
+                "_format_move_time does not accept a 'today' parameter; "
+                "the two-arg midnight-race fix path cannot be exercised."
+            )
+
+        with freeze_time("2026-05-18 11:00:00"):  # 11:00 UTC = 07:00 EDT
+            sensor = _make_stub_sensor()
+            move_dt = datetime(2026, 5, 18, 8, 30, tzinfo=NYC_TZ)
+            result = sensor._format_move_time(move_dt, today=date(2026, 5, 18))
+            assert result.startswith("⚠ Today,"), (
+                f"Expected '⚠ Today,' with explicit today=date(2026,5,18); "
+                f"got {result!r}"
+            )
+
+
+# ===========================================================================
+# Class 9: now_ha_local() with UTC timezone configured (EC-06)
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestNowHaLocalUtcTimezone:
+    """now_ha_local() returns a valid tz-aware datetime even when HA TZ is UTC.
+
+    Regression: a naive implementation that assumes NYC or a named timezone
+    would break if the HA operator configured UTC as their default zone.
+    """
+
+    def test_now_ha_local_with_utc_configured(self) -> None:
+        """Setting HA TZ to UTC: now_ha_local() still returns a tz-aware datetime."""
+        original = dt_util.DEFAULT_TIME_ZONE
+        utc_tz = ZoneInfo("UTC")
+        dt_util.set_default_time_zone(utc_tz)
+        try:
+            result = now_ha_local()
+        finally:
+            dt_util.set_default_time_zone(original)
+
+        assert result.tzinfo is not None, "now_ha_local() must return a tz-aware datetime"
+        # UTC offset should be zero
+        assert result.utcoffset() == dt.timedelta(0), (
+            f"Expected UTC offset 0:00:00 when HA TZ is UTC; "
+            f"got {result.utcoffset()}"
+        )
+
+
+# ===========================================================================
+# Class 10: Year-boundary date format (EC-07)
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestYearBoundaryFormat:
+    """_format_move_time for a cross-year window uses M/D without year (EC-07).
+
+    The format is ``"Weekday (M/D), H:MM AM/PM"`` — no year component.
+    This test verifies that a window on Jan 1 of the next year when frozen
+    on Dec 30 of the current year uses the unpadded M/D format and does NOT
+    include the year.
+    """
+
+    def test_jan_1_next_year_format(self, nyc_timezone) -> None:
+        """Frozen on 2026-12-30; window on 2027-01-01 → 'Friday (1/1), 8:30 AM'.
+
+        Jan 1 2027 is a Friday. The result must contain '(1/1)' (unpadded)
+        and must NOT contain '2027' (no year field in the format).
+        """
+        # 2026-12-30 07:00 NYC EST (-05:00) = 12:00 UTC
+        with freeze_time("2026-12-30 12:00:00"):
+            sensor = _make_stub_sensor()
+            move_dt = datetime(2027, 1, 1, 8, 30, tzinfo=NYC_TZ)
+            result = sensor._format_move_time(move_dt)
+            assert "(1/1)" in result, (
+                f"Expected '(1/1)' (unpadded) in {result!r}; year-boundary M/D is wrong."
+            )
+            assert "2027" not in result, (
+                f"Year '2027' should NOT appear in {result!r}; "
+                "the format is 'Weekday (M/D), H:MM AM/PM' with no year."
+            )
+
+
+# ===========================================================================
+# Class 11: extra_state_attributes when suspended and no next_window (EC-08)
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestExtraAttrsWhenSuspendedNoWindow:
+    """extra_state_attributes booleans and urgency when suspended with NoASPSchedule.
+
+    When the schedule result is NoASPSchedule (which has no next_window) and
+    suspension is active, the D-06 boolean defaults must still be False and
+    the 'urgency' key must not be 'today' (it should be absent entirely).
+    """
+
+    def test_suspended_no_asp_schedule_boolean_defaults(self) -> None:
+        """NoASPSchedule + suspended=True → is_today/is_tomorrow both False, no urgency='today'."""
+        from gps2asp.suspension import SuspensionInfo
+
+        data = ASPParkingData(
+            schedule_result=NoASPSchedule(),
+            suspension_state=SuspensionInfo(
+                is_suspended=True,
+                reason="NYC Sanitation suspension test",
+                source="test",
+            ),
+        )
+        attrs = sensor_extra_attributes(data)
+
+        assert attrs["next_move_is_today"] is False, (
+            "next_move_is_today must be False when schedule is NoASPSchedule"
+        )
+        assert attrs["next_move_is_tomorrow"] is False, (
+            "next_move_is_tomorrow must be False when schedule is NoASPSchedule"
+        )
+        # urgency must either be absent or not equal to 'today'
+        assert attrs.get("urgency") != "today", (
+            f"urgency must not be 'today' when no concrete move datetime exists; "
+            f"got {attrs.get('urgency')!r}"
+        )
+
+
+# ===========================================================================
+# Class 12: _format_move_time for 8 days out (EC-09)
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestFormatMoveTimeEightDaysOut:
+    """_format_move_time for a date 8 days out uses full weekday + M/D (EC-09).
+
+    8 days out is beyond tomorrow (tier 2), so the 'Other' tier applies:
+    full weekday name + unpadded (M/D) + 12-hour time.
+    """
+
+    def test_eight_days_out_full_weekday_md(self, nyc_timezone) -> None:
+        """Frozen 2026-05-18 (Mon); window 2026-05-26 (Tue) → 'Tuesday (5/26), 8:30 AM'.
+
+        2026-05-26 is 8 days after 2026-05-18. It falls in the 'Other' tier
+        (not Today, not Tomorrow), so the format must be the full weekday name
+        followed by the unpadded M/D in parentheses.
+        """
+        # 2026-05-18 07:00 NYC EDT (-04:00) = 11:00 UTC
+        with freeze_time("2026-05-18 11:00:00"):
+            sensor = _make_stub_sensor()
+            move_dt = datetime(2026, 5, 26, 8, 30, tzinfo=NYC_TZ)
+            result = sensor._format_move_time(move_dt)
+            assert result == "Tuesday (5/26), 8:30 AM", (
+                f"Expected 'Tuesday (5/26), 8:30 AM' for 8-days-out window; "
+                f"got {result!r}"
+            )
