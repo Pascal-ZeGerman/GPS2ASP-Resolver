@@ -128,7 +128,8 @@
       "refresh_interval_too_small": "Must be at least 1 h.",
       "stale_timeout_too_small": "Must be at least 1 h.",
       "invalid_api_key": "Invalid API key — check your NYC 311 API portal subscription key.",
-      "caldav_auth_failed": "Could not authenticate with the CalDAV server. Check the URL, username, and password."
+      "caldav_auth_failed": "Could not authenticate with the CalDAV server. Check the URL, username, and password.",
+      "caldav_invalid_template": "Invalid title template. Use only plain text and supported placeholders: {street}, {side}, {time}."
     }
   },
   "entity": {

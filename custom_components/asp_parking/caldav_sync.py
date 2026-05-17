@@ -9,6 +9,7 @@ async client) — never caldav.DAVClient (the sync one).
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import logging
 from dataclasses import dataclass
@@ -258,17 +259,22 @@ async def _delete_uid_quiet(cal: Any, uid: str) -> None:
         raise
 
 
-def _sanitise(message: str, password: str) -> str:
-    """Replace the user's password in an error string with ``***``.
+def _sanitise(message: str, password: str, username: str = "") -> str:
+    """Replace credentials in an error string with ``***``.
 
-    Defence-in-depth for T-34-01/T-34-02 — caldav 3.2.0 internally strips
-    embedded ``user:pass@`` from URLs via ``self.url.unauth()``, but the
-    wrapped exception text from upstream may still contain the credential
-    if the server echoed it back. This is a cheap belt-and-braces step.
+    Defence-in-depth for T-34-01/T-34-02. Strips:
+    - The literal password and username substrings.
+    - The Base64-encoded ``username:password`` form that appears in
+      ``Authorization: Basic`` headers echoed back by some CalDAV servers.
     """
-    if not password:
-        return message
-    return message.replace(password, "***")
+    if password:
+        message = message.replace(password, "***")
+        if username:
+            b64 = base64.b64encode(f"{username}:{password}".encode()).decode()
+            message = message.replace(b64, "***")
+    if username:
+        message = message.replace(username, "***")
+    return message
 
 
 # ---------------------------------------------------------------------------
@@ -294,15 +300,15 @@ async def validate_connection(
             await client.get_principal()
     except caldav_error.AuthorizationError as err:
         raise CalDAVAuthError(
-            f"Authentication failed: {_sanitise(str(err), password)}"
+            f"Authentication failed: {_sanitise(str(err), password, username)}"
         ) from err
     except caldav_error.DAVError as err:
         raise CalDAVAuthError(
-            f"Server error: {_sanitise(str(err), password)}"
+            f"Server error: {_sanitise(str(err), password, username)}"
         ) from err
     except Exception as err:  # noqa: BLE001 — wrap everything (D-03)
         raise CalDAVAuthError(
-            f"Connection error: {_sanitise(str(err), password)}"
+            f"Connection error: {_sanitise(str(err), password, username)}"
         ) from err
 
 
@@ -345,15 +351,15 @@ async def list_calendars(
         raise
     except caldav_error.AuthorizationError as err:
         raise CalDAVAuthError(
-            f"Authentication failed: {_sanitise(str(err), password)}"
+            f"Authentication failed: {_sanitise(str(err), password, username)}"
         ) from err
     except caldav_error.DAVError as err:
         raise CalDAVAuthError(
-            f"Server error: {_sanitise(str(err), password)}"
+            f"Server error: {_sanitise(str(err), password, username)}"
         ) from err
     except Exception as err:  # noqa: BLE001 — wrap everything (D-03)
         raise CalDAVAuthError(
-            f"Connection error: {_sanitise(str(err), password)}"
+            f"Connection error: {_sanitise(str(err), password, username)}"
         ) from err
 
 

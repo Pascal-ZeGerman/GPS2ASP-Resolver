@@ -12,6 +12,7 @@ both flows in sync.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import voluptuous as vol
@@ -92,6 +93,11 @@ from .const import (
 )
 from .gps2asp.suspension import NYC311Client
 from .gps2asp.suspension.poller import NYC311AuthError
+
+# Allowed characters in a CalDAV event title template: printable text plus
+# the {placeholder} syntax. Rejects attribute access ({x.y}) and index
+# access ({x[y]}) to prevent unintended format_map surface area.
+_TEMPLATE_RE = re.compile(r"^[^{}]*(?:\{[A-Za-z_][A-Za-z0-9_]*\}[^{}]*)*$")
 
 
 def _settings_schema(
@@ -609,6 +615,9 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     user_input.get(CONF_CALDAV_EVENT_TITLE_TEMPLATE)
                     or DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE
                 )
+                if not _TEMPLATE_RE.fullmatch(template):
+                    errors[CONF_CALDAV_EVENT_TITLE_TEMPLATE] = "caldav_invalid_template"
+            if not errors:
                 self._options[CONF_CALDAV_URL] = url
                 self._options[CONF_CALDAV_USERNAME] = username
                 self._options[CONF_CALDAV_PASSWORD] = password

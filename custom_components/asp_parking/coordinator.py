@@ -392,7 +392,15 @@ class ASPParkingCoordinator:
                 key=f"{DOMAIN}_caldav_{self.entry.entry_id}",
             )
             raw = await self._caldav_store.async_load()
-            self._caldav_uid = (raw or {}).get("uid")
+            if isinstance(raw, dict):
+                self._caldav_uid = raw.get("uid")
+            else:
+                if raw is not None:
+                    logger.warning(
+                        "CalDAV store contained unexpected type %s; discarding",
+                        type(raw).__name__,
+                    )
+                self._caldav_uid = None
 
         # --- Suspension startup ---
         self._holiday_calendar = HolidayCalendar()
@@ -646,7 +654,7 @@ class ASPParkingCoordinator:
                     title="ASP Parking: Index Rebuild Failed",
                     notification_id="asp_parking_index_rebuild_error",
                 )
-                logger.error("ASP Parking: index rebuild failed: %s", err)
+                logger.error("ASP Parking: index rebuild failed: %s", err, exc_info=True)
                 # Best-effort cleanup: wipe the partial _tmp dir.  Atomic-swap
                 # guarantees the live index dir is untouched on failure.
                 try:
@@ -662,6 +670,9 @@ class ASPParkingCoordinator:
             finally:
                 # D-06: ALWAYS clear the flag and re-notify so the button
                 # is usable again and the binary_sensor flips back to off.
+                # Dismiss the in-progress notification even on CancelledError
+                # (BaseException) so it never stays stuck after a HA restart.
+                pn_dismiss(self.hass, "asp_parking_index_rebuild")
                 self._is_rebuilding = False
                 self._async_notify_entities()
 
@@ -752,32 +763,37 @@ class ASPParkingCoordinator:
             async_dismiss as pn_dismiss,
         )
 
-        config = CalDAVConfig.from_options(self.entry.options)
-
         async with self._caldav_lock:
             if self.data.suspension_state.is_suspended:
                 logger.debug("CalDAV write skipped — suspension became active before lock acquired")
                 return
             try:
+                # Build config inside the try so KeyError/ValueError from missing or
+                # invalid options are caught and surfaced as user notifications (Critical #2).
+                config = CalDAVConfig.from_options(self.entry.options)
                 new_uid = await caldav_sync.write_or_update_event(
                     config=config,
                     entry_id=self.entry.entry_id,
                     schedule=schedule,
                     stored_uid=self._caldav_uid,
                 )
-                # Success: persist UID and dismiss any active error notification
+                # Success: persist UID via load-merge-save so future store keys are preserved.
                 self._caldav_uid = new_uid
-                await self._caldav_store.async_save({"uid": new_uid})  # type: ignore[union-attr]
+                _store_data = await self._caldav_store.async_load() or {}  # type: ignore[union-attr]
+                _store_data["uid"] = new_uid
+                await self._caldav_store.async_save(_store_data)  # type: ignore[union-attr]
                 if self._caldav_write_error_notified:
                     pn_dismiss(self.hass, "asp_parking_caldav_error")
                     self._caldav_write_error_notified = False
             except Exception as err:  # noqa: BLE001
                 sanitised = str(err)
-                if config.password:
-                    sanitised = sanitised.replace(config.password, "***")
-                if config.username:
-                    sanitised = sanitised.replace(config.username, "***")
-                logger.warning("ASP Parking: CalDAV write failed: %s", sanitised)
+                _pw = self.entry.options.get(CONF_CALDAV_PASSWORD, "")
+                _un = self.entry.options.get(CONF_CALDAV_USERNAME, "")
+                if _pw:
+                    sanitised = sanitised.replace(_pw, "***")
+                if _un:
+                    sanitised = sanitised.replace(_un, "***")
+                logger.warning("ASP Parking: CalDAV write failed: %s", sanitised, exc_info=True)
                 if not self._caldav_write_error_notified:
                     _display = sanitised[:200] + ("…" if len(sanitised) > 200 else "")
                     pn_create(
@@ -826,10 +842,12 @@ class ASPParkingCoordinator:
                 # Success: clear UID only if it still matches what we deleted (Finding 1).
                 if self._caldav_uid == uid:
                     self._caldav_uid = None
-                # Finding 8: pop-then-save preserves future store keys.
+                # Only update the store if it still holds the UID we deleted,
+                # so a concurrent write's newer UID is not wiped from the store.
                 data = await self._caldav_store.async_load() or {}
-                data.pop("uid", None)
-                await self._caldav_store.async_save(data)
+                if data.get("uid") == uid:
+                    data.pop("uid", None)
+                    await self._caldav_store.async_save(data)
                 # Finding 3: dismiss delete-specific notification.
                 if self._caldav_delete_error_notified:
                     pn_dismiss(self.hass, "asp_parking_caldav_delete_error")
@@ -840,7 +858,7 @@ class ASPParkingCoordinator:
                     sanitised = sanitised.replace(password, "***")
                 if username:
                     sanitised = sanitised.replace(username, "***")
-                logger.info("ASP Parking: CalDAV delete failed: %s", sanitised)
+                logger.warning("ASP Parking: CalDAV delete failed: %s", sanitised, exc_info=True)
                 # Finding 3: separate flag + notification ID from write path.
                 if not self._caldav_delete_error_notified:
                     _display = sanitised[:200] + ("…" if len(sanitised) > 200 else "")
@@ -1198,7 +1216,7 @@ class ASPParkingCoordinator:
             # Fall back to last known state -- do NOT clear schedule or special_state
             self.data.last_error = str(err)
             self.data.last_error_time = dt_util.utcnow()
-            logger.warning("Pipeline error at (%.4f, %.4f): %s", lat, lon, err)
+            logger.warning("Pipeline error at (%.4f, %.4f): %s", lat, lon, err, exc_info=True)
 
         self._async_notify_entities()
 
@@ -1377,8 +1395,15 @@ class ASPParkingCoordinator:
         if not info.is_suspended and self._nyc311_client is not None:
             try:
                 info = await self._nyc311_client.fetch_status()
+            except NYC311AuthError as auth_err:
+                logger.warning(
+                    "311 suspension poll: auth error (%s) — failing open, check API key",
+                    auth_err,
+                    exc_info=True,
+                )
+                info = SuspensionInfo(is_suspended=False, reason=None, source="none")
             except Exception:  # noqa: BLE001
-                logger.warning("311 suspension poll failed, failing open")
+                logger.warning("311 suspension poll failed, failing open", exc_info=True)
                 info = SuspensionInfo(is_suspended=False, reason=None, source="none")
 
         self._async_apply_suspension_state(info)

@@ -121,7 +121,15 @@ def _sync_cleanup_stale(index_dir: Path) -> None:
             # Crash between the two os.replace calls — _bak is the only copy.
             try:
                 os.replace(bak, index_dir)
-            except OSError:
+            except OSError as exc:
+                logger.error(
+                    "cleanup_stale: could not restore backup index from %s to %s (%s) — "
+                    "destroying backup; the index will need to be rebuilt",
+                    bak,
+                    index_dir,
+                    exc,
+                    exc_info=True,
+                )
                 shutil.rmtree(bak, ignore_errors=True)
 
     try:
