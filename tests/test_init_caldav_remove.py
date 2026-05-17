@@ -70,12 +70,13 @@ def _require_async_remove_entry():
     """Skip-fail when async_remove_entry is not yet defined (Plan 05 not landed)."""
     try:
         from custom_components.asp_parking import async_remove_entry  # type: ignore[attr-defined]
+
+        return async_remove_entry
     except ImportError:
         pytest.fail(
             "async_remove_entry not importable — Plan 05 has not yet added it to "
             "custom_components/asp_parking/__init__.py"
         )
-    return async_remove_entry
 
 
 # ---------------------------------------------------------------------------

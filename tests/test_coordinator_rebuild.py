@@ -314,6 +314,9 @@ class _RecordingDict(dict):
         super().__init__(*args, **kwargs)
         self._order = _order
 
+    def __eq__(self, other: object) -> bool:
+        return super().__eq__(other)
+
     def clear(self):
         self._order.append("sign_cache_clear")
         super().clear()
