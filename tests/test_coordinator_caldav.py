@@ -120,9 +120,7 @@ def _make_schedule_found(
 ):
     if start is None:
         start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
-    window = _make_cleaning_window(
-        start=start, end=start.replace(hour=9, minute=30)
-    )
+    window = _make_cleaning_window(start=start, end=start.replace(hour=9, minute=30))
     return SimpleNamespace(
         status="schedule_found",
         next_window=window,
@@ -172,9 +170,7 @@ def _make_coord_stub_caldav(
     )
 
     store = SimpleNamespace(
-        async_load=AsyncMock(
-            return_value={"uid": caldav_uid} if caldav_uid else None
-        ),
+        async_load=AsyncMock(return_value={"uid": caldav_uid} if caldav_uid else None),
         async_save=AsyncMock(),
         async_remove=AsyncMock(),
     )
@@ -380,9 +376,7 @@ async def test_suspension_transition_true_to_false_no_recreate():
     The next normal resolve handles re-creation. The transition choke-point
     is delete-only on False→True.
     """
-    stub = _make_coord_stub_caldav(
-        caldav_uid=None, is_suspended=True
-    )
+    stub = _make_coord_stub_caldav(caldav_uid=None, is_suspended=True)
     # _last_suspension_state initialized to True
 
     new_info = _make_suspension_info(is_suspended=False)
@@ -576,7 +570,9 @@ async def test_caldav_delete_success_clears_store_pop_not_wipe(monkeypatch):
     # async_save must have been called with uid removed but other keys intact
     stub._caldav_store.async_save.assert_awaited_once()
     saved_data = stub._caldav_store.async_save.call_args.args[0]
-    assert "uid" not in saved_data, "uid key must be removed from store on successful delete"
+    assert "uid" not in saved_data, (
+        "uid key must be removed from store on successful delete"
+    )
     assert saved_data.get("future_key") == "preserved", (
         "Future store keys must be preserved (pop-then-save, not async_save({}))"
     )
@@ -685,7 +681,9 @@ async def test_write_or_update_skips_when_suspended_after_lock(monkeypatch):
     write_mock.assert_not_called()
 
 
-async def test_write_or_update_success_dismisses_notification_and_resets_flag(monkeypatch):
+async def test_write_or_update_success_dismisses_notification_and_resets_flag(
+    monkeypatch,
+):
     """Success after error streak: pn_dismiss called with correct id, flag reset to False.
 
     Distinct from the existing test: verifies the notification_id is
@@ -716,9 +714,9 @@ async def test_write_or_update_success_dismisses_notification_and_resets_flag(mo
         f"Expected one pn_dismiss call on success; got {pn_dismiss.call_count}"
     )
     # The dismiss notification_id must be the locked literal
-    all_strs = [
-        str(a) for a in pn_dismiss.call_args.args
-    ] + [str(v) for v in pn_dismiss.call_args.kwargs.values()]
+    all_strs = [str(a) for a in pn_dismiss.call_args.args] + [
+        str(v) for v in pn_dismiss.call_args.kwargs.values()
+    ]
     assert "asp_parking_caldav_error" in all_strs, (
         f"pn_dismiss must use 'asp_parking_caldav_error'; got args={pn_dismiss.call_args}"
     )
@@ -802,9 +800,7 @@ async def test_delete_current_uid_guard_preserves_new_uid(monkeypatch):
     _require_caldav_sync()
     stub = _make_coord_stub_caldav(caldav_uid="NEW-UID")
     # Simulate that the store returns data for the old uid
-    stub._caldav_store.async_load = AsyncMock(
-        return_value={"uid": "OLD-UID"}
-    )
+    stub._caldav_store.async_load = AsyncMock(return_value={"uid": "OLD-UID"})
 
     monkeypatch.setitem(
         sys.modules,
@@ -893,7 +889,9 @@ async def test_hook_not_called_on_outside_nyc_error():
     The hook is only reachable on the success path inside _async_resolve_pipeline.
     Verifies by spying on the stub method.
     """
-    from custom_components.asp_parking.gps2asp.resolver.exceptions import OutsideNYCError
+    from custom_components.asp_parking.gps2asp.resolver.exceptions import (
+        OutsideNYCError,
+    )
 
     stub = _make_coord_stub_caldav()
     stub._caldav_hook_called = False

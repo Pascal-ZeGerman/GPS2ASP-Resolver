@@ -176,7 +176,9 @@ def test_datetime_safety() -> None:
 # 1. load() raises mid-execution, then is_suspended() called before _loaded is set
 
 
-async def test_load_parse_error_leaves_unloaded(caplog: pytest.LogCaptureFixture) -> None:
+async def test_load_parse_error_leaves_unloaded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """If _parse_ics raises during load(), _loaded stays False and is_suspended warns."""
     import logging
 

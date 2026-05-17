@@ -282,9 +282,7 @@ def _sanitise(message: str, password: str, username: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
-async def validate_connection(
-    *, url: str, username: str, password: str
-) -> None:
+async def validate_connection(*, url: str, username: str, password: str) -> None:
     """Probe the CalDAV server with the given credentials.
 
     Raises:
@@ -295,7 +293,9 @@ async def validate_connection(
     """
     try:
         async with caldav.aio.AsyncDAVClient(
-            url=url, username=username, password=password,
+            url=url,
+            username=username,
+            password=password,
         ) as client:
             await client.get_principal()
     except caldav_error.AuthorizationError as err:
@@ -330,7 +330,9 @@ async def list_calendars(
     """
     try:
         async with caldav.aio.AsyncDAVClient(
-            url=url, username=username, password=password,
+            url=url,
+            username=username,
+            password=password,
         ) as client:
             principal = await client.get_principal()
             calendars = await principal.calendars()
@@ -397,7 +399,9 @@ async def write_or_update_event(
     new_uid = derive_uid(entry_id, window.start_datetime)
 
     async with caldav.aio.AsyncDAVClient(
-        url=config.url, username=config.username, password=config.password,
+        url=config.url,
+        username=config.username,
+        password=config.password,
     ) as client:
         cal = await _get_calendar(client, config.calendar_url)
 
@@ -436,7 +440,9 @@ async def delete_event(
     propagate to the caller for surfacing as a notification (D-09/D-10).
     """
     async with caldav.aio.AsyncDAVClient(
-        url=url, username=username, password=password,
+        url=url,
+        username=username,
+        password=password,
     ) as client:
         cal = await _get_calendar(client, calendar_url)
         await _delete_uid_quiet(cal, uid)

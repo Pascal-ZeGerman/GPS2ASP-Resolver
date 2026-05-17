@@ -100,7 +100,9 @@ def _install_executor_spies(monkeypatch: pytest.MonkeyPatch) -> dict:
     cleanup_stale = MagicMock(name="_sync_cleanup_stale")
     download_and_extract = MagicMock(name="_sync_download_and_extract")
     atomic_swap = MagicMock(name="_sync_atomic_swap")
-    read_build_timestamp = MagicMock(name="_sync_read_build_timestamp", return_value=None)
+    read_build_timestamp = MagicMock(
+        name="_sync_read_build_timestamp", return_value=None
+    )
 
     monkeypatch.setattr(coord_mod, "_sync_cleanup_stale", cleanup_stale, raising=False)
     monkeypatch.setattr(

@@ -231,9 +231,9 @@ def test_extract_zip_refuses_path_traversal(tmp_path: Path):
     # extract failed before write.
     escapes = list((base / "..").rglob("escape.txt"))
     for p in escapes:
-        assert not (
-            p.is_file() and p.read_bytes() == b"PWNED"
-        ), f"zip-slip attack succeeded: {p}"
+        assert not (p.is_file() and p.read_bytes() == b"PWNED"), (
+            f"zip-slip attack succeeded: {p}"
+        )
 
 
 def test_extract_zip_accepts_safe_members(tmp_path: Path):
@@ -356,7 +356,9 @@ def test_sync_download_and_extract_http_error_cleans_zip(tmp_path: Path) -> None
     mock_client.__exit__ = MagicMock(return_value=False)
     mock_client.stream.return_value = mock_resp
 
-    with patch("custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client):
+    with patch(
+        "custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client
+    ):
         with pytest.raises(httpx.HTTPStatusError):
             _sync_download_and_extract(index_dir, "https://example.com/index.zip")
 
@@ -364,7 +366,9 @@ def test_sync_download_and_extract_http_error_cleans_zip(tmp_path: Path) -> None
     assert not zip_path.exists()
 
 
-def test_sync_download_and_extract_extraction_failure_propagates(tmp_path: Path) -> None:
+def test_sync_download_and_extract_extraction_failure_propagates(
+    tmp_path: Path,
+) -> None:
     """If _sync_extract_zip raises, the exception propagates and the zip is removed."""
     from unittest.mock import MagicMock, patch
 
@@ -382,7 +386,9 @@ def test_sync_download_and_extract_extraction_failure_propagates(tmp_path: Path)
     mock_client.__exit__ = MagicMock(return_value=False)
     mock_client.stream.return_value = mock_resp
 
-    with patch("custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client):
+    with patch(
+        "custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client
+    ):
         with patch(
             "custom_components.asp_parking.index_io._sync_extract_zip",
             side_effect=ValueError("bad zip"),
@@ -461,7 +467,9 @@ def test_download_and_extract_bad_zip_propagates_and_cleans_up(tmp_path: Path) -
     mock_client.__exit__ = MagicMock(return_value=False)
     mock_client.stream.return_value = mock_resp
 
-    with patch("custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client):
+    with patch(
+        "custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client
+    ):
         with patch(
             "custom_components.asp_parking.index_io._sync_extract_zip",
             side_effect=zipfile.BadZipFile("File is not a zip file"),
@@ -503,7 +511,9 @@ def test_download_and_extract_zip_with_no_index_files(tmp_path: Path) -> None:
     mock_client.__exit__ = MagicMock(return_value=False)
     mock_client.stream.return_value = mock_resp
 
-    with patch("custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client):
+    with patch(
+        "custom_components.asp_parking.index_io.httpx.Client", return_value=mock_client
+    ):
         # Must NOT raise — gap: no INDEX_FILES validation after extraction.
         _sync_download_and_extract(index_dir, "https://example.com/index.zip")
 
@@ -592,7 +602,9 @@ def test_read_build_timestamp_raises_on_integer_value(tmp_path: Path) -> None:
     """
     index_dir = tmp_path / "idx"
     index_dir.mkdir()
-    (index_dir / "build_info.json").write_text(json.dumps({"build_timestamp": 1716019200}))
+    (index_dir / "build_info.json").write_text(
+        json.dumps({"build_timestamp": 1716019200})
+    )
 
     with pytest.raises(TypeError):
         _sync_read_build_timestamp(index_dir)
@@ -637,7 +649,9 @@ def test_extract_zip_duplicate_entries_last_writer_wins(tmp_path: Path) -> None:
     assert (dest / "segments.json").read_bytes() == b"second-content"
 
 
-def test_extract_zip_windows_backslash_traversal_is_safe_on_linux(tmp_path: Path) -> None:
+def test_extract_zip_windows_backslash_traversal_is_safe_on_linux(
+    tmp_path: Path,
+) -> None:
     """Windows-style '..\\\\escape.txt' entry is NOT a traversal attack on Linux.
 
     Edge-case 9: on Linux, '\\\\' is NOT a path separator, so '..\\\\ escape.txt'
@@ -669,4 +683,6 @@ def test_extract_zip_windows_backslash_traversal_is_safe_on_linux(tmp_path: Path
     extracted = list(dest.iterdir())
     assert len(extracted) == 1, f"Expected 1 file inside dest_dir, got: {extracted}"
     # The file must NOT escape to the parent directory.
-    assert not (base / "escape.txt").exists(), "File must not escape to parent directory"
+    assert not (base / "escape.txt").exists(), (
+        "File must not escape to parent directory"
+    )

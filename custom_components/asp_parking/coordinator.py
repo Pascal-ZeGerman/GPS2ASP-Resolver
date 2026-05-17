@@ -539,9 +539,7 @@ class ASPParkingCoordinator:
         ``async_stop`` does not need explicit handling.
         """
         if self._is_rebuilding:
-            logger.info(
-                "ASP Parking: rebuild already in progress -- press ignored"
-            )
+            logger.info("ASP Parking: rebuild already in progress -- press ignored")
             return
         # Set the flag BEFORE spawning so a second call during the same
         # event-loop turn cannot bypass the guard (CR-01 / IDX-02).
@@ -592,15 +590,11 @@ class ASPParkingCoordinator:
             try:
                 # RESEARCH Pitfall 5: wipe any stale _tmp/_bak/_download.zip
                 # from a prior crash BEFORE writing fresh artifacts.
-                await self.hass.async_add_executor_job(
-                    _sync_cleanup_stale, INDEX_DIR
-                )
+                await self.hass.async_add_executor_job(_sync_cleanup_stale, INDEX_DIR)
                 await self.hass.async_add_executor_job(
                     _sync_download_and_extract, INDEX_DIR, INDEX_DOWNLOAD_URL
                 )
-                await self.hass.async_add_executor_job(
-                    _sync_atomic_swap, INDEX_DIR
-                )
+                await self.hass.async_add_executor_job(_sync_atomic_swap, INDEX_DIR)
 
                 # RESEARCH Pitfall 2: reset MUST happen AFTER atomic_swap so the
                 # next SpatialIndex.get() re-opens the new files. reset() just
@@ -630,9 +624,7 @@ class ASPParkingCoordinator:
                     title="ASP Parking: Index Rebuild Complete",
                     notification_id="asp_parking_index_rebuild_success",
                 )
-                logger.info(
-                    "ASP Parking: index rebuild complete (built %s)", ts_str
-                )
+                logger.info("ASP Parking: index rebuild complete (built %s)", ts_str)
 
             except Exception as err:  # noqa: BLE001
                 pn_dismiss(self.hass, "asp_parking_index_rebuild")
@@ -652,7 +644,9 @@ class ASPParkingCoordinator:
                     title="ASP Parking: Index Rebuild Failed",
                     notification_id="asp_parking_index_rebuild_error",
                 )
-                logger.error("ASP Parking: index rebuild failed: %s", err, exc_info=True)
+                logger.error(
+                    "ASP Parking: index rebuild failed: %s", err, exc_info=True
+                )
                 # Best-effort cleanup: wipe the partial _tmp dir.  Atomic-swap
                 # guarantees the live index dir is untouched on failure.
                 try:
@@ -763,7 +757,9 @@ class ASPParkingCoordinator:
 
         async with self._caldav_lock:
             if self.data.suspension_state.is_suspended:
-                logger.debug("CalDAV write skipped — suspension became active before lock acquired")
+                logger.debug(
+                    "CalDAV write skipped — suspension became active before lock acquired"
+                )
                 return
             try:
                 # Build config inside the try so KeyError/ValueError from missing or
@@ -791,7 +787,9 @@ class ASPParkingCoordinator:
                     sanitised = sanitised.replace(_pw, "***")
                 if _un:
                     sanitised = sanitised.replace(_un, "***")
-                logger.warning("ASP Parking: CalDAV write failed: %s", sanitised, exc_info=True)
+                logger.warning(
+                    "ASP Parking: CalDAV write failed: %s", sanitised, exc_info=True
+                )
                 if not self._caldav_write_error_notified:
                     _display = sanitised[:200] + ("…" if len(sanitised) > 200 else "")
                     pn_create(
@@ -802,7 +800,9 @@ class ASPParkingCoordinator:
                     )
                     self._caldav_write_error_notified = True
 
-    async def _async_caldav_delete_current(self, uid_to_delete: str | None = None) -> None:
+    async def _async_caldav_delete_current(
+        self, uid_to_delete: str | None = None
+    ) -> None:
         """Delete the active CalDAV event by stored UID.
 
         Args:
@@ -856,7 +856,9 @@ class ASPParkingCoordinator:
                     sanitised = sanitised.replace(password, "***")
                 if username:
                     sanitised = sanitised.replace(username, "***")
-                logger.warning("ASP Parking: CalDAV delete failed: %s", sanitised, exc_info=True)
+                logger.warning(
+                    "ASP Parking: CalDAV delete failed: %s", sanitised, exc_info=True
+                )
                 # Finding 3: separate flag + notification ID from write path.
                 if not self._caldav_delete_error_notified:
                     _display = sanitised[:200] + ("…" if len(sanitised) > 200 else "")
@@ -932,7 +934,9 @@ class ASPParkingCoordinator:
             return  # No active window to protect
 
         safety_min = int(
-            self.entry.options.get(CONF_CALDAV_SAFETY_WINDOW, DEFAULT_CALDAV_SAFETY_WINDOW)
+            self.entry.options.get(
+                CONF_CALDAV_SAFETY_WINDOW, DEFAULT_CALDAV_SAFETY_WINDOW
+            )
         )
         from .util import now_ha_local
 
@@ -1214,7 +1218,9 @@ class ASPParkingCoordinator:
             # Fall back to last known state -- do NOT clear schedule or special_state
             self.data.last_error = str(err)
             self.data.last_error_time = dt_util.utcnow()
-            logger.warning("Pipeline error at (%.4f, %.4f): %s", lat, lon, err, exc_info=True)
+            logger.warning(
+                "Pipeline error at (%.4f, %.4f): %s", lat, lon, err, exc_info=True
+            )
 
         self._async_notify_entities()
 
@@ -1373,7 +1379,9 @@ class ASPParkingCoordinator:
             if bridge_state is not None and bridge_state.state in ("on", "off"):
                 # Bridge healthy: re-apply its state, skip holiday calendar + 311 API
                 self._async_apply_suspension_state(
-                    self._bridge_state_to_info(bridge_state.state, bridge_state.attributes)
+                    self._bridge_state_to_info(
+                        bridge_state.state, bridge_state.attributes
+                    )
                 )
                 self._async_notify_entities()
                 return
@@ -1401,7 +1409,9 @@ class ASPParkingCoordinator:
                 )
                 info = SuspensionInfo(is_suspended=False, reason=None, source="none")
             except Exception:  # noqa: BLE001
-                logger.warning("311 suspension poll failed, failing open", exc_info=True)
+                logger.warning(
+                    "311 suspension poll failed, failing open", exc_info=True
+                )
                 info = SuspensionInfo(is_suspended=False, reason=None, source="none")
 
         self._async_apply_suspension_state(info)
@@ -1463,7 +1473,9 @@ class ASPParkingCoordinator:
             logger.info("ASP notification sent for window at %s", time_str)
         except Exception:  # noqa: BLE001
             logger.warning(
-                "Failed to send ASP notification via %s", self._notify_service, exc_info=True
+                "Failed to send ASP notification via %s",
+                self._notify_service,
+                exc_info=True,
             )
 
     # ------------------------------------------------------------------

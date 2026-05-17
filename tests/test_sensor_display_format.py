@@ -256,9 +256,7 @@ class TestFormatMoveTime:
             sensor = _make_stub_sensor()
             move_dt = datetime(2026, 5, 15, 8, 30, tzinfo=NYC_TZ)
             result = sensor._format_move_time(move_dt)
-            assert not re.match(
-                r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) ", result
-            ), (
+            assert not re.match(r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) ", result), (
                 f"Result {result!r} matches legacy 3-letter weekday pattern; "
                 "expected full weekday name."
             )
@@ -611,11 +609,12 @@ class TestNowHaLocalUtcTimezone:
         finally:
             dt_util.set_default_time_zone(original)
 
-        assert result.tzinfo is not None, "now_ha_local() must return a tz-aware datetime"
+        assert result.tzinfo is not None, (
+            "now_ha_local() must return a tz-aware datetime"
+        )
         # UTC offset should be zero
         assert result.utcoffset() == dt.timedelta(0), (
-            f"Expected UTC offset 0:00:00 when HA TZ is UTC; "
-            f"got {result.utcoffset()}"
+            f"Expected UTC offset 0:00:00 when HA TZ is UTC; got {result.utcoffset()}"
         )
 
 

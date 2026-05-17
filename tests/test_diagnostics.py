@@ -253,9 +253,9 @@ async def test_diagnostics_redacts_caldav_credentials(
 
     # Sanity check that the entry was actually loaded (defends against a
     # false-positive redaction test where the entry is empty).
-    assert (
-        "https://srv.example.com/dav/" in serialised
-    ), "CalDAV URL should not be redacted (URL is not credentials)"
+    assert "https://srv.example.com/dav/" in serialised, (
+        "CalDAV URL should not be redacted (URL is not credentials)"
+    )
 
     # Keys MUST be present in the output with HA's redaction sentinel as value.
     assert result["config"][CONF_CALDAV_PASSWORD] == "**REDACTED**"

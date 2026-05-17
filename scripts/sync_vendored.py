@@ -81,9 +81,7 @@ def iter_source_files() -> list[Path]:
     Sorted for deterministic dry-run output (drift list ordering is stable).
     """
     return sorted(
-        p
-        for p in SRC_ROOT.rglob("*.py")
-        if "data" not in p.relative_to(SRC_ROOT).parts
+        p for p in SRC_ROOT.rglob("*.py") if "data" not in p.relative_to(SRC_ROOT).parts
     )
 
 

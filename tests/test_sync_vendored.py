@@ -263,9 +263,7 @@ def _stage_vendor(vendor_root: Path, rel: str, text: str) -> Path:
 
 
 @pytest.fixture
-def staged_trees(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[Path, Path]:
+def staged_trees(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     """Set up isolated SRC_ROOT and VENDOR_ROOT inside tmp_path and patch the module.
 
     Returns (src_root, vendor_root).
@@ -449,7 +447,9 @@ class TestCliDryRun:
         counterpart and exit 0. Covers the vendor_py.unlink() branch."""
         src_root, vendor_root = staged_trees
         # One real source file so src_written/unchanged are non-trivial.
-        _stage_source(src_root, "pipeline.py", "from gps2asp.api_models import ASPResult\n")
+        _stage_source(
+            src_root, "pipeline.py", "from gps2asp.api_models import ASPResult\n"
+        )
         _stage_vendor(vendor_root, "pipeline.py", "from .api_models import ASPResult\n")
         # Stale vendor file with no src counterpart.
         stale_file = _stage_vendor(vendor_root, "deleted_module.py", "# stale\n")
@@ -527,7 +527,9 @@ class TestCliEdgeCases:
         """
         src_root, vendor_root = staged_trees
         # Two source files.
-        _stage_source(src_root, "alpha.py", "from gps2asp.pipeline import resolve_asp\n")
+        _stage_source(
+            src_root, "alpha.py", "from gps2asp.pipeline import resolve_asp\n"
+        )
         _stage_source(src_root, "beta.py", "from gps2asp.api_models import ASPResult\n")
         # Both vendor counterparts contain stale/wrong text.
         _stage_vendor(vendor_root, "alpha.py", "# wrong\n")

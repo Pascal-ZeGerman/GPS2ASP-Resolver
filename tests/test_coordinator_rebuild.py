@@ -326,9 +326,7 @@ async def test_async_do_rebuild_swap_ordering(monkeypatch: pytest.MonkeyPatch):
     next load picks up new files — calling reset before swap would re-load stale.
     """
     order: list[str] = []
-    sign_cache = _RecordingDict(
-        {("A", "B", "C", "N"): [{"x": 1}]}, _order=order
-    )
+    sign_cache = _RecordingDict({("A", "B", "C", "N"): [{"x": 1}]}, _order=order)
     stub = _make_coord_stub(is_rebuilding=False, sign_cache=sign_cache)
     spies = _install_executor_spies(monkeypatch)
 
@@ -426,12 +424,12 @@ async def test_async_do_rebuild_failure_path_creates_error_notification_with_dis
     monkeypatch: pytest.MonkeyPatch,
 ):
     """When download raises, the method:
-      - dismisses the in-progress notification ('asp_parking_index_rebuild')
-      - creates an error notification ('asp_parking_index_rebuild_error') — distinct id
-      - includes 'Your existing index is still active' in message (D-05)
-      - leaves _is_rebuilding=False (finally — D-06)
-      - notifies entities in the finally block
-      - does NOT propagate the exception (swallows per RESEARCH skeleton)
+    - dismisses the in-progress notification ('asp_parking_index_rebuild')
+    - creates an error notification ('asp_parking_index_rebuild_error') — distinct id
+    - includes 'Your existing index is still active' in message (D-05)
+    - leaves _is_rebuilding=False (finally — D-06)
+    - notifies entities in the finally block
+    - does NOT propagate the exception (swallows per RESEARCH skeleton)
     """
     # CR-01 fix: pre-set flag as async_request_rebuild would have done.
     stub = _make_coord_stub(is_rebuilding=True)
@@ -612,9 +610,7 @@ async def test_async_do_rebuild_error_detail_included_in_notification(
     spies = _install_executor_spies(monkeypatch)
 
     # Raise a plain RuntimeError so _err_summary = str(err) = long_message.
-    stub.hass.async_add_executor_job = AsyncMock(
-        side_effect=RuntimeError(long_message)
-    )
+    stub.hass.async_add_executor_job = AsyncMock(side_effect=RuntimeError(long_message))
 
     do_rebuild = _bind(stub, "_async_do_rebuild")
     await do_rebuild()
@@ -656,7 +652,9 @@ def test_index_rebuilding_binary_sensor_is_on_missing_attribute():
     in __init__) and that tests using _make_coord_stub (which always sets it) match
     the real coordinator contract.  We explicitly test that the default is False.
     """
-    from custom_components.asp_parking.binary_sensor import ASPIndexRebuildingBinarySensor
+    from custom_components.asp_parking.binary_sensor import (
+        ASPIndexRebuildingBinarySensor,
+    )
 
     stub = _make_coord_stub(is_rebuilding=False)
     # Simulate what happens if, in a future refactor, _is_rebuilding were absent.

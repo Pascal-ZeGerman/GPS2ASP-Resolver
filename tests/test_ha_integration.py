@@ -692,7 +692,6 @@ _OTHER_DAY_FORMAT_RE = re.compile(
 )
 
 
-
 @pytest.mark.ha_integration
 class TestHumanFriendlyNativeValue:
     """Test that native_value returns human-friendly strings, not ISO."""

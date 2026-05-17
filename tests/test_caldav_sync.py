@@ -78,9 +78,7 @@ def _make_schedule_found(
     """Minimal ScheduleFound stub for render_title/render_description tests."""
     if start is None:
         start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
-    window = _make_cleaning_window(
-        start=start, end=start.replace(hour=9, minute=30)
-    )
+    window = _make_cleaning_window(start=start, end=start.replace(hour=9, minute=30))
     return SimpleNamespace(
         status="schedule_found",
         next_window=window,
@@ -393,9 +391,7 @@ async def test_write_or_update_event_idempotent_same_uid():
 
     entry_id = "entry_abc"
     start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
-    window = _make_cleaning_window(
-        start=start, end=start.replace(hour=9, minute=30)
-    )
+    window = _make_cleaning_window(start=start, end=start.replace(hour=9, minute=30))
     schedule = _make_schedule_found(start=start)
     object.__setattr__(schedule, "next_window", window)
 
@@ -516,9 +512,7 @@ async def test_write_or_update_event_deletes_old_then_creates_new():
 
     entry_id = "entry_abc"
     start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
-    window = _make_cleaning_window(
-        start=start, end=start.replace(hour=9, minute=30)
-    )
+    window = _make_cleaning_window(start=start, end=start.replace(hour=9, minute=30))
     schedule = _make_schedule_found(start=start)
     object.__setattr__(schedule, "next_window", window)
 
@@ -576,17 +570,15 @@ async def test_write_or_update_event_deletes_old_then_creates_new():
     delete_idx = next(
         (i for i, ev in enumerate(call_order) if ev.startswith("event_by_uid")), -1
     )
-    add_idx = next(
-        (i for i, ev in enumerate(call_order) if ev == "add_event"), -1
-    )
+    add_idx = next((i for i, ev in enumerate(call_order) if ev == "add_event"), -1)
     assert delete_idx >= 0 and add_idx >= 0, f"Both calls expected; got {call_order}"
     assert delete_idx < add_idx, (
         f"event_by_uid (delete path) must precede add_event; order: {call_order}"
     )
     # And the deleted UID was the stale one
-    assert any(
-        ev == f"event_by_uid:{stored_uid}" for ev in call_order
-    ), f"Stale UID must be the lookup target; calls: {call_order}"
+    assert any(ev == f"event_by_uid:{stored_uid}" for ev in call_order), (
+        f"Stale UID must be the lookup target; calls: {call_order}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -939,7 +931,7 @@ def test_build_vevent_ical_naive_datetime_no_tzid():
     cs = _require_caldav_sync()
 
     naive_start = datetime(2026, 5, 18, 8, 0)  # no tzinfo
-    naive_end = datetime(2026, 5, 18, 9, 30)   # no tzinfo
+    naive_end = datetime(2026, 5, 18, 9, 30)  # no tzinfo
     window = _make_cleaning_window(start=naive_start, end=naive_end)
 
     ical = cs.build_vevent_ical(

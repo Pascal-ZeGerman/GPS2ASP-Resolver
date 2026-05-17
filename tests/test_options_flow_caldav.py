@@ -92,9 +92,7 @@ async def _reach_caldav_step(hass, entry):
         result["flow_id"], _INIT_INPUT
     )
     # Submit empty parking_area form to advance to the caldav step (Plan 03 chain)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {}
-    )
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
     return result
 
 
@@ -446,9 +444,7 @@ async def test_caldav_step_validate_connection_called_with_submitted_creds(
             return_value=[("https://srv/cal/work/", "Work")],
         ),
     ):
-        await hass.config_entries.options.async_configure(
-            result["flow_id"], submitted
-        )
+        await hass.config_entries.options.async_configure(result["flow_id"], submitted)
 
     mock_validate.assert_awaited_once()
     call_kwargs = mock_validate.await_args.kwargs

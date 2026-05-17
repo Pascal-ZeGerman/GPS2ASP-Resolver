@@ -713,8 +713,8 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
             for (url, name) in calendars
         ]
         current = self.config_entry.options.get(CONF_CALDAV_CALENDAR, "") or ""
-        default_value = current if current else (
-            options_list[0]["value"] if options_list else ""
+        default_value = (
+            current if current else (options_list[0]["value"] if options_list else "")
         )
         return self.async_show_form(
             step_id="caldav_calendar",
