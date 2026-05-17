@@ -52,7 +52,7 @@ except ImportError:  # pragma: no cover - parallel-wave merge fallback
     ) -> list[tuple[str, str]]:  # pragma: no cover
         return []
 
-    caldav_sync.CalDAVAuthError = _MissingCalDAVAuthError  # type: ignore[attr-defined]
+    caldav_sync.CalDAVAuthError = _MissingCalDAVAuthError  # type: ignore[assignment, misc]
     caldav_sync.validate_connection = _missing_validate_connection  # type: ignore[attr-defined]
     caldav_sync.list_calendars = _missing_list_calendars  # type: ignore[attr-defined]
     # Register in sys.modules so `from custom_components.asp_parking import

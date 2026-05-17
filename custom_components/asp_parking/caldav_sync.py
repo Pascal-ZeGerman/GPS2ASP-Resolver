@@ -335,7 +335,7 @@ async def list_calendars(
             password=password,
         ) as client:
             principal = await client.get_principal()
-            calendars = await principal.calendars()
+            calendars = await principal.calendars()  # type: ignore[misc]
             result: list[tuple[str, str]] = []
             for cal in calendars:
                 try:

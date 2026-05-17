@@ -15,7 +15,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE
 from homeassistant.core import (
@@ -764,7 +764,7 @@ class ASPParkingCoordinator:
             try:
                 # Build config inside the try so KeyError/ValueError from missing or
                 # invalid options are caught and surfaced as user notifications (Critical #2).
-                config = CalDAVConfig.from_options(self.entry.options)
+                config = CalDAVConfig.from_options(dict(self.entry.options))
                 new_uid = await caldav_sync.write_or_update_event(
                     config=config,
                     entry_id=self.entry.entry_id,
@@ -928,10 +928,11 @@ class ASPParkingCoordinator:
         if self._caldav_uid is None or self._caldav_store is None:
             return  # Nothing to delete or CalDAV not configured
 
-        schedule = self.data.schedule_result
+        _schedule = self.data.schedule_result
         # Duck-type: any schedule with a non-None next_window has an active event to protect.
-        if schedule is None or getattr(schedule, "next_window", None) is None:
+        if _schedule is None or getattr(_schedule, "next_window", None) is None:
             return  # No active window to protect
+        schedule = cast(ScheduleFound, _schedule)
 
         safety_min = int(
             self.entry.options.get(
@@ -940,7 +941,8 @@ class ASPParkingCoordinator:
         )
         from .util import now_ha_local
 
-        boundary = schedule.next_window.start_datetime - timedelta(minutes=safety_min)
+        next_window = cast(CleaningWindow, schedule.next_window)
+        boundary = next_window.start_datetime - timedelta(minutes=safety_min)
         now = now_ha_local()
 
         if now >= boundary:
