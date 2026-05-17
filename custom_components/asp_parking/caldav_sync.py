@@ -20,7 +20,7 @@ import caldav.aio
 from caldav.lib import error as caldav_error
 from icalendar import Calendar, Event
 
-from gps2asp.schedule.models import ScheduleFound
+from .gps2asp.schedule.models import ScheduleFound
 
 logger = logging.getLogger(__name__)
 
