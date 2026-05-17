@@ -18,7 +18,6 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_CALDAV_PASSWORD,
-    CONF_CALDAV_URL,
     CONF_CALDAV_USERNAME,
     CONF_DEBUG_LAT,
     CONF_DEBUG_LON,
@@ -35,8 +34,7 @@ TO_REDACT = {
     CONF_DEBUG_LON,
     CONF_NYC311_API_KEY,
     CONF_NOTIFY_SERVICE,
-    # Phase 34: CalDAV credentials (T-34-05 mitigation)
-    CONF_CALDAV_URL,
+    # Phase 34: CalDAV credentials only — URL is not secret and useful for debugging
     CONF_CALDAV_USERNAME,
     CONF_CALDAV_PASSWORD,
 }

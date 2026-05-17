@@ -11,10 +11,10 @@ import dataclasses
 import logging
 from typing import Literal
 
-logger = logging.getLogger(__name__)
-
 from ..schedule.models import ASPActiveNow, ScheduleFound, ScheduleResult
 from . import SuspensionInfo
+
+logger = logging.getLogger(__name__)
 
 
 def apply_suspension(
