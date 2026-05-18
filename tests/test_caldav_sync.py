@@ -874,7 +874,11 @@ async def test_list_calendars_get_display_name_raises_generic_exception():
 
 
 async def test_write_or_update_event_add_event_raises_propagates():
-    """Edge 4: delete succeeds (stored_uid differs) but add_event raises → exception propagates."""
+    """Edge 4: delete succeeds (stored_uid differs) but add_event raises → CalDAVAuthError propagates.
+
+    add_event failures are wrapped in CalDAVAuthError to ensure credentials
+    are sanitised from any error message echoed back by the server.
+    """
     cs = _require_caldav_sync()
 
     entry_id = "entry_abc"
@@ -893,7 +897,7 @@ async def test_write_or_update_event_add_event_raises_propagates():
 
     cal = AsyncMock()
     cal.event_by_uid = AsyncMock(return_value=old_event)
-    cal.add_event = AsyncMock(side_effect=Exception("server full"))
+    cal.add_event = AsyncMock(side_effect=Exception("quota exceeded"))
 
     principal = SimpleNamespace(
         calendar=AsyncMock(return_value=cal),
@@ -906,8 +910,8 @@ async def test_write_or_update_event_add_event_raises_propagates():
 
     config = cs.CalDAVConfig(
         url="https://srv/dav/",
-        username="u",
-        password="p",
+        username="alice",
+        password="s3cr3t",
         calendar_url="https://srv/cal/work/",
         title_template="ASP: {street}",
         safety_window_minutes=15,
@@ -917,13 +921,17 @@ async def test_write_or_update_event_add_event_raises_propagates():
         "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
         return_value=fake_client,
     ):
-        with pytest.raises(Exception, match="server full"):
+        with pytest.raises(cs.CalDAVAuthError) as exc_info:
             await cs.write_or_update_event(
                 config=config,
                 entry_id=entry_id,
                 schedule=schedule,
                 stored_uid=stored_uid,
             )
+
+    msg = str(exc_info.value)
+    assert "quota exceeded" in msg, f"Error detail missing from CalDAVAuthError: {msg!r}"
+    assert "s3cr3t" not in msg, f"Password must be sanitised from error: {msg!r}"
 
 
 def test_build_vevent_ical_naive_datetime_no_tzid():
@@ -1053,3 +1061,137 @@ def test_caldav_config_from_options_missing_url_key_error():
 
     with pytest.raises(KeyError):
         CalDAVConfig.from_options({})
+
+
+# ---------------------------------------------------------------------------
+# _CompatAsyncDAVClient shim tests
+#
+# The shim classes are always defined at module level (not inside the
+# except block), so these tests run unconditionally regardless of the
+# installed caldav version. On caldav 3.x the shim is never installed
+# into caldav.aio, but the classes are always importable and testable.
+# ---------------------------------------------------------------------------
+
+
+def test_compat_shim_async_dav_client_exists_after_import():
+    """caldav.aio.AsyncDAVClient is always callable after module import."""
+    import caldav
+
+    async_client_class = getattr(getattr(caldav, "aio", None), "AsyncDAVClient", None)
+    assert async_client_class is not None, (
+        "caldav.aio.AsyncDAVClient must exist after caldav_sync import"
+    )
+    instance = async_client_class(url="https://srv/", username="u", password="p")
+    assert hasattr(instance, "__aenter__")
+    assert hasattr(instance, "__aexit__")
+
+
+async def test_compat_async_dav_client_aenter_uses_executor():
+    """_CompatAsyncDAVClient.__aenter__ dispatches DAVClient() via run_in_executor."""
+    from custom_components.asp_parking.caldav_sync import _CompatAsyncDAVClient
+    import caldav
+
+    mock_sync_client = MagicMock()
+    mock_sync_client.close = MagicMock()
+    SyncClass = MagicMock(return_value=mock_sync_client)
+
+    with patch.object(caldav, "DAVClient", SyncClass, create=True):
+        client = _CompatAsyncDAVClient(url="https://srv/", username="u", password="p")
+        result = await client.__aenter__()
+
+    assert result is client
+    assert client._client is mock_sync_client
+    SyncClass.assert_called_once_with(url="https://srv/", username="u", password="p")
+
+
+async def test_compat_async_dav_client_aexit_closes_client_via_executor():
+    """_CompatAsyncDAVClient.__aexit__ calls close() via executor and sets _client to None."""
+    from custom_components.asp_parking.caldav_sync import _CompatAsyncDAVClient
+    import caldav
+
+    mock_sync_client = MagicMock()
+    mock_sync_client.close = MagicMock()
+    SyncClass = MagicMock(return_value=mock_sync_client)
+
+    with patch.object(caldav, "DAVClient", SyncClass, create=True):
+        client = _CompatAsyncDAVClient(url="https://srv/", username="u", password="p")
+        async with client:
+            pass
+
+    mock_sync_client.close.assert_called_once()
+    assert client._client is None
+
+
+async def test_compat_aexit_with_none_client_does_not_raise():
+    """_CompatAsyncDAVClient.__aexit__ is safe when _client is None (aenter failed)."""
+    from custom_components.asp_parking.caldav_sync import _CompatAsyncDAVClient
+
+    client = _CompatAsyncDAVClient(url="https://srv/", username="u", password="p")
+    # Call __aexit__ without __aenter__ — _client stays None; must not raise
+    await client.__aexit__(None, None, None)
+
+
+async def test_compat_aexit_close_error_does_not_propagate():
+    """__aexit__ suppresses close() errors so the original block exception is not replaced."""
+    from custom_components.asp_parking.caldav_sync import _CompatAsyncDAVClient
+    import caldav
+
+    mock_sync_client = MagicMock()
+    mock_sync_client.close = MagicMock(side_effect=OSError("socket gone"))
+    SyncClass = MagicMock(return_value=mock_sync_client)
+
+    class _OriginalError(Exception):
+        pass
+
+    with patch.object(caldav, "DAVClient", SyncClass, create=True):
+        client = _CompatAsyncDAVClient(url="https://srv/", username="u", password="p")
+        with pytest.raises(_OriginalError):
+            async with client:
+                raise _OriginalError("block failed")
+
+    # close() raised OSError but it was suppressed; _OriginalError propagated
+
+
+async def test_compat_event_delete_propagates_sync_exception():
+    """_CompatEvent.delete() propagates exceptions from the underlying sync evt.delete()."""
+    from custom_components.asp_parking.caldav_sync import _CompatEvent
+    from caldav.lib import error as caldav_error
+
+    sync_evt = MagicMock()
+    sync_evt.delete = MagicMock(side_effect=caldav_error.NotFoundError("gone"))
+
+    compat_evt = _CompatEvent(sync_evt)
+    with pytest.raises(caldav_error.NotFoundError):
+        await compat_evt.delete()
+
+
+async def test_compat_principal_calendar_forwards_cal_url_kwarg():
+    """_CompatPrincipal.calendar() passes cal_url as a keyword argument to the sync principal."""
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar, _CompatPrincipal
+
+    mock_cal = MagicMock()
+    sync_principal = MagicMock()
+    sync_principal.calendar = MagicMock(return_value=mock_cal)
+
+    compat_principal = _CompatPrincipal(sync_principal)
+    result = await compat_principal.calendar("https://srv/cal/work/")
+
+    sync_principal.calendar.assert_called_once_with(cal_url="https://srv/cal/work/")
+    assert isinstance(result, _CompatCalendar)
+
+
+async def test_compat_calendar_event_by_uid_wraps_result():
+    """_CompatCalendar.event_by_uid() wraps the sync return value in _CompatEvent."""
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar, _CompatEvent
+
+    sync_evt = MagicMock()
+    sync_cal = MagicMock()
+    sync_cal.event_by_uid = MagicMock(return_value=sync_evt)
+    sync_cal.url = "https://srv/cal/"
+
+    compat_cal = _CompatCalendar(sync_cal)
+    result = await compat_cal.event_by_uid("abc@asp-parking.local")
+
+    sync_cal.event_by_uid.assert_called_once_with("abc@asp-parking.local")
+    assert isinstance(result, _CompatEvent)
+    assert result._evt is sync_evt
