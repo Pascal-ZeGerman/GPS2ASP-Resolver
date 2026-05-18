@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import ssl
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
@@ -43,6 +44,23 @@ ICS_URL_TEMPLATE = (
 )
 MAX_RETRIES = 3
 BASE_DELAY = 1.0  # seconds
+
+_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (compatible; ASP-Parking-HA/1.0; "
+        "+https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver)"
+    ),
+    "Accept": "text/calendar,*/*",
+}
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """Build an SSL context outside the event loop (avoids HA blocking-call warning)."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
 
 # ---------------------------------------------------------------------------
 # Reason extraction
@@ -157,7 +175,9 @@ def _get_fallback(year: int) -> dict[date, str]:
 async def _fetch_ics(year: int) -> bytes | None:
     """Fetch ICS file from NYC.gov with retry. Returns None on failure."""
     url = ICS_URL_TEMPLATE.format(year=year)
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    loop = asyncio.get_running_loop()
+    ssl_context = await loop.run_in_executor(None, _build_ssl_context)
+    async with httpx.AsyncClient(timeout=30.0, verify=ssl_context, headers=_FETCH_HEADERS) as client:
         for attempt in range(MAX_RETRIES):
             try:
                 response = await client.get(url)
