@@ -61,6 +61,7 @@ def _build_ssl_context() -> ssl.SSLContext:
 
         return ssl.create_default_context(cafile=certifi.where())
     except ImportError:
+        logger.debug("certifi not installed; using system SSL CA bundle for ICS fetch")
         return ssl.create_default_context()
 
 
@@ -189,15 +190,24 @@ async def _fetch_ics(year: int) -> bytes | None:
                 return response.content
             except (httpx.HTTPStatusError, httpx.TransportError) as exc:
                 delay = BASE_DELAY * (2**attempt)
-                logger.warning(
-                    "ICS fetch attempt %d/%d failed: %s (retry in %.1fs)",
-                    attempt + 1,
-                    MAX_RETRIES,
-                    exc,
-                    delay,
-                )
                 if attempt < MAX_RETRIES - 1:
+                    logger.warning(
+                        "ICS fetch attempt %d/%d failed (%s): %s — retrying in %.1fs",
+                        attempt + 1,
+                        MAX_RETRIES,
+                        type(exc).__name__,
+                        exc,
+                        delay,
+                    )
                     await asyncio.sleep(delay)
+                else:
+                    logger.warning(
+                        "ICS fetch attempt %d/%d failed (%s): %s — all retries exhausted",
+                        attempt + 1,
+                        MAX_RETRIES,
+                        type(exc).__name__,
+                        exc,
+                    )
     return None
 
 
@@ -232,8 +242,20 @@ class HolidayCalendar:
 
         ics_bytes = await _fetch_ics(year)
         if ics_bytes is not None:
-            self._holidays = _parse_ics(ics_bytes)
-            logger.info("Loaded %d holiday dates from ICS", len(self._holidays))
+            try:
+                self._holidays = _parse_ics(ics_bytes)
+                logger.info("Loaded %d holiday dates from ICS", len(self._holidays))
+            except Exception as exc:
+                logger.warning(
+                    "ICS parse failed for year %d (%s: %s); falling back to hardcoded dates",
+                    year,
+                    type(exc).__name__,
+                    exc,
+                )
+                self._holidays = _get_fallback(year)
+                logger.warning(
+                    "ICS parse failed, using %d fallback dates", len(self._holidays)
+                )
         else:
             self._holidays = _get_fallback(year)
             logger.warning(

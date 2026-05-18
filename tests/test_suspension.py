@@ -176,10 +176,10 @@ def test_datetime_safety() -> None:
 # 1. load() raises mid-execution, then is_suspended() called before _loaded is set
 
 
-async def test_load_parse_error_leaves_unloaded(
+async def test_load_parse_error_uses_fallback(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """If _parse_ics raises during load(), _loaded stays False and is_suspended warns."""
+    """If _parse_ics raises during load(), falls back to hardcoded dates; _loaded stays True."""
     import logging
 
     # A minimal but valid-enough bytes payload so _fetch_ics "succeeds"
@@ -197,18 +197,16 @@ async def test_load_parse_error_leaves_unloaded(
     with patch("gps2asp.suspension.httpx.AsyncClient", return_value=mock_client):
         with patch("gps2asp.suspension._parse_ics", side_effect=ValueError("bad ics")):
             cal = HolidayCalendar()
-            with pytest.raises(ValueError, match="bad ics"):
+            with caplog.at_level(logging.WARNING, logger="gps2asp.suspension"):
                 await cal.load(year=2026)
 
-    # _loaded must still be False because the exception prevented reaching self._loaded = True
-    assert cal._loaded is False
+    # Falls back to hardcoded dates — _loaded is True
+    assert cal._loaded is True
+    assert len(cal._holidays) == 39  # FALLBACK_2026 has 39 entries
+    assert cal.is_suspended(date(2026, 1, 1)).is_suspended is True
 
-    # Now call is_suspended — it should warn and return not-suspended
-    with caplog.at_level(logging.WARNING, logger="gps2asp.suspension"):
-        result = cal.is_suspended(date(2026, 1, 1))
-
-    assert any("before load()" in r.message for r in caplog.records)
-    assert result == SuspensionInfo(is_suspended=False, reason=None, source="none")
+    # A warning was logged mentioning the parse failure
+    assert any("bad ics" in r.message for r in caplog.records)
 
 
 # 2. load() called twice replaces holidays (idempotent replacement, not accumulation)
