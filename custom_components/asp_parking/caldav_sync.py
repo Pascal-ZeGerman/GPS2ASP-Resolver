@@ -144,7 +144,7 @@ try:
 except ImportError:
     _shim = types.SimpleNamespace()
     _shim.AsyncDAVClient = _CompatAsyncDAVClient
-    caldav.aio = _shim
+    caldav.aio = _shim  # type: ignore[assignment]
     logger.warning(
         "caldav.aio not found (caldav < 3.x detected); "
         "installing _CompatAsyncDAVClient shim — blocking CalDAV I/O will be "
