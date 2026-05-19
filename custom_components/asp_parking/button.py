@@ -75,6 +75,11 @@ class ASPIndexRebuildButton(ButtonEntity):
             sw_version=VERSION,
         )
 
+    @property
+    def available(self) -> bool:
+        """Return False while a rebuild is in progress (button greys out in UI)."""
+        return not self._coordinator._is_rebuilding
+
     async def async_press(self) -> None:
         """Handle the button press by requesting a rebuild from the coordinator.
 
