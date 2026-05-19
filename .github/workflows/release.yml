@@ -19,7 +19,7 @@ jobs:
         id: prerelease
         run: |
           TAG="${GITHUB_REF_NAME}"
-          if echo "$TAG" | grep -qE '\-(rc|alpha|beta)\.[0-9]+$'; then
+          if echo "$TAG" | grep -qE '\-(rc|alpha|beta)\.?[0-9]+$'; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"

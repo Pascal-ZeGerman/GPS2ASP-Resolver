@@ -930,7 +930,9 @@ async def test_write_or_update_event_add_event_raises_propagates():
             )
 
     msg = str(exc_info.value)
-    assert "quota exceeded" in msg, f"Error detail missing from CalDAVAuthError: {msg!r}"
+    assert "quota exceeded" in msg, (
+        f"Error detail missing from CalDAVAuthError: {msg!r}"
+    )
     assert "s3cr3t" not in msg, f"Password must be sanitised from error: {msg!r}"
 
 
@@ -1167,7 +1169,10 @@ async def test_compat_event_delete_propagates_sync_exception():
 
 async def test_compat_principal_calendar_forwards_cal_url_kwarg():
     """_CompatPrincipal.calendar() passes cal_url as a keyword argument to the sync principal."""
-    from custom_components.asp_parking.caldav_sync import _CompatCalendar, _CompatPrincipal
+    from custom_components.asp_parking.caldav_sync import (
+        _CompatCalendar,
+        _CompatPrincipal,
+    )
 
     mock_cal = MagicMock()
     sync_principal = MagicMock()
