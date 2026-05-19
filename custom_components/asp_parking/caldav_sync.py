@@ -28,6 +28,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 import caldav  # top-level package — present on all caldav versions
+from caldav.lib import error as caldav_error
+from icalendar import Calendar, Event
+
+from .gps2asp.schedule.models import ScheduleFound
 
 logger = logging.getLogger(__name__)
 
@@ -146,11 +150,6 @@ except ImportError:
         "installing _CompatAsyncDAVClient shim — blocking CalDAV I/O will be "
         "dispatched via run_in_executor"
     )
-
-from caldav.lib import error as caldav_error
-from icalendar import Calendar, Event
-
-from .gps2asp.schedule.models import ScheduleFound
 
 # RFC 5545 §3.7.3 — PRODID identifies the iCalendar implementation that
 # produced the file. Phase 34 D-04 fixes this string for downstream parsers
