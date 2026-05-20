@@ -1,5 +1,30 @@
 # Milestones
 
+## v3.2 UX Improvements and Monthly Updates (Shipped: 2026-05-19)
+
+**Phases completed:** 4 phases (31–34), 14 plans
+**Timeline:** 7 days (2026-05-10 → 2026-05-17)
+**Commits:** 96 | PR #5 (merged to main)
+
+**Delivered:** CI guard for vendored mirror drift, date-aware sensor display format, on-demand spatial index rebuild button, and full CalDAV calendar integration — making the integration self-maintaining and passively aware of upcoming ASP events.
+
+**Key accomplishments:**
+
+- `vendor-guard.yml` + `scripts/sync_vendored.py` — automated CI diff check fails the build on any drift between `src/gps2asp/` and the vendored mirror; 27-test TDD suite validates the 26-row import-normalization oracle; `strings.json` brought byte-identical to `translations/en.json` (Phase 31)
+- Three-tier date-aware next-move format ("⚠ Today, H:MM AM" / "Tomorrow, H:MM AM" / "Weekday (M/D), H:MM AM"); Today gate uses `dt_util.now().date()` (HA's configured local timezone, not hardcoded NYC_TZ); `now_ha_local()` helper reused by Phase 34 (Phase 32)
+- `button.asp_parking_rebuild_index` + `binary_sensor.asp_parking_index_rebuilding` + `sensor.asp_parking_index_last_rebuilt`; `index_io.py` handles download-from-GitHub-releases, zip-slip refusal, atomic directory swap, `SpatialIndex.reset()`, and sign-cache clear — all guarded by an `asyncio.Lock` (Phase 33)
+- Pure async `caldav_sync.py` (SHA-256 deterministic UID, tz-aware VEVENT, validate/list/write/delete); coordinator wired with suspension choke-point, safety-window delete gate, and Store-persisted UID; `async_remove_entry` cleans up active calendar event on config entry removal; CalDAV credentials redacted from diagnostics (Phase 34)
+
+**Tech debt accepted:**
+
+- Phase 33 live-HA UAT (4 scenarios) deferred — requires live HA instance with rebuild button visible
+- `async_migrate_entry()` for VERSION=2 still unimplemented (no known broken installs)
+- 9 quick task SUMMARY files still missing (pre-existing from v3.0/v3.1)
+
+**Known deferred items at close: 18** (see STATE.md Deferred Items § v3.2 close)
+
+---
+
 ## v3.0 Suspension Handling (Shipped: 2026-04-30)
 
 **Phases completed:** 6 phases (19–24), 11 plans

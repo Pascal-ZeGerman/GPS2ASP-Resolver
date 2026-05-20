@@ -1,34 +1,52 @@
 {
   "version": "1.0",
-  "timestamp": "2026-03-20T03:08:52.880Z",
-  "phase": "17",
-  "phase_name": "manhattan-coverage-fix-geocoded-fixtures-l3-diagnosis",
-  "phase_dir": ".planning/phases/17-manhattan-coverage-fix-geocoded-fixtures-l3-diagnosis",
-  "plan": 2,
-  "task": 2,
+  "timestamp": "2026-05-20T04:38:48.841Z",
+  "phase": "35",
+  "phase_name": "caldav-tooltip-fix-formatjs-icu-escape",
+  "phase_dir": ".planning/phases/35-caldav-tooltip-fix-formatjs-icu-escape",
+  "plan": 1,
+  "task": 4,
   "total_tasks": 4,
   "status": "paused",
   "completed_tasks": [
-    {"id": 1, "name": "17-01 T1: Populate Manhattan addresses and geocode fixtures", "status": "done", "commit": "685fdb1"},
-    {"id": 2, "name": "17-01 T2: Run L3 diagnostic audit", "status": "done", "commit": "9edd1ea"},
-    {"id": 3, "name": "17-02 T1: Analyze L3 diagnostics, fix normalization, rebuild index", "status": "done", "commit": "b9dadf4"},
-    {"id": 4, "name": "17-02 T2: Human verify coverage", "status": "done", "commit": "f4a97ef"}
+    {"id": 1, "name": "Create failing ICU-escape unit test scaffold (TDD RED)", "status": "done", "commit": "a47c6f4"},
+    {"id": 2, "name": "Apply ICU single-quote-wrap escape to both JSON files", "status": "done", "commit": "fb7a344"},
+    {"id": 3, "name": "Run full non-integration test suite as regression gate", "status": "done", "commit": "9c1688b"}
   ],
-  "remaining_tasks": [],
+  "remaining_tasks": [
+    {"id": 4, "name": "Human UAT — verify live HA tooltip + error rendering", "status": "awaiting_human", "type": "checkpoint:human-verify", "gate": "blocking"}
+  ],
   "blockers": [
     {
-      "description": "Manhattan L1+2 at 11.1% (2/18), well below 60% COV-04 target. User wants to investigate name alias matching to improve coverage before closing phase.",
-      "type": "technical",
-      "workaround": "Add name alias variants (ADAM CLAYTON POWELL JR -> ADAM C POWELL, FREDERICK DOUGLASS -> FRED DOUGLASS) to name_variants() in normalize.py"
+      "description": "Task 4 is a blocking human UAT gate. Operator must navigate to HA CalDAV options page and verify tooltip + error message render literal curly-brace text with no FormatJS error overlay.",
+      "type": "human_action",
+      "workaround": "None — gate is non-bypassable per plan"
     }
   ],
-  "human_actions_pending": [],
-  "decisions": [
-    {"decision": "Reversed from/to matching already exists in _cross_streets_match() -- not the fix needed", "rationale": "Code already handles swapped direction (lines 112-114 of signs/__init__.py)", "phase": "17"},
-    {"decision": "Name alias mismatches are the real remaining fixable gap", "rationale": "4 fixtures fail because CSCL uses ADAM CLAYTON POWELL JR BLVD but SODA uses ADAM C POWELL BOULEVARD; same for FREDERICK DOUGLASS vs FRED DOUGLASS", "phase": "17"},
-    {"decision": "Multi-block span mismatches (8 fixtures) are NOT fixable via normalization", "rationale": "CSCL sends AMSTERDAM AVE to BROADWAY (multi-block) but SODA has single-block spans -- different block granularity", "phase": "17"}
+  "human_actions_pending": [
+    {
+      "action": "Verify live HA CalDAV tooltip and error message render correctly after ICU-escape fix",
+      "context": "Settings → Devices & Services → ASP Parking → Configure → CalDAV step. Check 'Event title template' help text shows literal {street}/{time}/{side} with no FormatJS overlay. Also test invalid template submission. Hard-refresh browser first (Ctrl+Shift+R).",
+      "blocking": true
+    }
   ],
+  "decisions": [
+    {
+      "decision": "Deploy via docker cp (only strings.json + translations/en.json) rather than full integration copy",
+      "rationale": "HA config mount at /home/pascal/homeassistant/config is permission-restricted; docker cp bypasses the ownership boundary cleanly",
+      "phase": "35"
+    }
+  ],
+  "infrastructure_state": {
+    "worktree_path": ".claude/worktrees/agent-a7256825dc78093cd",
+    "worktree_branch": "worktree-agent-a7256825dc78093cd",
+    "worktree_commits": ["a47c6f4", "fb7a344", "9c1688b"],
+    "worktree_merged_to_main": false,
+    "docker_container": "Home_Assistant",
+    "ha_deployed": true,
+    "ha_status": "restarted, API responding (401 auth required = up)"
+  },
   "uncommitted_files": [],
-  "next_action": "Add name alias variants for Manhattan boulevard names: (1) ADAM CLAYTON POWELL JR -> ADAM C POWELL in name_variants(), (2) FREDERICK DOUGLASS -> FRED DOUGLASS in name_variants(). Then rebuild index, re-run Manhattan audit, check if L1+2 improves. Could push 3-4 fixtures from L3/L0 to L1, reaching ~28-33%.",
-  "context_notes": "Phase 17 plans are fully executed (2/2 complete). Verification status is human_needed. The auto-advance chain from /gsd:next brought us through discuss->plan->execute. User rejected 11.1% result and asked to investigate reversed from/to matching. Investigation revealed _cross_streets_match() ALREADY handles reversed order. The real remaining opportunity is name alias variants for Manhattan-specific boulevard names. This is a quick task, not a new phase -- add aliases to name_variants() in normalize.py, mirror to vendored copy, rebuild index, re-audit."
+  "next_action": "Ask user if they have completed the live HA UAT check. If 'approved', merge worktree-agent-a7256825dc78093cd to main, update STATE.md + ROADMAP.md, then dispatch verifier for phase 35.",
+  "context_notes": "All 3 auto tasks committed and green (570 tests pass). Only remaining step is human UAT gate (Task 4). Files already deployed to Docker container Home_Assistant via docker cp; HA restarted and up. Worktree exists but has NOT been merged to main — merge must happen after UAT approval."
 }
