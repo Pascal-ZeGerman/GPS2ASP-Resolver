@@ -372,10 +372,10 @@ class ASPParkingCoordinator:
         )
         self._listeners.append(unsub_state)
 
-        # Periodic refresh to keep schedule current as cleaning windows pass
+        # Periodic heartbeat: re-fetch ICS, re-check suspension, trigger pipeline
         unsub_interval = async_track_time_interval(
             self.hass,
-            self._async_periodic_refresh,
+            self._async_periodic_heartbeat,
             timedelta(hours=self.refresh_interval),
         )
         self._listeners.append(unsub_interval)
@@ -1536,6 +1536,51 @@ class ASPParkingCoordinator:
             self._async_preseed_cache(),
             name="asp_parking_preseed",
         )
+
+    @callback
+    def _async_periodic_heartbeat(self, now: datetime) -> None:
+        """8h heartbeat: re-fetch ICS holiday calendar, re-check suspension, refresh pipeline.
+
+        Spawns _async_do_heartbeat as a task on the HA event loop so the @callback
+        constraint is satisfied. Registered by async_start via async_track_time_interval.
+        """
+        self.hass.async_create_task(self._async_do_heartbeat())
+
+    async def _async_do_heartbeat(self) -> None:
+        """Re-fetch ICS, re-check suspension, and fire the pipeline debouncer.
+
+        Sequence:
+        1. Re-fetch the ICS holiday calendar (if available) so emergency suspensions
+           added after boot are reflected immediately.
+        2. Re-run suspension check with freshly loaded holiday data.
+        3. Trigger the pipeline debouncer when GPS coordinates are known, replicating
+           the logic from _async_periodic_refresh (including debug coord fallback).
+
+        Failure modes are non-fatal: load() has built-in retry + fallback, and
+        _async_update_suspension already handles network/auth errors gracefully.
+        """
+        logger.debug("ASP Parking: heartbeat — ICS refreshed, suspension re-checked")
+
+        if self._holiday_calendar is not None:
+            await self._holiday_calendar.load()
+
+        await self._async_update_suspension()
+
+        lat = self.data.last_lat
+        lon = self.data.last_lon
+        # In debug mode, fall back to debug coordinates if no real GPS available
+        if lat is None and self._debug_enabled and self._debug_lat is not None:
+            lat = self._debug_lat
+        if lon is None and self._debug_enabled and self._debug_lon is not None:
+            lon = self._debug_lon
+        if lat is not None and lon is not None:
+            if self._pending_lat is None:
+                self._pending_lat = lat
+            if self._pending_lon is None:
+                self._pending_lon = lon
+            self.hass.async_create_task(self._debouncer.async_call())
+        else:
+            logger.debug("Periodic refresh skipped: no GPS coordinates yet")
 
     @callback
     def _async_periodic_refresh(self, now: datetime) -> None:
