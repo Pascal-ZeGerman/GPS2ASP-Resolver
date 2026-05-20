@@ -1541,10 +1541,15 @@ class ASPParkingCoordinator:
     def _async_periodic_heartbeat(self, now: datetime) -> None:
         """8h heartbeat: re-fetch ICS holiday calendar, re-check suspension, refresh pipeline.
 
-        Spawns _async_do_heartbeat as a task on the HA event loop so the @callback
-        constraint is satisfied. Registered by async_start via async_track_time_interval.
+        Spawns _async_do_heartbeat as a lifecycle-tied background task so HA auto-cancels
+        any in-flight ICS fetch or 311 call on config-entry unload.
+        Registered by async_start via async_track_time_interval.
         """
-        self.hass.async_create_task(self._async_do_heartbeat())
+        self.entry.async_create_background_task(
+            self.hass,
+            self._async_do_heartbeat(),
+            name="asp_parking_heartbeat",
+        )
 
     async def _async_do_heartbeat(self) -> None:
         """Re-fetch ICS, re-check suspension, and fire the pipeline debouncer.
@@ -1553,16 +1558,14 @@ class ASPParkingCoordinator:
         1. Re-fetch the ICS holiday calendar (if available) so emergency suspensions
            added after boot are reflected immediately.
         2. Re-run suspension check with freshly loaded holiday data.
-        3. Trigger the pipeline debouncer when GPS coordinates are known, replicating
-           the logic from _async_periodic_refresh (including debug coord fallback).
+        3. Trigger the pipeline debouncer when GPS coordinates are known.
 
         Failure modes are non-fatal: load() has built-in retry + fallback, and
         _async_update_suspension already handles network/auth errors gracefully.
         """
-        logger.debug("ASP Parking: heartbeat — ICS refreshed, suspension re-checked")
-
         if self._holiday_calendar is not None:
             await self._holiday_calendar.load()
+            logger.debug("ASP Parking: heartbeat — ICS re-fetched, suspension re-checking")
 
         await self._async_update_suspension()
 
@@ -1580,30 +1583,4 @@ class ASPParkingCoordinator:
                 self._pending_lon = lon
             self.hass.async_create_task(self._debouncer.async_call())
         else:
-            logger.debug("Periodic refresh skipped: no GPS coordinates yet")
-
-    @callback
-    def _async_periodic_refresh(self, now: datetime) -> None:
-        """Periodic callback to refresh the schedule.
-
-        Re-runs the pipeline with the last known GPS coordinates to keep
-        next_move_time current as cleaning windows pass.
-
-        Args:
-            now: Current datetime (provided by async_track_time_interval).
-        """
-        lat = self.data.last_lat
-        lon = self.data.last_lon
-        # In debug mode, fall back to debug coordinates if no real GPS available
-        if lat is None and self._debug_enabled and self._debug_lat is not None:
-            lat = self._debug_lat
-        if lon is None and self._debug_enabled and self._debug_lon is not None:
-            lon = self._debug_lon
-        if lat is not None and lon is not None:
-            if self._pending_lat is None:
-                self._pending_lat = lat
-            if self._pending_lon is None:
-                self._pending_lon = lon
-            self.hass.async_create_task(self._debouncer.async_call())
-        else:
-            logger.debug("Periodic refresh skipped: no GPS coordinates yet")
+            logger.debug("ASP Parking: heartbeat — no GPS coordinates, pipeline re-run skipped")
