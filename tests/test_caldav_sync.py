@@ -401,7 +401,7 @@ async def test_write_or_update_event_idempotent_same_uid():
     cal.add_event = AsyncMock()
     cal.event_by_uid = AsyncMock()  # should not be called
     principal = SimpleNamespace(
-        calendar=AsyncMock(return_value=cal),
+        calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
     )
     fake_client = AsyncMock()
@@ -467,7 +467,7 @@ async def test_write_or_update_event_first_write_no_stored_uid():
     mock_cal.event_by_uid = AsyncMock(return_value=mock_event)
 
     mock_principal = AsyncMock()
-    mock_principal.calendar = AsyncMock(return_value=mock_cal)
+    mock_principal.calendar = MagicMock(return_value=mock_cal)
     mock_client = AsyncMock()
     mock_client.get_principal = AsyncMock(return_value=mock_principal)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -537,7 +537,7 @@ async def test_write_or_update_event_deletes_old_then_creates_new():
     cal.event_by_uid = AsyncMock(side_effect=_record_event_by_uid)
     cal.add_event = AsyncMock(side_effect=_record_add_event)
     principal = SimpleNamespace(
-        calendar=AsyncMock(return_value=cal),
+        calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
     )
     fake_client = AsyncMock()
@@ -594,7 +594,7 @@ async def test_delete_event_treats_notfound_as_success():
     cal = AsyncMock()
     cal.event_by_uid = AsyncMock(side_effect=caldav_error.NotFoundError("gone"))
     principal = SimpleNamespace(
-        calendar=AsyncMock(return_value=cal),
+        calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
     )
     fake_client = AsyncMock()
@@ -762,7 +762,7 @@ async def test_delete_event_treats_dav_error_404_as_success():
     cal = AsyncMock()
     cal.event_by_uid = AsyncMock(side_effect=dav_err)
     principal = SimpleNamespace(
-        calendar=AsyncMock(return_value=cal),
+        calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
     )
     fake_client = AsyncMock()
@@ -900,7 +900,7 @@ async def test_write_or_update_event_add_event_raises_propagates():
     cal.add_event = AsyncMock(side_effect=Exception("quota exceeded"))
 
     principal = SimpleNamespace(
-        calendar=AsyncMock(return_value=cal),
+        calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
     )
     fake_client = AsyncMock()
@@ -1000,7 +1000,7 @@ async def test_delete_uid_quiet_non_404_dav_error_reraises():
     cal = AsyncMock()
     cal.event_by_uid = AsyncMock(side_effect=exc)
     principal = SimpleNamespace(
-        calendar=AsyncMock(return_value=cal),
+        calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
     )
     fake_client = AsyncMock()
@@ -1167,8 +1167,12 @@ async def test_compat_event_delete_propagates_sync_exception():
         await compat_evt.delete()
 
 
-async def test_compat_principal_calendar_forwards_cal_url_kwarg():
-    """_CompatPrincipal.calendar() passes cal_url as a keyword argument to the sync principal."""
+def test_compat_principal_calendar_forwards_cal_url_kwarg():
+    """_CompatPrincipal.calendar() passes cal_url as a keyword argument to the sync principal.
+
+    _CompatPrincipal.calendar() is synchronous (no run_in_executor needed since
+    caldav.Principal.calendar() is a local constructor in both 2.x and 3.x).
+    """
     from custom_components.asp_parking.caldav_sync import (
         _CompatCalendar,
         _CompatPrincipal,
@@ -1179,7 +1183,7 @@ async def test_compat_principal_calendar_forwards_cal_url_kwarg():
     sync_principal.calendar = MagicMock(return_value=mock_cal)
 
     compat_principal = _CompatPrincipal(sync_principal)
-    result = await compat_principal.calendar("https://srv/cal/work/")
+    result = compat_principal.calendar("https://srv/cal/work/")
 
     sync_principal.calendar.assert_called_once_with(cal_url="https://srv/cal/work/")
     assert isinstance(result, _CompatCalendar)

@@ -89,12 +89,16 @@ class _CompatPrincipal:
         cals = await loop.run_in_executor(None, self._p.calendars)
         return [_CompatCalendar(c) for c in cals]
 
-    async def calendar(self, cal_url: str) -> _CompatCalendar:
-        loop = asyncio.get_running_loop()
-        cal = await loop.run_in_executor(
-            None, lambda: self._p.calendar(cal_url=cal_url)
-        )
-        return _CompatCalendar(cal)
+    def calendar(self, cal_url: str) -> _CompatCalendar:
+        """Return a calendar object for cal_url.
+
+        ``caldav.Principal.calendar(cal_url=...)`` is a local constructor in
+        both caldav 2.x and 3.x — it never makes network I/O, so no
+        run_in_executor wrapping is needed. This method is synchronous to
+        match the caldav 3.x ``AsyncPrincipal.calendar()`` signature so that
+        callers can use a plain (non-awaited) call in both code paths.
+        """
+        return _CompatCalendar(self._p.calendar(cal_url=cal_url))
 
 
 class _CompatAsyncDAVClient:
@@ -361,9 +365,14 @@ async def _get_calendar(client: Any, calendar_url: str) -> Any:
     Uses ``principal.calendar(cal_url=...)`` for single-calendar lookup
     (no extra collection roundtrip — the principal already knows the
     calendar-home-set URL after ``get_principal``).
+
+    Note: ``principal.calendar()`` is a **synchronous** constructor in both
+    caldav 2.x (via the ``_CompatPrincipal`` shim) and caldav 3.x
+    (``AsyncPrincipal.calendar``). It builds a Calendar object from the URL
+    without any network I/O, so it must NOT be awaited.
     """
     principal = await client.get_principal()
-    return await principal.calendar(cal_url=calendar_url)
+    return principal.calendar(cal_url=calendar_url)
 
 
 async def _delete_uid_quiet(cal: Any, uid: str) -> None:
