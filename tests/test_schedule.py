@@ -7,7 +7,7 @@ compute_schedule() public API entry point.
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 
@@ -219,6 +219,38 @@ class TestFindNextWindow:
         schedule = WeeklySchedule(windows=())
         now = datetime(2026, 2, 23, 15, 0, tzinfo=NYC_TZ)
         result = find_next_window(schedule, now)
+        assert result is None
+
+    def test_holiday_on_next_day_is_skipped(self) -> None:
+        """Monday 3PM: next window is Wednesday, but Wednesday is a holiday -> skips to Friday."""
+        # 2026-02-23 is Monday; 2026-02-25 is Wednesday, 2026-02-27 is Friday
+        schedule = WeeklySchedule(
+            windows=(
+                _tw(ASPDay.WEDNESDAY, 8, 30, 10, 0),
+                _tw(ASPDay.FRIDAY, 8, 30, 10, 0),
+            )
+        )
+        now = datetime(2026, 2, 23, 15, 0, tzinfo=NYC_TZ)
+        suspended = frozenset({now.date() + timedelta(days=2)})  # Wednesday
+        result = find_next_window(schedule, now, suspended_dates=suspended)
+        assert result is not None
+        assert result.day == ASPDay.FRIDAY
+        assert result.start_datetime.date().isoformat() == "2026-02-27"
+
+    def test_holiday_skipping_without_suspended_dates_unchanged(self) -> None:
+        """No suspended_dates -> behaviour is unchanged (backward compat)."""
+        schedule = self._tue_fri_schedule()
+        now = datetime(2026, 2, 23, 15, 0, tzinfo=NYC_TZ)
+        result = find_next_window(schedule, now, suspended_dates=None)
+        assert result is not None
+        assert result.day == ASPDay.TUESDAY
+
+    def test_all_candidates_suspended_returns_none(self) -> None:
+        """If all 8 lookahead days are suspended, returns None."""
+        schedule = self._tue_fri_schedule()
+        now = datetime(2026, 2, 23, 15, 0, tzinfo=NYC_TZ)
+        suspended = frozenset({now.date() + timedelta(days=i) for i in range(8)})
+        result = find_next_window(schedule, now, suspended_dates=suspended)
         assert result is None
 
 
@@ -490,3 +522,18 @@ class TestComputeSchedule:
         assert isinstance(result, ScheduleFound)
         assert result.next_window.start_datetime.tzinfo is not None
         assert result.next_window.end_datetime.tzinfo is not None
+
+    def test_suspended_dates_skips_holiday_in_next_window(self) -> None:
+        """compute_schedule skips Tuesday when Tuesday is a holiday -> lands on Friday."""
+        sign_result = _make_sign_result(
+            "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY 11:30AM-1PM <->"
+        )
+        # Monday 3PM; next cleaning is Tuesday but Tuesday is a holiday
+        # 2026-02-23 is Monday, 2026-02-24 is Tuesday, 2026-02-27 is Friday
+        now = datetime(2026, 2, 23, 15, 0, tzinfo=NYC_TZ)
+        tuesday = date(2026, 2, 24)
+        result = compute_schedule(sign_result, now=now, suspended_dates=frozenset({tuesday}))
+        assert isinstance(result, ScheduleFound)
+        assert result.next_window is not None
+        assert result.next_window.day == ASPDay.FRIDAY
+        assert result.next_window.start_datetime.date() == date(2026, 2, 27)

@@ -1114,7 +1114,15 @@ class ASPParkingCoordinator:
                 )
 
             # Phase 3: Signs to schedule
-            schedule = compute_schedule(sign_result, now=self._get_now())
+            schedule = compute_schedule(
+                sign_result,
+                now=self._get_now(),
+                suspended_dates=(
+                    self._holiday_calendar.suspended_dates
+                    if self._holiday_calendar is not None
+                    else None
+                ),
+            )
 
             # Success: update all data fields
             self.data.schedule_result = schedule

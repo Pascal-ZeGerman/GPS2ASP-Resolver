@@ -263,6 +263,11 @@ class HolidayCalendar:
             )
         self._loaded = True
 
+    @property
+    def suspended_dates(self) -> frozenset[date]:
+        """All holiday dates as an immutable set for forward-lookahead skipping."""
+        return frozenset(self._holidays)
+
     def is_suspended(self, check_date: date) -> SuspensionInfo:
         """Check if ASP is suspended on the given date."""
         if not self._loaded:

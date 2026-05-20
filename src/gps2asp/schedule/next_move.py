@@ -12,7 +12,7 @@ Public API:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from gps2asp.schedule.models import ASPDay, CleaningWindow, WeeklySchedule
@@ -84,6 +84,7 @@ def find_active_window(
 def find_next_window(
     schedule: WeeklySchedule,
     now: datetime | None = None,
+    suspended_dates: frozenset[date] | None = None,
 ) -> CleaningWindow | None:
     """Find the next upcoming ASP cleaning window.
 
@@ -94,6 +95,8 @@ def find_next_window(
         schedule: The weekly ASP schedule to search.
         now: Current time (defaults to now in NYC timezone).
             If naive, NYC timezone is attached.
+        suspended_dates: Set of calendar dates on which ASP is suspended
+            (holidays). Candidate dates in this set are skipped.
 
     Returns:
         CleaningWindow for the next upcoming window, or None if no
@@ -106,6 +109,8 @@ def find_next_window(
 
     for day_offset in range(8):
         candidate_date = now.date() + timedelta(days=day_offset)
+        if suspended_dates and candidate_date in suspended_dates:
+            continue
         weekday = candidate_date.weekday()
 
         try:
