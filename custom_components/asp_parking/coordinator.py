@@ -796,6 +796,29 @@ class ASPParkingCoordinator:
                 if self._caldav_write_error_notified:
                     pn_dismiss(self.hass, "asp_parking_caldav_error")
                     self._caldav_write_error_notified = False
+                # BUG-C-002: re-check suspension state AFTER the network I/O.
+                # The pre-await check at the top of the lock only proves we
+                # were unsuspended when the await started. If a holiday
+                # calendar refresh, a manual suspension service call, or any
+                # other code path flipped is_suspended=True while
+                # write_or_update_event was in flight, the event we just
+                # wrote is now stale on the CalDAV server. Spawn a
+                # delete-on-flip task for new_uid so the orphan does not
+                # survive the race.
+                if self.data.suspension_state.is_suspended:
+                    logger.warning(
+                        "ASP Parking: suspension became active during CalDAV "
+                        "write; deleting stale event %s (BUG-C-002 race fix)",
+                        new_uid,
+                    )
+                    self._caldav_delete_task = self.entry.async_create_background_task(
+                        self.hass,
+                        ASPParkingCoordinator._async_caldav_delete_current(
+                            self, new_uid
+                        ),
+                        name="asp_parking_caldav_delete_on_suspension_race",
+                    )
+                    return
             except Exception as err:  # noqa: BLE001
                 sanitised = str(err)
                 _pw = self.entry.options.get(CONF_CALDAV_PASSWORD, "")
