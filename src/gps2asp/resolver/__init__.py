@@ -178,18 +178,28 @@ async def resolve_segment(
         perp_distance = compute_perpendicular_distance(x, y, best.geometry)
         dist_to_endpoints = compute_distance_to_endpoints(x, y, best.geometry)
 
-        # Step 4: Determine side of street
-        side = determine_side(x, y, best.geometry, best.nominaldir)
-
-        # Step 5: Compute effective width (post-fallback) and confidence
-        # Resolve width once here; pass as effective_width_ft to avoid a second call inside compute_confidence
-        effective_width = resolve_effective_width(best.streetwidth, best.rw_type)
+        # Step 4: Compute effective width (post-fallback) and confidence FIRST.
+        # BUG-R-003: side determination is meaningless at zero confidence
+        # (near-centerline or near-intersection) and the cross-product would
+        # yield an arbitrary value. Defer determine_side until after the
+        # confidence gate so we don't compute (and log) a misleading side.
+        effective_width = resolve_effective_width(
+            best.streetwidth, best.rw_type, segment_id=best.segment_id
+        )
         confidence = compute_confidence(
             perp_distance_ft=perp_distance,
             effective_width_ft=effective_width,
             distance_to_nearest_intersection_ft=dist_to_endpoints,
             parking_lane_fraction=parking_lane_fraction,
         )
+
+        # Step 5: Determine side of street only when confidence will be
+        # accepted; otherwise leave side=None in the debug record (BUG-R-003).
+        side: str | None
+        if is_confident(confidence, confidence_threshold):
+            side = determine_side(x, y, best.geometry, best.nominaldir)
+        else:
+            side = None
 
         # Update debug info with results
         debug_info = ResolutionDebugInfo(
@@ -272,10 +282,17 @@ async def resolve_segment(
 def _classify_ambiguity(perp_distance: float, dist_to_endpoints: float) -> str:
     """Classify the type of ambiguity for debug logging.
 
-    The 10ft check here is a rough heuristic for log classification only —
-    it is NOT the confidence algorithm threshold (which is width-relative).
-    Width-relative classification would require passing effective_width; a
-    static 10ft approximation is sufficient for debug log labels.
+    BUG-R-001: The 10ft check here is a rough width-relative approximation,
+    used purely for log classification — it is NOT the confidence algorithm
+    threshold. The real threshold lives in compute_confidence() and is
+    width-relative: ``effective_width * parking_lane_fraction / 2``. For a
+    typical NYC 30ft residential street with parking_lane_fraction=0.33,
+    that evaluates to ~4.95ft, while a 60ft avenue produces ~9.9ft — both
+    approximated here by the static 10ft constant for log labelling.
+    Width-relative classification at this call-site would require passing
+    effective_width through the debug pipeline; the static approximation
+    keeps the log-label boundary stable without coupling _classify_ambiguity
+    to the confidence-scoring API.
 
     Args:
         perp_distance: Perpendicular distance to centerline in feet.

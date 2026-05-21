@@ -51,7 +51,11 @@ _NYC_DEFAULT_WIDTHS: dict[int, float] = {
 _DEFAULT_WIDTH_FALLBACK = 30.0  # catch-all for unrecognized rw_types
 
 
-def resolve_effective_width(streetwidth_ft: float, rw_type: int) -> float:
+def resolve_effective_width(
+    streetwidth_ft: float,
+    rw_type: int,
+    segment_id: int | str | None = None,
+) -> float:
     """Return effective street width, falling back to rw_type table when CSCL data is missing.
 
     Logs at DEBUG level when a fallback is used (not surfaced to the user per CONTEXT.md).
@@ -59,6 +63,10 @@ def resolve_effective_width(streetwidth_ft: float, rw_type: int) -> float:
     Args:
         streetwidth_ft: Width from CSCL data. May be 0.0 (missing) or NaN (corrupt).
         rw_type: CSCL road type code. Used for fallback width lookup.
+        segment_id: Optional CSCL physical segment ID for the candidate. When
+            provided, it is included in the fallback debug log so operators
+            can trace missing-width records back to the source segment
+            (BUG-R-006). Default None preserves the legacy call signature.
 
     Returns:
         Positive float representing effective street width in feet.
@@ -67,10 +75,11 @@ def resolve_effective_width(streetwidth_ft: float, rw_type: int) -> float:
         return streetwidth_ft
     fallback = _NYC_DEFAULT_WIDTHS.get(rw_type, _DEFAULT_WIDTH_FALLBACK)
     logging.getLogger(__name__).debug(
-        "streetwidth missing (got %s) for rw_type=%d; using fallback=%.0fft",
+        "streetwidth missing (got %s) for rw_type=%d; using fallback=%.0fft (segment_id=%s)",
         streetwidth_ft,
         rw_type,
         fallback,
+        segment_id,
     )
     return fallback
 
