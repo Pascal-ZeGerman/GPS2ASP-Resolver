@@ -408,3 +408,65 @@ async def test_no_segment_found_error_resets_new_fields(make_coordinator):
     assert coord.data.distance_ft is None
     assert coord.data.street_width_ft is None
     assert coord.data.segment_id is None
+
+
+# ---------------------------------------------------------------------------
+# Test 9 (BUG-H-005, Phase 35.1-05): _get_now uses dt_util.now in normal mode
+# ---------------------------------------------------------------------------
+
+
+def test_get_now_uses_dt_util_in_normal_mode(make_coordinator):
+    """BUG-H-005: When debug override is NOT active, _get_now() must return
+    dt_util.now() (HA's configured timezone) — not datetime.now(NYC_TZ).
+
+    Per MEMORY.md: "Use dt_util.now() (HA configured TZ) not hardcoded
+    NYC_TZ for day-boundary display labels". The coordinator's _get_now()
+    is the central time source for all time-sensitive coordinator
+    operations; it must honour the HA-configured TZ when no debug
+    override is active.
+    """
+    from datetime import datetime, timezone
+
+    coord, _hass, _entry = make_coordinator()
+
+    # Confirm normal mode (no debug datetime override)
+    coord._debug_enabled = False
+    coord._debug_datetime = None
+
+    # Sentinel datetime returned by dt_util.now
+    sentinel = datetime(2026, 7, 4, 12, 34, 56, tzinfo=timezone.utc)
+
+    with patch(
+        "custom_components.asp_parking.coordinator.dt_util.now",
+        return_value=sentinel,
+    ) as mock_now:
+        result = coord._get_now()
+
+    assert result is sentinel, (
+        f"_get_now() must return dt_util.now() in normal mode, got {result!r}"
+    )
+    mock_now.assert_called_once()
+
+
+def test_get_now_debug_override_unchanged(make_coordinator):
+    """Debug datetime override path is NOT affected by BUG-H-005 fix.
+
+    When _debug_enabled is True and _debug_datetime is set, _get_now()
+    must continue to return the debug datetime — never delegating to
+    dt_util.now(). This is the existing D-08 contract.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    coord, _hass, _entry = make_coordinator()
+    debug_dt = datetime(2030, 1, 1, 6, 0, 0, tzinfo=ZoneInfo("America/New_York"))
+    coord._debug_enabled = True
+    coord._debug_datetime = debug_dt
+
+    with patch(
+        "custom_components.asp_parking.coordinator.dt_util.now",
+    ) as mock_now:
+        result = coord._get_now()
+
+    assert result == debug_dt
+    mock_now.assert_not_called()
