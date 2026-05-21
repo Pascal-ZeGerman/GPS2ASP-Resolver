@@ -365,3 +365,133 @@ def test_suspended_dates_empty_before_load() -> None:
     """A fresh HolidayCalendar() with no holidays loaded returns frozenset()."""
     cal = HolidayCalendar()
     assert cal.suspended_dates == frozenset()
+
+
+# ---------------------------------------------------------------------------
+# Phase 35.1 BUG-T-008: _get_fallback unknown year logs ERROR
+#
+# Pre-fix, _get_fallback(2027) silently returned {} so the integration ran
+# 2027 as if NYC had zero holidays — waking the user at 7 AM on Christmas
+# to move their car. The fix is to ERROR-log when no fallback is hardcoded
+# so HA diagnostics surface the missing data.
+# ---------------------------------------------------------------------------
+
+
+def test_get_fallback_unknown_year_logs_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_get_fallback(2027) returns {} AND logs ERROR with the year and 'No fallback'."""
+    import logging
+
+    with caplog.at_level(logging.ERROR, logger="gps2asp.suspension"):
+        result = _get_fallback(2027)
+
+    assert result == {}
+    error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(error_records) == 1, (
+        f"Expected exactly one ERROR log, got {len(error_records)}: "
+        f"{[r.message for r in caplog.records]}"
+    )
+    msg = error_records[0].getMessage()
+    assert "No fallback" in msg, f"Expected 'No fallback' in message, got: {msg}"
+    assert "2027" in msg, f"Expected '2027' in message, got: {msg}"
+
+
+def test_get_fallback_known_year_does_not_log_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_get_fallback(2026) returns FALLBACK_2026 copy AND does not log ERROR."""
+    import logging
+
+    with caplog.at_level(logging.ERROR, logger="gps2asp.suspension"):
+        result = _get_fallback(2026)
+
+    assert result == FALLBACK_2026
+    assert result is not FALLBACK_2026  # returns a copy, not the original
+    error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert error_records == [], (
+        f"Expected zero ERROR logs for known year 2026, got: "
+        f"{[r.message for r in error_records]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 35.1 BUG-T-009: _fetch_ics does NOT retry on 401/403
+#
+# Pre-fix, _fetch_ics retried up to MAX_RETRIES times on any HTTPStatusError
+# including 401 and 403. Auth errors are not transient, so retrying wastes
+# ~7s per request and produces misleading log noise. The fix short-circuits
+# on 401/403 with a single warning log.
+# ---------------------------------------------------------------------------
+
+
+def _make_status_error(status_code: int) -> httpx.HTTPStatusError:
+    """Build an httpx.HTTPStatusError mimicking a real response."""
+    request = httpx.Request("GET", "https://example.com")
+    response = httpx.Response(status_code=status_code, request=request)
+    return httpx.HTTPStatusError(
+        f"{status_code} error", request=request, response=response
+    )
+
+
+async def test_fetch_ics_no_retry_on_401(caplog: pytest.LogCaptureFixture) -> None:
+    """401 short-circuits: _fetch_ics returns None after exactly 1 attempt."""
+    import logging
+    from gps2asp.suspension import _fetch_ics
+
+    mock_get = AsyncMock(side_effect=_make_status_error(401))
+    mock_client = AsyncMock()
+    mock_client.get = mock_get
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("gps2asp.suspension.httpx.AsyncClient", return_value=mock_client):
+        with caplog.at_level(logging.WARNING, logger="gps2asp.suspension"):
+            result = await _fetch_ics(2026)
+
+    assert result is None
+    assert mock_get.await_count == 1, (
+        f"Expected exactly 1 attempt for 401 (no retry), got {mock_get.await_count}"
+    )
+    assert any(
+        "401" in r.getMessage() or "auth" in r.getMessage().lower()
+        for r in caplog.records
+    ), f"Expected an auth-error warning, got: {[r.getMessage() for r in caplog.records]}"
+
+
+async def test_fetch_ics_no_retry_on_403(caplog: pytest.LogCaptureFixture) -> None:
+    """403 short-circuits: _fetch_ics returns None after exactly 1 attempt."""
+    from gps2asp.suspension import _fetch_ics
+
+    mock_get = AsyncMock(side_effect=_make_status_error(403))
+    mock_client = AsyncMock()
+    mock_client.get = mock_get
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("gps2asp.suspension.httpx.AsyncClient", return_value=mock_client):
+        result = await _fetch_ics(2026)
+
+    assert result is None
+    assert mock_get.await_count == 1
+
+
+async def test_fetch_ics_still_retries_on_500() -> None:
+    """500 keeps existing retry behaviour (up to MAX_RETRIES attempts)."""
+    from gps2asp.suspension import _fetch_ics, MAX_RETRIES
+
+    mock_get = AsyncMock(side_effect=_make_status_error(500))
+    mock_client = AsyncMock()
+    mock_client.get = mock_get
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    # Patch asyncio.sleep to make retries instant.
+    with patch("gps2asp.suspension.httpx.AsyncClient", return_value=mock_client):
+        with patch("gps2asp.suspension.asyncio.sleep", new=AsyncMock()):
+            result = await _fetch_ics(2026)
+
+    assert result is None
+    assert mock_get.await_count == MAX_RETRIES, (
+        f"Expected {MAX_RETRIES} attempts for 500, got {mock_get.await_count}"
+    )
