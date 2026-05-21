@@ -537,3 +537,58 @@ class TestComputeSchedule:
         assert result.next_window is not None
         assert result.next_window.day == ASPDay.FRIDAY
         assert result.next_window.start_datetime.date() == date(2026, 2, 27)
+
+
+# ---------------------------------------------------------------------------
+# Phase 35.1 regression tests: find_next_window suspended_dates contract
+#
+# These tests guard BUG-H-003 (vendored copy lacked the suspended_dates
+# parameter on find_next_window, so HA's Stage-3 call passing the kwarg
+# raised AttributeError, which was silently swallowed by the coordinator's
+# `except Exception`). Plan 35.1-01 Task 2 syncs the kwarg-aware signature
+# into the vendored copy; these tests document the contract.
+# ---------------------------------------------------------------------------
+
+from gps2asp.schedule.next_move import NYC_TZ as _NEXT_MOVE_NYC_TZ  # noqa: E402
+
+
+def test_find_next_window_skips_holiday_dates() -> None:
+    """find_next_window with suspended_dates skips matching candidate dates."""
+    # 2026-01-12 is a Monday; 2026-01-19 is the following Monday.
+    schedule = WeeklySchedule(
+        windows=(
+            TimeWindow(
+                day=ASPDay.MONDAY,
+                start_time=time(9, 0),
+                end_time=time(10, 30),
+                source_sign="test",
+            ),
+        )
+    )
+    now = datetime(2026, 1, 12, 8, 0, tzinfo=_NEXT_MOVE_NYC_TZ)
+    result = find_next_window(
+        schedule,
+        now=now,
+        suspended_dates=frozenset({date(2026, 1, 12)}),
+    )
+    assert result is not None
+    assert result.start_datetime.date() == date(2026, 1, 19)
+
+
+def test_find_next_window_no_suspended_dates_returns_today() -> None:
+    """Without suspended_dates, the same Monday-9AM window returns today's 9AM occurrence."""
+    schedule = WeeklySchedule(
+        windows=(
+            TimeWindow(
+                day=ASPDay.MONDAY,
+                start_time=time(9, 0),
+                end_time=time(10, 30),
+                source_sign="test",
+            ),
+        )
+    )
+    now = datetime(2026, 1, 12, 8, 0, tzinfo=_NEXT_MOVE_NYC_TZ)
+    result = find_next_window(schedule, now=now)
+    assert result is not None
+    assert result.start_datetime.date() == date(2026, 1, 12)
+    assert result.start_time == time(9, 0)

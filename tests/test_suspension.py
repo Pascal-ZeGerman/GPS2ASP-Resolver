@@ -336,3 +336,32 @@ async def test_load_year_2025_uses_correct_fallback() -> None:
     assert cal._loaded is True
     expected = _get_fallback(2025)
     assert cal._holidays == expected
+
+
+# ---------------------------------------------------------------------------
+# Phase 35.1 regression tests: HolidayCalendar.suspended_dates property
+#
+# These tests guard BUG-H-002 (vendored copy was missing this property,
+# causing AttributeError in the HA Stage-3 pipeline call). Plan 35.1-01
+# Task 2 syncs the property into the vendored copy; these tests document
+# the property contract and prevent silent regression.
+# ---------------------------------------------------------------------------
+
+
+def test_suspended_dates_property_returns_frozenset() -> None:
+    """suspended_dates returns a frozenset containing every loaded holiday date."""
+    cal = HolidayCalendar()
+    cal._holidays = {
+        date(2026, 1, 1): "New Year",
+        date(2026, 1, 19): "MLK Day",
+    }
+    result = cal.suspended_dates
+    assert type(result) is frozenset
+    assert date(2026, 1, 1) in result
+    assert date(2026, 1, 19) in result
+
+
+def test_suspended_dates_empty_before_load() -> None:
+    """A fresh HolidayCalendar() with no holidays loaded returns frozenset()."""
+    cal = HolidayCalendar()
+    assert cal.suspended_dates == frozenset()
