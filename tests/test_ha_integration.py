@@ -38,6 +38,17 @@ from gps2asp.suspension import SuspensionInfo, apply_suspension  # noqa: E402
 NYC_TZ = ZoneInfo("America/New_York")
 UTC_TZ = timezone.utc
 
+# Phase 36 SENSOR-01: mirror of custom_components/asp_parking/sensor.py _SIDE_LABELS.
+# Defined here (not imported) to avoid pulling in HA-dependent sensor.py at
+# collection time — test_ha_integration.py is designed to run without HA.
+# IMPORTANT: keep in sync with sensor._SIDE_LABELS manually if labels change.
+_SIDE_LABELS: dict[str, str] = {
+    "N": "North side",
+    "S": "South side",
+    "E": "East side",
+    "W": "West side",
+}
+
 
 def _format_move_time(dt: datetime) -> str:
     """Mirror of ASPNextMoveTimeSensor._format_move_time() for test helpers.
@@ -230,6 +241,10 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
         attrs["street_name"] = schedule.on_street
         attrs["cross_streets"] = f"{schedule.from_street} to {schedule.to_street}"
         attrs["side_of_street"] = schedule.side_of_street
+        # Phase 36 SENSOR-01: mirror production side_label logic (sensor.py lines 327-332).
+        # Omitted when side_of_street is not one of N/S/E/W — same as production.
+        if (side_label := _SIDE_LABELS.get(schedule.side_of_street)) is not None:
+            attrs["side_label"] = side_label
 
     if isinstance(schedule, ScheduleFound):
         if schedule.next_window is not None:
