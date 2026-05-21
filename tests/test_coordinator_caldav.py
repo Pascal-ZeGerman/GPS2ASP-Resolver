@@ -1049,3 +1049,71 @@ async def test_write_or_update_store_save_raises_caught_and_notifies(monkeypatch
     assert stub._caldav_write_error_notified is True, (
         "_caldav_write_error_notified must be True after async_save failure"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 35.1 Plan 06 — BUG-C-002 / BUG-C-003 / BUG-C-004 regression tests
+# ---------------------------------------------------------------------------
+
+
+async def test_caldav_write_re_checks_suspension_after_await(monkeypatch):
+    """BUG-C-002: suspension flipping True DURING write_or_update_event must
+    cause a delete-on-flip task to be spawned for the just-written UID.
+
+    Race scenario:
+      1. _async_caldav_write_or_update acquires the lock and confirms
+         is_suspended=False before the await.
+      2. caldav_sync.write_or_update_event() runs (network I/O);
+         meanwhile the suspension state flips to True (holiday-fired or
+         manual suspension during the same tick).
+      3. After the await returns with a new UID, the coordinator MUST
+         re-check suspension_state.is_suspended. If True, the event we
+         just wrote is now stale — spawn a delete task for new_uid.
+
+    RED expectation: no post-await re-check exists today; no delete task is
+    spawned. The test asserts both the delete task AND that the task name
+    contains 'delete_on_suspension_race', a literal Plan 06 must add.
+    """
+    _require_caldav_sync()
+    stub = _make_coord_stub_caldav()
+    schedule = stub.data.schedule_result
+
+    pn_create = MagicMock()
+    pn_dismiss = MagicMock()
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.components.persistent_notification",
+        SimpleNamespace(async_create=pn_create, async_dismiss=pn_dismiss),
+    )
+
+    new_uid = "race-uid@asp-parking.local"
+
+    async def _flip_suspension_then_return(**kwargs):
+        # Simulate the network call: while the await is in-flight, a
+        # concurrent code path (a holiday calendar refresh, a manual
+        # suspension service call, etc.) sets is_suspended=True.
+        stub.data.suspension_state = _make_suspension_info(is_suspended=True)
+        return new_uid
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.write_or_update_event",
+        new=_flip_suspension_then_return,
+    ):
+        write = _bind(stub, "_async_caldav_write_or_update")
+        await write(schedule)
+
+    # The coordinator must have spawned a delete task for the just-written UID
+    assert stub.entry.async_create_background_task.call_count == 1, (
+        "BUG-C-002: post-await suspension re-check must spawn exactly one "
+        f"delete-on-flip task; got {stub.entry.async_create_background_task.call_count}"
+    )
+    name = stub.entry.async_create_background_task.call_args.kwargs.get("name")
+    assert name is not None and "delete_on_suspension_race" in name, (
+        f"BUG-C-002: delete-on-flip task name must contain "
+        f"'delete_on_suspension_race'; got {name!r}"
+    )
+    # The delete task handle must be stored on the coordinator (used by tests
+    # and downstream lifecycle teardown).
+    assert stub._caldav_delete_task is not None, (
+        "BUG-C-002: _caldav_delete_task must reference the spawned delete task"
+    )
