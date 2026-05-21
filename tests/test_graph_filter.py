@@ -171,6 +171,60 @@ class TestStreetGraphLoad:
         graph = StreetGraph.load(index_dir=tmp_path)
         assert graph is None
 
+    def test_load_corrupt_graph_json_returns_none(
+        self, tmp_path: pytest.TempPathFactory, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """BUG-S-004: StreetGraph.load() returns None on malformed JSON.
+
+        A truncated/corrupt graph.json must NOT propagate JSONDecodeError —
+        L4 is best-effort, so the graceful degradation contract is
+        "log ERROR and return None" (same as the file-missing path).
+        """
+        import logging as _logging
+
+        # Write malformed JSON
+        bad_path = tmp_path / "graph.json"
+        bad_path.write_text("{not valid json", encoding="utf-8")
+
+        with caplog.at_level(_logging.ERROR, logger="gps2asp.signs"):
+            graph = StreetGraph.load(index_dir=tmp_path)
+
+        assert graph is None, (
+            "Corrupt graph.json must return None (not raise) so Level 4 "
+            "degrades gracefully — caller is StreetGraph.get(), which "
+            "stores the singleton."
+        )
+        # Verify the error path was exercised — message mentions corruption.
+        assert any(
+            "corrupt" in rec.message.lower() or "unreadable" in rec.message.lower()
+            for rec in caplog.records
+        ), (
+            f"Expected ERROR log mentioning 'corrupt' or 'unreadable'; "
+            f"got {[r.message for r in caplog.records]}"
+        )
+
+    def test_load_corrupt_graph_zst_returns_none(
+        self, tmp_path: pytest.TempPathFactory, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """BUG-S-004: StreetGraph.load() returns None on corrupt zst archive."""
+        import logging as _logging
+
+        bad_path = tmp_path / "graph.json.zst"
+        # Write bytes that are NOT a valid zstd frame
+        bad_path.write_bytes(b"\x00\x01\x02 not a zstd stream")
+
+        with caplog.at_level(_logging.ERROR, logger="gps2asp.signs"):
+            graph = StreetGraph.load(index_dir=tmp_path)
+
+        assert graph is None, "Corrupt graph.json.zst must return None"
+        assert any(
+            "corrupt" in rec.message.lower() or "unreadable" in rec.message.lower()
+            for rec in caplog.records
+        ), (
+            f"Expected ERROR log mentioning 'corrupt' or 'unreadable'; "
+            f"got {[r.message for r in caplog.records]}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # BFS on filtered graph
