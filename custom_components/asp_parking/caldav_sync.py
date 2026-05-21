@@ -138,6 +138,27 @@ class _CompatAsyncDAVClient:
                 )
 
     async def get_principal(self) -> _CompatPrincipal:
+        # BUG-C-005 (Phase 35.1 Plan 06): in some early caldav 2.x releases
+        # `DAVClient.principal` was exposed as a *property* — accessing it
+        # without an explicit call would skip the PROPFIND request and the
+        # shim would return the base DAV URL instead of the user's actual
+        # calendar-home URL (the documented Nextcloud failure mode).
+        #
+        # Empirical inspection of the installed caldav library at
+        # phase-close time (Plan 06, 2026-05-20) confirms `principal` is a
+        # plain callable method:
+        #     >>> type(caldav.DAVClient.__dict__['principal'])
+        #     <class 'function'>
+        # So `loop.run_in_executor(None, self._client.principal)` correctly
+        # passes the bound method to the executor, which then *calls* it
+        # and triggers the PROPFIND. No code change is required for the
+        # currently-installed caldav 3.x version; the comment is left here
+        # as a guard rail so a future caldav release that re-exposes
+        # `principal` as a property does not silently regress to the
+        # base-URL bug. If the inspection ever returns `<class 'property'>`
+        # again, change this line to
+        #     loop.run_in_executor(None, lambda: self._client.principal())
+        # to force the explicit call.
         loop = asyncio.get_running_loop()
         p = await loop.run_in_executor(None, self._client.principal)
         return _CompatPrincipal(p)

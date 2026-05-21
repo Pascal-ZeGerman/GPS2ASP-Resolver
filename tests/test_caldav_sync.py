@@ -1219,3 +1219,55 @@ async def test_compat_calendar_event_by_uid_wraps_result():
     sync_cal.event_by_uid.assert_called_once_with("abc@asp-parking.local")
     assert isinstance(result, _CompatEvent)
     assert result._evt is sync_evt
+
+
+async def test_compat_principal_invocation_pattern():
+    """BUG-C-005 (Phase 35.1 Plan 06): _CompatAsyncDAVClient.get_principal
+    must invoke the sync client's *callable* principal method (triggering a
+    PROPFIND) — not access a non-callable property that would silently
+    return the base DAV URL on Nextcloud.
+
+    The test wraps the shim's _client with a MagicMock whose `principal`
+    attribute is a callable that returns a sentinel. The test asserts:
+      1. The sentinel principal object is returned through _CompatPrincipal
+         (proving the executor actually invoked `principal()`).
+      2. `self._client.principal` was called exactly once (proving the
+         executor dispatch was a method invocation, not a property read).
+
+    Empirical context: at Plan 06 close time the installed caldav library
+    exposes `DAVClient.principal` as a plain function (verified via
+    `type(caldav.DAVClient.__dict__['principal']) is types.FunctionType`),
+    so the existing shim code is correct.  This test exists as a regression
+    guard against a future caldav release that re-exposes `principal` as
+    a property and silently regresses the Nextcloud base-URL bug.
+    """
+    from custom_components.asp_parking.caldav_sync import (
+        _CompatAsyncDAVClient,
+        _CompatPrincipal,
+    )
+
+    sentinel_principal = MagicMock(name="sentinel_principal_object")
+    mock_sync_client = MagicMock()
+    # principal must be a CALLABLE, not a property/value, for the executor
+    # invocation pattern to fire PROPFIND.
+    mock_sync_client.principal = MagicMock(return_value=sentinel_principal)
+
+    shim = _CompatAsyncDAVClient(url="https://srv/", username="u", password="p")
+    shim._client = mock_sync_client
+
+    result = await shim.get_principal()
+
+    assert isinstance(result, _CompatPrincipal), (
+        "get_principal must wrap the sync principal in _CompatPrincipal"
+    )
+    assert result._p is sentinel_principal, (
+        "The executor must have invoked self._client.principal() and the "
+        "returned object must round-trip through _CompatPrincipal"
+    )
+    assert mock_sync_client.principal.call_count == 1, (
+        "BUG-C-005 guard: self._client.principal must be CALLED exactly "
+        "once. If a future caldav release re-exposes principal as a "
+        "property, this assertion fails (the executor would simply read "
+        "the attribute) and the shim must be updated to use "
+        "`lambda: self._client.principal()`."
+    )
