@@ -66,15 +66,31 @@ class SpatialIndex:
 
         Args:
             index_dir: Optional path to the index directory. Only used on
-                first call; subsequent calls return the existing instance.
+                first call; subsequent calls with the same path (or with
+                ``index_dir=None``) return the existing instance. Calling
+                with a DIFFERENT path raises ``ValueError`` to surface stale
+                singleton bugs after an index rebuild (BUG-R-008). Call
+                ``SpatialIndex.reset()`` first to load from a new path.
 
         Returns:
             The loaded SpatialIndex singleton.
 
         Raises:
             IndexNotFoundError: If the index files are not found on disk.
+            ValueError: If ``index_dir`` is provided and differs from the
+                already-loaded ``_index_dir`` (BUG-R-008).
         """
         if cls._instance is not None:
+            if (
+                index_dir is not None
+                and Path(index_dir) != cls._instance._index_dir
+            ):
+                raise ValueError(
+                    f"SpatialIndex already loaded from "
+                    f"{cls._instance._index_dir}; cannot reload with "
+                    f"{Path(index_dir)} — call SpatialIndex.reset() first "
+                    f"(BUG-R-008)"
+                )
             return cls._instance
         if cls._lock is None:
             cls._lock = asyncio.Lock()
@@ -125,19 +141,25 @@ class SpatialIndex:
         self,
         x: float,
         y: float,
-        n: int = 5,
+        n: int = 25,
         max_distance_ft: float = 164.0,
     ) -> list[SegmentCandidate]:
         """Find the nearest street segments to a point.
 
-        Queries the R-tree for the n nearest segments, computes actual
-        Euclidean distances, filters by max_distance, and returns sorted
-        SegmentCandidate objects.
+        Queries the R-tree for the n bounding-box-nearest segments, computes
+        actual Euclidean (geometry) distances, filters by max_distance, and
+        returns SegmentCandidate objects sorted by geometry distance.
 
         Args:
             x: State Plane X coordinate (US survey feet).
             y: State Plane Y coordinate (US survey feet).
-            n: Number of nearest candidates to consider (default 5).
+            n: Number of bounding-box-nearest candidates to oversample
+                (default 25; BUG-R-005). ``rtree.nearest`` returns
+                bbox-nearest, NOT geometry-nearest. Long diagonal segments
+                (e.g. Broadway) have large bounding boxes that include the
+                query point's bbox at small n, while the actually-nearest
+                short orthogonal segment is missed. Oversampling to 25 lets
+                the post-sort by geometry distance return the true nearest.
             max_distance_ft: Maximum snap distance in feet (default 164 = ~50m).
 
         Returns:

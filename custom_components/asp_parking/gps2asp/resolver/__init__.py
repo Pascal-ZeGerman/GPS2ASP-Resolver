@@ -228,9 +228,14 @@ async def resolve_segment(
                 confidence=confidence,
             )
 
-        # Determine has_asp based on side. Both left/right are flagged
-        # conservatively (if any ASP sign exists on the segment, both are True).
-        has_asp = best.has_asp_left or best.has_asp_right
+        # BUG-R-002: has_asp MUST reflect the resolved side, not OR across both.
+        # Per side_resolver.determine_side: for the dominant orientations,
+        # cross > 0 returns N (E-running), W (N-running), S (W-running), E (S-running)
+        # — these are the "left of direction" sides. Therefore sides N and W map
+        # to the left-of-segment lane (has_asp_left) and sides S and E map to
+        # the right-of-segment lane (has_asp_right).
+        side_is_left = side in {"N", "W"}
+        has_asp = best.has_asp_left if side_is_left else best.has_asp_right
 
         return ResolutionResult(
             on_street=best.full_street_name,
