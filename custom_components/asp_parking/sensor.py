@@ -45,6 +45,21 @@ from .coordinator import ASPParkingCoordinator
 from .util import now_ha_local
 
 
+# Phase 36 SENSOR-01: cardinal-direction → human-readable label mapping.
+# Mirrors the _BOROUGH_NAMES precedent in coordinator.py:117 (typed dict[str, str],
+# module level, hardcoded English). Used by ASPNextMoveTimeSensor and
+# ASPResolvedStreetSensor to surface a display-friendly 'side_label' attribute
+# alongside the raw 'side_of_street' single-letter code (which remains unchanged
+# for backward compatibility). Unrecognized values cause the side_label key to
+# be omitted entirely (not inserted as None) — per locked SPEC edge case.
+_SIDE_LABELS: dict[str, str] = {
+    "N": "North side",
+    "S": "South side",
+    "E": "East side",
+    "W": "West side",
+}
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -309,6 +324,12 @@ class ASPNextMoveTimeSensor(SensorEntity):
             attrs["street_name"] = schedule.on_street
             attrs["cross_streets"] = f"{schedule.from_street} to {schedule.to_street}"
             attrs["side_of_street"] = schedule.side_of_street
+            # Phase 36 SENSOR-01: display-friendly cardinal label. Omitted when
+            # side_of_street is not one of N/S/E/W (per locked SPEC edge case).
+            if (
+                side_label := _SIDE_LABELS.get(schedule.side_of_street)
+            ) is not None:
+                attrs["side_label"] = side_label
 
         # --- Window group ---
         if isinstance(schedule, ScheduleFound):
@@ -490,7 +511,7 @@ class ASPResolvedStreetSensor(_ASPDiagnosticSensor):
         schedule = self._coordinator.data.schedule_result
         if not isinstance(schedule, (ScheduleFound, ASPActiveNow)):
             return {}
-        return {
+        attrs: dict[str, str | float | int | None] = {
             "from_street": schedule.from_street,
             "to_street": schedule.to_street,
             "side_of_street": schedule.side_of_street,
@@ -500,6 +521,11 @@ class ASPResolvedStreetSensor(_ASPDiagnosticSensor):
             "street_width_ft": self._coordinator.data.street_width_ft,
             "segment_id": self._coordinator.data.segment_id,
         }
+        # Phase 36 SENSOR-01: display-friendly cardinal label. Omitted when
+        # side_of_street is not one of N/S/E/W (per locked SPEC edge case).
+        if (side_label := _SIDE_LABELS.get(schedule.side_of_street)) is not None:
+            attrs["side_label"] = side_label
+        return attrs
 
 
 class ASPResolutionStatusSensor(_ASPDiagnosticSensor):
