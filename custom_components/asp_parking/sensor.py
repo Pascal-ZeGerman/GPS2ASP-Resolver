@@ -268,6 +268,12 @@ class ASPNextMoveTimeSensor(SensorEntity):
                     ].index(d),
                 )
                 attrs["cleaning_days"] = day_names
+            elif isinstance(schedule, ASPActiveNow):
+                # BUG-T-005 (Phase 35.1-05): minimum-viable; shows active cleaning day.
+                # When the schedule is ASPActiveNow we have only the active_window;
+                # surface its day so the UI never loses the cleaning_days chip on
+                # active-now mornings.
+                attrs["cleaning_days"] = [schedule.active_window.day.name.title()]
 
             # time_window_start/end: use next_window (the temporally-next window)
             # rather than windows[0] (the day-sorted first window), so these

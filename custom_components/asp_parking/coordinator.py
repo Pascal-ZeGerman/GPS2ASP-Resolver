@@ -243,8 +243,17 @@ class ASPParkingCoordinator:
         self._parking_lon: float | None = None
         self._parking_radius_m: int | None = None
         # Cache key: (on_street, from_street, to_street, side_of_street)
-        # Value: list of raw SODA records (may be empty list = NoMatchFound after lookup)
-        self._sign_cache: dict[tuple[str, str, str, str], list[dict]] = {}
+        # Value (BUG-S-007 / Phase 35.1-05): dict with two keys:
+        #   - "records": list of raw SODA records (may be empty after lookup
+        #     — empty currently skipped at write time, so all entries are
+        #     non-empty)
+        #   - "soda_level": int 1..4 — the SODA fallback level that produced
+        #     these records; propagated into materialize_cached_records() so
+        #     the sensor's soda_level attribute reflects the actual fallback
+        #     level rather than a hardcoded 1.
+        self._sign_cache: dict[
+            tuple[str, str, str, str], dict[str, list[dict] | int]
+        ] = {}
         self._preseed_task: asyncio.Task[None] | None = None
         self._unsub_cache_rebuild: CALLBACK_TYPE | None = None
 
@@ -1100,18 +1109,29 @@ class ASPParkingCoordinator:
                 resolution.to_street,
                 resolution.side_of_street,
             )
-            cached_records = self._sign_cache.get(cache_key)
-            if cached_records is not None:
-                # Cache hit — synthesize result from pre-fetched records, NO live call
+            cached_entry = self._sign_cache.get(cache_key)
+            if cached_entry is not None:
+                # Cache hit — synthesize result from pre-fetched records, NO live call.
+                # BUG-S-007 (Phase 35.1-05): extract both records and the SODA
+                # fallback level the records were produced at, so the sensor's
+                # soda_level attribute reflects reality (not hardcoded 1).
+                # .get("soda_level", 1) defends against legacy bare-list cache
+                # entries from rolling restarts during the schema migration.
+                cached_records = cached_entry["records"]
+                cached_level = cached_entry.get("soda_level", 1)
                 sign_result = materialize_cached_records(
                     cached_records,
                     on_street=resolution.on_street,
                     from_street=resolution.from_street,
                     to_street=resolution.to_street,
                     side_of_street=resolution.side_of_street,
-                    soda_level=1,
+                    soda_level=cached_level,
                 )
-                logger.debug("Phase 26: cache hit for %s", cache_key)
+                logger.debug(
+                    "Phase 26: cache hit for %s (level=%d)",
+                    cache_key,
+                    cached_level,
+                )
             else:
                 # Cache miss — existing path. D-04: do NOT write back.
                 sign_result = await retrieve_signs(
@@ -1332,7 +1352,11 @@ class ASPParkingCoordinator:
             return
 
         client = SODAClient()  # uses NYC_OPEN_DATA_APP_TOKEN env var if set
-        new_cache: dict[tuple[str, str, str, str], list[dict]] = {}
+        # BUG-S-007 (Phase 35.1-05): cache values are {records, soda_level} dicts.
+        # Pre-seed only runs Level 1 block queries, so soda_level=1 here.
+        new_cache: dict[
+            tuple[str, str, str, str], dict[str, list[dict] | int]
+        ] = {}
         for cand in candidates:
             # Normalize CSCL names to SODA format for the API query (Level 1),
             # matching the name expansion done by retrieve_signs() -> name_variants().
@@ -1362,14 +1386,15 @@ class ASPParkingCoordinator:
                 # Only cache non-empty results; empty = Level 1 miss, allow live L2/L3/L4 fallback
                 if not records:
                     continue
-                # Cache key uses canonical CSCL names to match the resolution result
+                # Cache key uses canonical CSCL names to match the resolution result.
+                # BUG-S-007: value is {records, soda_level} dict; pre-seed uses L1.
                 key = (
                     cand.full_street_name,
                     cand.from_street,
                     cand.to_street,
                     side,
                 )
-                new_cache[key] = records
+                new_cache[key] = {"records": records, "soda_level": 1}
 
         self._sign_cache = new_cache
         logger.info(

@@ -481,6 +481,10 @@ async def test_materialize_propagates_cached_soda_level(make_coordinator):
     benign_schedule.status = "schedule_found"
     benign_schedule.parse_failures = []
 
+    from custom_components.asp_parking.gps2asp.signs.models import (
+        SignRetrievalSuccess,
+    )
+
     with (
         patch(
             "custom_components.asp_parking.coordinator.resolve",
@@ -503,7 +507,10 @@ async def test_materialize_propagates_cached_soda_level(make_coordinator):
             new=AsyncMock(),
         ),
     ):
-        sign_result = MagicMock()
+        # spec=SignRetrievalSuccess so isinstance(sign_result, SignRetrievalSuccess)
+        # inside the coordinator returns True and self.data.soda_level is set
+        # from sign_result.soda_level (not reset to 0 in the non-Success branch).
+        sign_result = MagicMock(spec=SignRetrievalSuccess)
         sign_result.signs = []
         sign_result.soda_level = 3
         mock_materialize.return_value = sign_result
