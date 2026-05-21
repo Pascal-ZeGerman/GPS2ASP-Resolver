@@ -379,6 +379,28 @@ class TestFormatSummary:
         assert "AM" in result
         assert "PM" in result
 
+    def test_cross_midnight_truncated_window_human_readable(self) -> None:
+        """A 23:00-23:59:59 cross-midnight window (BUG-T-004) renders as 11 - 11:59 PM."""
+        # Phase 35.1 BUG-T-004: parser truncates cross-midnight windows at
+        # 23:59:59 so they remain same-day. The summary output must remain
+        # human-readable for Night Regulation signs like "11PM-MIDNIGHT".
+        schedule = WeeklySchedule(
+            windows=(
+                TimeWindow(
+                    day=ASPDay.MONDAY,
+                    start_time=time(23, 0),
+                    end_time=time(23, 59, 59),
+                    source_sign="cross-midnight",
+                ),
+            )
+        )
+        result = format_summary(schedule)
+        assert "MON" in result
+        assert "11" in result
+        assert "PM" in result
+        # Must not be empty/None or some other degenerate output.
+        assert len(result) > 5
+
 
 # ---------------------------------------------------------------------------
 # TestComputeSchedule (integration)

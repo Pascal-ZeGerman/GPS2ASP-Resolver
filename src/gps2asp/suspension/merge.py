@@ -49,7 +49,12 @@ def apply_suspension(
     elif info.source in ("emergency", "ha_nyc311"):
         resolution_reason = "suspended_emergency"
     else:
-        logger.debug(
+        # BUG-T-006: elevate unknown-source log to ERROR so HA diagnostics
+        # surface future-introduced sources (e.g. "weather", "construction")
+        # instead of silently mis-classifying them as holidays. The
+        # default-to-suspended_holiday behaviour is intentionally preserved
+        # for backward compatibility per RESEARCH.md.
+        logger.error(
             "apply_suspension: unknown source %r — defaulting to 'suspended_holiday'",
             info.source,
         )

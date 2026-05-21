@@ -164,9 +164,21 @@ def _get_fallback(year: int) -> dict[date, str]:
     """Return hardcoded fallback dates for the given year.
 
     Returns an empty dict for unknown years (fail open).
+
+    BUG-T-008: emits a single ERROR log for unknown years so HA diagnostics
+    surface the missing fallback. Pre-fix, the silent empty return caused
+    the integration to run as if no NYC holidays existed (e.g. waking the
+    user at 7 AM on Christmas in a year past the hardcoded fallback).
     """
     if year == 2026:
         return dict(FALLBACK_2026)
+    logger.error(
+        "No fallback holiday data for year %d; ASP integration will run as if "
+        "no NYC holidays exist. Please update FALLBACK_%d in "
+        "src/gps2asp/suspension/__init__.py.",
+        year,
+        year,
+    )
     return {}
 
 
@@ -189,6 +201,21 @@ async def _fetch_ics(year: int) -> bytes | None:
                 response.raise_for_status()
                 return response.content
             except (httpx.HTTPStatusError, httpx.TransportError) as exc:
+                # BUG-T-009: auth errors (401, 403) are not transient and
+                # must not be retried. Short-circuit with a single warning
+                # so HA diagnostics surface the auth problem instead of a
+                # multi-second retry loop. Matches NYC311Client convention.
+                if (
+                    isinstance(exc, httpx.HTTPStatusError)
+                    and exc.response.status_code in (401, 403)
+                ):
+                    logger.warning(
+                        "ICS fetch failed with auth error %d (%s); not retrying "
+                        "(auth errors are not transient)",
+                        exc.response.status_code,
+                        exc,
+                    )
+                    return None
                 delay = BASE_DELAY * (2**attempt)
                 if attempt < MAX_RETRIES - 1:
                     logger.warning(
