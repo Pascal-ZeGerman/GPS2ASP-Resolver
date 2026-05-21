@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
 
 from gps2asp.schedule import (
     AllUnparseable,
@@ -378,6 +379,28 @@ class TestFormatSummary:
         assert "AM" in result
         assert "PM" in result
 
+    def test_cross_midnight_truncated_window_human_readable(self) -> None:
+        """A 23:00-23:59:59 cross-midnight window (BUG-T-004) renders as 11 - 11:59 PM."""
+        # Phase 35.1 BUG-T-004: parser truncates cross-midnight windows at
+        # 23:59:59 so they remain same-day. The summary output must remain
+        # human-readable for Night Regulation signs like "11PM-MIDNIGHT".
+        schedule = WeeklySchedule(
+            windows=(
+                TimeWindow(
+                    day=ASPDay.MONDAY,
+                    start_time=time(23, 0),
+                    end_time=time(23, 59, 59),
+                    source_sign="cross-midnight",
+                ),
+            )
+        )
+        result = format_summary(schedule)
+        assert "MON" in result
+        assert "11" in result
+        assert "PM" in result
+        # Must not be empty/None or some other degenerate output.
+        assert len(result) > 5
+
 
 # ---------------------------------------------------------------------------
 # TestComputeSchedule (integration)
@@ -592,3 +615,114 @@ def test_find_next_window_no_suspended_dates_returns_today() -> None:
     assert result is not None
     assert result.start_datetime.date() == date(2026, 1, 12)
     assert result.start_time == time(9, 0)
+
+
+# ---------------------------------------------------------------------------
+# Phase 35.1 BUG-T-003: find_active_window two-layer contract
+#
+# Per RESEARCH.md Open Question 2, the chosen disposition is "keep the
+# late-merge pattern": find_active_window intentionally does NOT consult
+# suspended_dates. Suspension annotation is the responsibility of the
+# apply_suspension merge layer. This test pins the contract so it cannot
+# silently regress.
+# ---------------------------------------------------------------------------
+
+from gps2asp.suspension import SuspensionInfo  # noqa: E402
+from gps2asp.suspension.merge import apply_suspension  # noqa: E402
+
+
+def test_find_active_window_holiday_two_layer_contract() -> None:
+    """find_active_window returns the window unconditionally; apply_suspension flips suspended."""
+    # 2026-01-19 is Martin Luther King Jr. Day (Monday), a NYC ASP holiday.
+    schedule = WeeklySchedule(
+        windows=(
+            TimeWindow(
+                day=ASPDay.MONDAY,
+                start_time=time(9, 0),
+                end_time=time(10, 30),
+                source_sign="test-mlk",
+            ),
+        )
+    )
+    now = datetime(2026, 1, 19, 9, 30, tzinfo=NYC_TZ)
+
+    # Layer 1: find_active_window is suspension-unaware.
+    active = find_active_window(schedule, now)
+    assert active is not None
+    assert active.day == ASPDay.MONDAY
+
+    # Layer 2: apply_suspension annotates the result.
+    asp_active_now = ASPActiveNow(
+        status="asp_active_now",
+        active_window=active,
+        on_street="TEST ST",
+        from_street="1ST AVE",
+        to_street="2ND AVE",
+        side_of_street="N",
+        source_signs=["test-mlk"],
+        summary="MON 9 - 10:30 AM",
+    )
+    info = SuspensionInfo(is_suspended=True, reason="MLK Day", source="holiday")
+    merged = apply_suspension(asp_active_now, info)
+    assert isinstance(merged, ASPActiveNow)
+    assert merged.suspended is True
+    assert merged.suspension_reason == "MLK Day"
+    assert merged.resolution_reason == "suspended_holiday"
+
+
+# ---------------------------------------------------------------------------
+# Phase 35.1 BUG-T-002: find_next_window distinguishes failure causes
+#
+# Pre-fix, find_next_window logged a single generic warning regardless of
+# why no next window was found. Operators could not distinguish "schedule
+# is empty" from "all candidate days fell on a holiday". The fix
+# differentiates by setting a `had_any_windows` flag inside the loop and
+# emitting a cause-specific warning when no match is found.
+# ---------------------------------------------------------------------------
+
+
+import logging  # noqa: E402
+
+
+def test_find_next_window_distinguishes_empty_schedule(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Empty WeeklySchedule logs 'no windows in schedule' and returns None."""
+    schedule = WeeklySchedule(windows=())
+    now = datetime(2026, 2, 23, 15, 0, tzinfo=NYC_TZ)
+
+    with caplog.at_level(logging.WARNING, logger="gps2asp.schedule.next_move"):
+        result = find_next_window(schedule, now=now)
+
+    assert result is None
+    assert any(
+        "no windows in schedule" in r.message.lower() for r in caplog.records
+    ), f"Expected 'no windows in schedule' warning, got: {[r.message for r in caplog.records]}"
+
+
+def test_find_next_window_distinguishes_all_suspended(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """All candidate dates suspended logs the cause-specific warning and returns None."""
+    # Monday-only schedule; suspended_dates covers every date in the 8-day window.
+    schedule = WeeklySchedule(
+        windows=(
+            TimeWindow(
+                day=ASPDay.MONDAY,
+                start_time=time(9, 0),
+                end_time=time(10, 30),
+                source_sign="test",
+            ),
+        )
+    )
+    now = datetime(2026, 2, 23, 15, 0, tzinfo=NYC_TZ)
+    suspended = frozenset({now.date() + timedelta(days=i) for i in range(8)})
+
+    with caplog.at_level(logging.WARNING, logger="gps2asp.schedule.next_move"):
+        result = find_next_window(schedule, now=now, suspended_dates=suspended)
+
+    assert result is None
+    assert any(
+        "suspended" in r.message.lower() and "candidate" in r.message.lower()
+        for r in caplog.records
+    ), f"Expected 'all candidate ... suspended' warning, got: {[r.message for r in caplog.records]}"

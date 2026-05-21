@@ -123,7 +123,8 @@ class ScheduleFound:
     Attributes:
         status: Discriminator literal "schedule_found".
         next_window: The next upcoming ASP cleaning window, or None if no
-            upcoming window found within 7 days.
+            upcoming window found within the 8-calendar-day lookahead
+            (today + 7 future days). See find_next_window. (BUG-T-001.)
         weekly_schedule: Full parsed weekly schedule (all days/windows).
         on_street: Street name in CSCL format.
         from_street: Cross street at one end.
