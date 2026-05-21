@@ -1117,3 +1117,61 @@ async def test_caldav_write_re_checks_suspension_after_await(monkeypatch):
     assert stub._caldav_delete_task is not None, (
         "BUG-C-002: _caldav_delete_task must reference the spawned delete task"
     )
+
+
+def test_caldav_config_missing_url_raises_value_error():
+    """BUG-C-003: CalDAVConfig.from_options(options_without_url) must raise
+    a *clear* ValueError, not a opaque KeyError.
+
+    Today caldav_sync.CalDAVConfig.from_options uses a bare subscript
+    `options[CONF_CALDAV_URL]`. When the user has not yet entered a URL
+    (or removed it between resolves), this raises KeyError, which surfaces
+    to the coordinator's broad `except Exception` and produces a generic
+    "CalDAV sync failed" notification with no actionable hint.
+
+    Fix is to use `options.get(CONF_CALDAV_URL, "")`, which lets the
+    __post_init__ validator emit the precise "CalDAVConfig.url must not be
+    empty" ValueError. This RED test pins the contract: ValueError, not
+    KeyError.
+    """
+    _require_caldav_sync()
+    cs = _caldav_sync  # already validated non-None by the line above
+    # Options dict with EVERY CalDAV key except the URL itself.
+    options = {
+        CONF_CALDAV_USERNAME: "user",
+        CONF_CALDAV_PASSWORD: "pw",
+        CONF_CALDAV_CALENDAR: "https://example.com/dav/cal/",
+        CONF_CALDAV_SAFETY_WINDOW: 15,
+        CONF_CALDAV_EVENT_TITLE_TEMPLATE: "ASP: {street}",
+    }
+    with pytest.raises(ValueError):
+        cs.CalDAVConfig.from_options(options)
+
+
+async def test_no_caldav_task_when_no_uid_and_no_window():
+    """BUG-C-004: when both _caldav_uid is None AND schedule.next_window is None,
+    _async_caldav_hook_after_resolve must NOT spawn a delete task.
+
+    Pipeline-per-run no-op: a fresh integration (no stored UID) hitting a
+    No-ASP block (no next_window) was spawning an
+    asp_parking_caldav_delete_on_move task that immediately returned with
+    nothing to do — wasted task per resolve.
+
+    Fix is to guard the delete-spawn with `if self._caldav_uid is not None:`.
+    """
+    stub = _make_coord_stub_caldav(caldav_uid=None, is_suspended=False)
+    # Build a schedule object that resembles NoASPSchedule (no next_window)
+    no_window_schedule = SimpleNamespace(status="no_asp_schedule", next_window=None)
+
+    hook = _bind(stub, "_async_caldav_hook_after_resolve")
+    await hook(no_window_schedule)
+
+    assert stub.entry.async_create_background_task.call_count == 0, (
+        "BUG-C-004: with _caldav_uid=None AND next_window=None the hook "
+        "must NOT spawn any delete task; got "
+        f"{stub.entry.async_create_background_task.call_count}"
+    )
+    assert stub._caldav_delete_task is None, (
+        "BUG-C-004: _caldav_delete_task must remain None when there is "
+        "nothing to delete"
+    )
