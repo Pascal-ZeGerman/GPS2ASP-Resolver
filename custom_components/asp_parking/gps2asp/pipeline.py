@@ -6,6 +6,7 @@ entry point that wires the four pipeline stages together.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal, overload
 
 from .api_models import ASPDebugResult, ASPResult
@@ -23,6 +24,7 @@ async def resolve_asp(
     lon: float,
     debug: Literal[False] = ...,
     suspension_status: SuspensionInfo | None = ...,
+    suspended_dates: frozenset[date] | None = ...,
 ) -> ASPResult: ...  # lgtm[py/ineffectual-statement]
 
 
@@ -32,6 +34,7 @@ async def resolve_asp(
     lon: float,
     debug: Literal[True],
     suspension_status: SuspensionInfo | None = ...,
+    suspended_dates: frozenset[date] | None = ...,
 ) -> ASPDebugResult: ...  # lgtm[py/ineffectual-statement]
 
 
@@ -40,6 +43,7 @@ async def resolve_asp(
     lon: float,
     debug: bool = False,
     suspension_status: SuspensionInfo | None = None,
+    suspended_dates: frozenset[date] | None = None,
 ) -> ASPResult | ASPDebugResult:
     """Resolve GPS coordinates to an ASP schedule.
 
@@ -94,7 +98,7 @@ async def resolve_asp(
     )
 
     # Stage 3: signs -> schedule
-    schedule = compute_schedule(sign_result)
+    schedule = compute_schedule(sign_result, suspended_dates=suspended_dates)
 
     # Stage 4: apply suspension annotation (optional, post-pipeline)
     if suspension_status is not None:
