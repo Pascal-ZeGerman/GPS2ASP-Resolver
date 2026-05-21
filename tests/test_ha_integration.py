@@ -1449,7 +1449,93 @@ def test_resolved_street_sensor_exposes_phase_30_diagnostic_attributes() -> None
     assert "from_street" in attrs
     assert "to_street" in attrs
     assert "side_of_street" in attrs
+    assert attrs["side_label"] == "North side"
     assert "confidence_score" in attrs
+
+
+# ---------------------------------------------------------------------------
+# Phase 36 SENSOR-01: side_label attribute on ASPResolvedStreetSensor
+# ---------------------------------------------------------------------------
+
+
+def _build_resolved_street_sensor_with_side(side_of_street: str):
+    """Build an ASPResolvedStreetSensor wired to a vendored ScheduleFound.
+
+    Mirrors test_resolved_street_sensor_exposes_phase_30_diagnostic_attributes
+    but parameterizes side_of_street so callers can exercise N/S/E/W and
+    unrecognized values.
+    """
+    from unittest.mock import MagicMock
+
+    from custom_components.asp_parking.sensor import ASPResolvedStreetSensor
+    from custom_components.asp_parking.gps2asp.schedule.models import (
+        ScheduleFound as VendoredScheduleFound,
+        WeeklySchedule as VendoredWeeklySchedule,
+    )
+
+    schedule = VendoredScheduleFound(
+        status="schedule_found",
+        next_window=None,
+        weekly_schedule=VendoredWeeklySchedule(windows=()),
+        on_street="PROSPECT PLACE",
+        from_street="VANDERBILT AVENUE",
+        to_street="UNDERHILL AVENUE",
+        side_of_street=side_of_street,
+        source_signs=["NO PARKING 8:30AM-10AM MON"],
+        summary="Mon 8:30-10am",
+        parse_failures=[],
+    )
+
+    coord = MagicMock()
+    coord.data = ASPParkingData()
+    coord.data.borough = "Brooklyn"
+    coord.data.distance_ft = 12.34
+    coord.data.street_width_ft = 30.0
+    coord.data.segment_id = 987654
+    coord.data.confidence_score = 0.85
+    coord.data.schedule_result = schedule
+    coord.entry = MagicMock()
+    coord.entry.entry_id = "test_entry_p36"
+
+    return ASPResolvedStreetSensor(coord)
+
+
+@pytest.mark.ha_integration
+@pytest.mark.parametrize(
+    "letter,expected",
+    [
+        ("N", "North side"),
+        ("S", "South side"),
+        ("E", "East side"),
+        ("W", "West side"),
+    ],
+)
+def test_resolved_street_sensor_side_label_mapping_covers_all_four_directions(
+    letter: str, expected: str
+) -> None:
+    """Phase 36 SENSOR-01: ASPResolvedStreetSensor.extra_state_attributes
+    surfaces side_label='<Direction> side' for each of N/S/E/W.
+
+    The raw side_of_street attribute is preserved unchanged (backward compat).
+    """
+    sensor = _build_resolved_street_sensor_with_side(letter)
+    attrs = sensor.extra_state_attributes
+    assert attrs["side_of_street"] == letter
+    assert attrs["side_label"] == expected
+
+
+@pytest.mark.ha_integration
+def test_resolved_street_sensor_omits_side_label_for_unrecognized_letter() -> None:
+    """Phase 36 SENSOR-01 / locked SPEC edge case: unrecognized side_of_street
+    (e.g. 'X') causes side_label key to be OMITTED from extra_state_attributes —
+    NOT inserted as None. The raw side_of_street attribute is still present
+    with the unrecognized value.
+    """
+    sensor = _build_resolved_street_sensor_with_side("X")
+    attrs = sensor.extra_state_attributes
+    assert "side_of_street" in attrs
+    assert attrs["side_of_street"] == "X"
+    assert "side_label" not in attrs
 
 
 @pytest.mark.ha_integration

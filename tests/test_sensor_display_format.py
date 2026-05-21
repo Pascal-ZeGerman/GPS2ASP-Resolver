@@ -34,6 +34,7 @@ import datetime as dt
 import inspect
 from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -44,6 +45,21 @@ from homeassistant.util import dt as dt_util
 # COLLECT-TIME CONTRACT: importing now_ha_local from util.py is the single
 # blocker that Plan 32-02 satisfies. Do NOT silence the import error.
 from custom_components.asp_parking.util import now_ha_local
+
+# Phase 36 SENSOR-01: import the production sensor + _SIDE_LABELS dict.
+# Until Plan 36-01 Task 2 ships _SIDE_LABELS, this import RAISES ImportError
+# at collection time — that is the RED gate for TestSideLabel.
+from custom_components.asp_parking.sensor import (
+    ASPNextMoveTimeSensor,
+    _SIDE_LABELS,
+)
+from custom_components.asp_parking.gps2asp.schedule.models import (
+    ScheduleFound as VendoredScheduleFound,
+    WeeklySchedule as VendoredWeeklySchedule,
+)
+from custom_components.asp_parking.gps2asp.suspension import (
+    SuspensionInfo as VendoredSuspensionInfo,
+)
 
 # Reuse the test_ha_integration helpers and the local ASPParkingData mirror.
 # tests/__init__.py exists, so this works as a sibling import.
@@ -441,6 +457,146 @@ class TestNewBooleanAttributes:
         assert "next_move_is_tomorrow" in attrs
         assert attrs["next_move_is_today"] is False
         assert attrs["next_move_is_tomorrow"] is False
+
+
+# ===========================================================================
+# Class 5.5: Phase 36 SENSOR-01 — _SIDE_LABELS + side_label sensor attribute
+# ===========================================================================
+
+
+def _build_vendored_schedule_found(side_of_street: str) -> VendoredScheduleFound:
+    """Construct a vendored ScheduleFound with the given side_of_street value.
+
+    ASPNextMoveTimeSensor.extra_state_attributes uses ``isinstance(schedule,
+    (ScheduleFound, ASPActiveNow))`` against the VENDORED classes — so this
+    helper uses the vendored ScheduleFound, mirroring the pattern in
+    tests/test_ha_integration.py:1402-1410 for the resolved-street sensor.
+    """
+    return VendoredScheduleFound(
+        status="schedule_found",
+        next_window=None,
+        weekly_schedule=VendoredWeeklySchedule(windows=()),
+        on_street="PROSPECT PLACE",
+        from_street="VANDERBILT AVENUE",
+        to_street="UNDERHILL AVENUE",
+        side_of_street=side_of_street,
+        source_signs=["NO PARKING 8:30AM-10AM MON"],
+        summary="Mon 8:30-10am",
+        parse_failures=[],
+    )
+
+
+def _build_next_move_sensor_with_side(side_of_street: str) -> ASPNextMoveTimeSensor:
+    """Build an ASPNextMoveTimeSensor whose schedule has side_of_street=<value>.
+
+    Wires a MagicMock coordinator with a minimal .data namespace that
+    ``extra_state_attributes`` reads (schedule_result + suspension_state +
+    diagnostic fields). The coordinator's ``data.last_gps_update`` is set to
+    None so the available/stale-timeout branches do not fire during attribute
+    reads.
+    """
+    schedule = _build_vendored_schedule_found(side_of_street)
+
+    coord = MagicMock()
+    coord.entry = MagicMock()
+    coord.entry.entry_id = "test_entry_p36"
+    coord.entry.options = {}
+
+    data = SimpleNamespace()
+    data.schedule_result = schedule
+    data.suspension_state = VendoredSuspensionInfo(
+        is_suspended=False, reason=None, source="none"
+    )
+    data.last_resolved = None
+    data.last_gps_update = None
+    data.last_error = None
+    data.last_error_time = None
+    data.confidence_score = None
+    data.sign_count = 0
+    data.parse_failures = 0
+    data.soda_level = 0
+    data.borough = None
+    data.distance_ft = None
+    data.street_width_ft = None
+    data.segment_id = None
+    data.last_lat = None
+    data.last_lon = None
+    data.last_notified_window = None
+    data.special_state = None
+    coord.data = data
+
+    return ASPNextMoveTimeSensor(coord)
+
+
+@pytest.mark.ha_integration
+class TestSideLabel:
+    """Phase 36 SENSOR-01: _SIDE_LABELS + side_label attribute on next-move sensor.
+
+    The four cardinal-direction letters must map to ``"<Direction> side"``
+    strings exposed on ``ASPNextMoveTimeSensor.extra_state_attributes`` as
+    ``side_label``. Any unrecognized value (including ``""`` and ``"X"``)
+    causes the ``side_label`` key to be OMITTED entirely (per locked SPEC
+    edge case — NOT inserted as ``None``).
+    """
+
+    def test_side_labels_constant_exists(self) -> None:
+        """_SIDE_LABELS maps exactly N/S/E/W to full cardinal labels (D-03)."""
+        assert _SIDE_LABELS == {
+            "N": "North side",
+            "S": "South side",
+            "E": "East side",
+            "W": "West side",
+        }
+        assert all(isinstance(k, str) for k in _SIDE_LABELS)
+        assert all(isinstance(v, str) for v in _SIDE_LABELS.values())
+
+    def test_side_label_present_for_north_on_next_move_sensor(self) -> None:
+        """side_of_street='N' → side_label='North side' AND raw letter preserved."""
+        sensor = _build_next_move_sensor_with_side("N")
+        attrs = sensor.extra_state_attributes
+        assert attrs["side_of_street"] == "N"
+        assert attrs["side_label"] == "North side"
+
+    @pytest.mark.parametrize(
+        "letter,expected",
+        [
+            ("N", "North side"),
+            ("S", "South side"),
+            ("E", "East side"),
+            ("W", "West side"),
+        ],
+    )
+    def test_side_label_mapping_covers_all_four_directions_on_next_move_sensor(
+        self, letter: str, expected: str
+    ) -> None:
+        """All four cardinal letters resolve to '<Direction> side'."""
+        sensor = _build_next_move_sensor_with_side(letter)
+        attrs = sensor.extra_state_attributes
+        assert attrs["side_of_street"] == letter
+        assert attrs["side_label"] == expected
+
+    def test_side_label_omitted_when_unrecognized_letter_on_next_move_sensor(
+        self,
+    ) -> None:
+        """Unknown letter (e.g. 'X') → side_label key ABSENT, raw letter still present.
+
+        Per locked SPEC: the key is OMITTED, not set to None.
+        """
+        sensor = _build_next_move_sensor_with_side("X")
+        attrs = sensor.extra_state_attributes
+        assert "side_of_street" in attrs
+        assert attrs["side_of_street"] == "X"
+        assert "side_label" not in attrs
+
+    def test_side_label_omitted_when_side_of_street_empty_string_on_next_move_sensor(
+        self,
+    ) -> None:
+        """Empty string side_of_street → side_label key ABSENT (no falsy '' fallback)."""
+        sensor = _build_next_move_sensor_with_side("")
+        attrs = sensor.extra_state_attributes
+        assert "side_of_street" in attrs
+        assert attrs["side_of_street"] == ""
+        assert "side_label" not in attrs
 
 
 # ===========================================================================
