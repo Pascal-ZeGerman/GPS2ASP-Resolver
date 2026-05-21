@@ -494,11 +494,13 @@ _BROOM_SIGN_RECORD = {
 
 
 async def test_level_4_activates_when_levels_1_2_3_return_nothing() -> None:
-    """Level 4 fires when Levels 1-3 produce no SODA results at all.
+    """Level 4 fires when Levels 1-3 produce no SODA results for our block.
 
-    Setup: SODAClient returns no records for exact/variant queries but
-    returns records on the broad on_street query. StreetGraph.get() returns
-    a graph that picks the best span, and _try_query returns SignRetrievalSuccess.
+    BUG-S-001: L4 now reuses L3's broad-query records instead of issuing a
+    duplicate HTTP call. The fixture therefore returns broad_records on the
+    L3 broad query, and L3's client-side filter rejects them (cross-streets
+    in the records do not match our block's CSCL cross-streets verbatim),
+    so control falls through to L4 which reuses the prefetched records.
     """
     graph = _make_graph()
 
@@ -508,18 +510,19 @@ async def test_level_4_activates_when_levels_1_2_3_return_nothing() -> None:
     mock_client = MagicMock()
     mock_client.build_block_query.return_value = "mock_block_query"
     mock_client.build_on_street_query.return_value = "mock_broad_query"
-    # fetch_signs: empty for block queries (Levels 1+2), records for broad query (Level 3+4)
+    # fetch_signs: empty for block query (L1), records for broad query (L3 stash → L4 reuse)
     mock_client.fetch_signs = AsyncMock(
         side_effect=[
             [],  # Level 1 block query
-            [],  # Level 3 broad query (Level 2 has no extra combos for single-variant names)
-            broad_records,  # Level 4 broad query
+            broad_records,  # Level 3 broad query (L4 reuses these — BUG-S-001 dedup)
         ]
     )
 
     with (
         patch("gps2asp.signs.SODAClient", return_value=mock_client),
         patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+        # Force L3 client-filter rejection so flow reaches L4
+        patch("gps2asp.signs._cross_streets_match", return_value=False),
     ):
         result = await retrieve_signs(
             on_street="BROADWAY",
@@ -590,6 +593,10 @@ async def test_level_4_returns_all_records_including_non_broom() -> None:
     retrieve_signs() does not filter for SANITATION BROOM signs -- that
     filtering happens downstream in the schedule parser. When Level 4 finds a
     reachable best span, it returns all records from that span as-is.
+
+    BUG-S-001: L4 now reuses L3's broad records (single HTTP call), so the
+    mock fixture provides records on L3 and forces L3's client-filter to
+    reject (via patched _cross_streets_match) so flow reaches L4.
     """
     graph = _make_graph()
 
@@ -609,14 +616,14 @@ async def test_level_4_returns_all_records_including_non_broom() -> None:
     mock_client.fetch_signs = AsyncMock(
         side_effect=[
             [],  # Level 1 block query
-            [],  # Level 3 broad query
-            non_broom_records,  # Level 4 broad query
+            non_broom_records,  # Level 3 broad query (L4 reuses — BUG-S-001 dedup)
         ]
     )
 
     with (
         patch("gps2asp.signs.SODAClient", return_value=mock_client),
         patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+        patch("gps2asp.signs._cross_streets_match", return_value=False),
     ):
         result = await retrieve_signs(
             on_street="BROADWAY",
@@ -730,7 +737,11 @@ async def test_l4_entry_logged_once_before_loop() -> None:
 
 
 async def test_l4_match_log_includes_span_fields() -> None:
-    """When Level 4 finds a covering span, the l4_match log contains span_from, span_to, and signs."""
+    """When Level 4 finds a covering span, the l4_match log contains span_from, span_to, and signs.
+
+    BUG-S-001 dedup: L4 reuses L3's broad records — mock fixture returns
+    records on the L3 broad query and forces L3's client-filter to reject.
+    """
     graph = _make_graph()
     broad_records = [dict(_BROOM_SIGN_RECORD)]
 
@@ -740,8 +751,7 @@ async def test_l4_match_log_includes_span_fields() -> None:
     mock_client.fetch_signs = AsyncMock(
         side_effect=[
             [],
-            [],
-            broad_records,
+            broad_records,  # Level 3 broad (L4 reuses these)
         ]
     )
 
@@ -754,6 +764,7 @@ async def test_l4_match_log_includes_span_fields() -> None:
         with (
             patch("gps2asp.signs.SODAClient", return_value=mock_client),
             patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+            patch("gps2asp.signs._cross_streets_match", return_value=False),
         ):
             await retrieve_signs(
                 on_street="BROADWAY",
@@ -779,7 +790,11 @@ async def test_l4_match_log_includes_span_fields() -> None:
 
 
 async def test_l4_no_span_log_includes_span_candidates() -> None:
-    """When broad query returns records but no reachable span, l4_no_span is logged with span_candidates."""
+    """When broad query returns records but no reachable span, l4_no_span is logged with span_candidates.
+
+    BUG-S-001 dedup: L4 reuses L3's broad records — mock fixture returns
+    records on the L3 broad query and forces L3's client-filter to reject.
+    """
     graph = _make_graph()
     # Use records from a disconnected sub-graph so _find_best_covering_span returns None
     unreachable_records = [
@@ -797,8 +812,7 @@ async def test_l4_no_span_log_includes_span_candidates() -> None:
     mock_client.fetch_signs = AsyncMock(
         side_effect=[
             [],
-            [],
-            unreachable_records,
+            unreachable_records,  # Level 3 broad (L4 reuses these)
         ]
     )
 
@@ -811,6 +825,7 @@ async def test_l4_no_span_log_includes_span_candidates() -> None:
         with (
             patch("gps2asp.signs.SODAClient", return_value=mock_client),
             patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+            patch("gps2asp.signs._cross_streets_match", return_value=False),
         ):
             await retrieve_signs(
                 on_street="BROADWAY",
@@ -886,6 +901,12 @@ async def test_all_l4_events_share_common_prefix() -> None:
 
     This test drives all four code paths and confirms the common prefix makes
     them all greppable together in HA logs.
+
+    BUG-S-001 dedup: L4 reuses L3's broad records (single HTTP call), so each
+    path sets up the mock to return records on the L3 broad query and forces
+    L3's client-filter to reject (via patched _cross_streets_match). Path 3
+    (l4_no_records) is the empty-records case which still results in L3
+    stashing [] and L4 reusing it.
     """
     graph = _make_graph()
     broad_records = [dict(_BROOM_SIGN_RECORD)]
@@ -908,10 +929,11 @@ async def test_all_l4_events_share_common_prefix() -> None:
         mock_client = MagicMock()
         mock_client.build_block_query.return_value = "mock_block_query"
         mock_client.build_on_street_query.return_value = "mock_broad_query"
-        mock_client.fetch_signs = AsyncMock(side_effect=[[], [], broad_records])
+        mock_client.fetch_signs = AsyncMock(side_effect=[[], broad_records])
         with (
             patch("gps2asp.signs.SODAClient", return_value=mock_client),
             patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+            patch("gps2asp.signs._cross_streets_match", return_value=False),
         ):
             await retrieve_signs("BROADWAY", "72 STREET", "73 STREET", "N")
 
@@ -919,10 +941,11 @@ async def test_all_l4_events_share_common_prefix() -> None:
         mock_client2 = MagicMock()
         mock_client2.build_block_query.return_value = "mock_block_query"
         mock_client2.build_on_street_query.return_value = "mock_broad_query"
-        mock_client2.fetch_signs = AsyncMock(side_effect=[[], [], unreachable_records])
+        mock_client2.fetch_signs = AsyncMock(side_effect=[[], unreachable_records])
         with (
             patch("gps2asp.signs.SODAClient", return_value=mock_client2),
             patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
+            patch("gps2asp.signs._cross_streets_match", return_value=False),
         ):
             await retrieve_signs("BROADWAY", "72 STREET", "73 STREET", "N")
 
@@ -930,7 +953,7 @@ async def test_all_l4_events_share_common_prefix() -> None:
         mock_client3 = MagicMock()
         mock_client3.build_block_query.return_value = "mock_block_query"
         mock_client3.build_on_street_query.return_value = "mock_broad_query"
-        mock_client3.fetch_signs = AsyncMock(side_effect=[[], [], []])
+        mock_client3.fetch_signs = AsyncMock(side_effect=[[], []])
         with (
             patch("gps2asp.signs.SODAClient", return_value=mock_client3),
             patch("gps2asp.signs.graph.StreetGraph.get", return_value=graph),
