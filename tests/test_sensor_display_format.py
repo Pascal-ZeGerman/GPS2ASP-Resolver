@@ -723,3 +723,53 @@ class TestFormatMoveTimeEightDaysOut:
                 f"Expected 'Tuesday (5/26), 8:30 AM' for 8-days-out window; "
                 f"got {result!r}"
             )
+
+
+# ===========================================================================
+# Class 13: BUG-T-005 (Phase 35.1-05) — ASPActiveNow exposes cleaning_days
+# ===========================================================================
+
+
+@pytest.mark.ha_integration
+class TestASPActiveNowExposesCleaningDays:
+    """BUG-T-005: when schedule is ASPActiveNow, sensor attrs must include
+    cleaning_days derived from active_window.day.
+
+    Before the fix, the attribute branch only emits cleaning_days when
+    schedule has a weekly_schedule (ScheduleFound). ASPActiveNow sets
+    weekly = None and silently drops cleaning_days from the sensor —
+    a regression observable in the UI as a vanishing chip on holiday-
+    cleared/active-now mornings.
+
+    Fix: in the ASPActiveNow branch, populate
+    ``attrs["cleaning_days"] = [active_window.day.name.title()]``.
+    """
+
+    def test_sensor_active_now_exposes_cleaning_days_monday(self) -> None:
+        """ASPActiveNow on MONDAY must surface cleaning_days = ['Monday']."""
+        window = _make_cleaning_window(day=ASPDay.MONDAY)
+        schedule = _make_asp_active_now(window)
+        data = ASPParkingData(schedule_result=schedule)
+
+        attrs = sensor_extra_attributes(data)
+
+        assert "cleaning_days" in attrs, (
+            "ASPActiveNow branch must populate cleaning_days "
+            "(BUG-T-005: previously dropped)"
+        )
+        assert attrs["cleaning_days"] == ["Monday"], (
+            f"Expected ['Monday'] from active_window.day.name.title(); "
+            f"got {attrs['cleaning_days']!r}"
+        )
+
+    def test_sensor_active_now_exposes_cleaning_days_thursday(self) -> None:
+        """ASPActiveNow on THURSDAY must surface cleaning_days = ['Thursday']."""
+        window = _make_cleaning_window(day=ASPDay.THURSDAY)
+        schedule = _make_asp_active_now(window)
+        data = ASPParkingData(schedule_result=schedule)
+
+        attrs = sensor_extra_attributes(data)
+
+        assert attrs.get("cleaning_days") == ["Thursday"], (
+            f"Expected ['Thursday']; got {attrs.get('cleaning_days')!r}"
+        )
