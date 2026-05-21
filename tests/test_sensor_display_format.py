@@ -504,6 +504,11 @@ def _build_next_move_sensor_with_side(side_of_street: str) -> ASPNextMoveTimeSen
 
     data = SimpleNamespace()
     data.schedule_result = schedule
+    # Use the vendored SuspensionInfo explicitly (not the canonical gps2asp one)
+    # so class identity aligns with apply_suspension() in sensor.py, which also
+    # imports from the vendored path (.gps2asp.suspension).  If the canonical
+    # class were used here, an isinstance() guard inside apply_suspension would
+    # fall through the wrong branch (WR-02).
     data.suspension_state = VendoredSuspensionInfo(
         is_suspended=False, reason=None, source="none"
     )
