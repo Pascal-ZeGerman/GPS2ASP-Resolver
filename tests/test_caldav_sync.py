@@ -706,11 +706,20 @@ def test_caldav_config_from_options_happy_path():
     assert cfg.title_template == "Parking: {street}"
 
 
-def test_caldav_config_from_options_missing_url_raises_key_error():
-    """from_options raises KeyError when CONF_CALDAV_URL is absent."""
+def test_caldav_config_from_options_missing_url_raises_value_error():
+    """from_options raises ValueError when CONF_CALDAV_URL is absent.
+
+    BUG-C-003 (Phase 35.1 Plan 06): the original Phase 34 implementation
+    used a bare `options[CONF_CALDAV_URL]` subscript that raised KeyError,
+    which surfaced to the coordinator's broad `except Exception` as a
+    generic "CalDAV sync failed" notification. The fix routes the
+    missing-URL case through __post_init__'s explicit
+    `CalDAVConfig.url must not be empty` ValueError so the user sees a
+    clear, actionable failure.
+    """
     from custom_components.asp_parking.caldav_sync import CalDAVConfig
 
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="url must not be empty"):
         CalDAVConfig.from_options({})
 
 
@@ -1057,11 +1066,17 @@ def test_caldav_config_post_init_large_safety_window_no_raise():
     assert cfg.safety_window_minutes == 9999
 
 
-def test_caldav_config_from_options_missing_url_key_error():
-    """Edge 11: CalDAVConfig.from_options({}) → KeyError (bare subscript on missing CONF_CALDAV_URL)."""
+def test_caldav_config_from_options_missing_url_value_error():
+    """Edge 11: CalDAVConfig.from_options({}) → ValueError (BUG-C-003 fix).
+
+    Phase 34 used a bare `options[CONF_CALDAV_URL]` subscript that raised
+    KeyError; Phase 35.1 Plan 06 replaced it with `options.get(..., "")`
+    so the missing-URL case flows through __post_init__'s explicit
+    `CalDAVConfig.url must not be empty` ValueError.
+    """
     from custom_components.asp_parking.caldav_sync import CalDAVConfig
 
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="url must not be empty"):
         CalDAVConfig.from_options({})
 
 

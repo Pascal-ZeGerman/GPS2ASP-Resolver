@@ -225,7 +225,14 @@ class CalDAVConfig:
         )
 
         return cls(
-            url=options[CONF_CALDAV_URL],
+            # BUG-C-003: use options.get() (not bare subscript). A missing
+            # CONF_CALDAV_URL key used to raise an opaque KeyError that
+            # surfaced as a generic "CalDAV sync failed" notification;
+            # .get(default="") routes through __post_init__'s explicit
+            # `CalDAVConfig.url must not be empty` ValueError so the user
+            # (and downstream `except ValueError` callers) see a clear,
+            # actionable failure.
+            url=options.get(CONF_CALDAV_URL, ""),
             username=options.get(CONF_CALDAV_USERNAME, ""),
             password=options.get(CONF_CALDAV_PASSWORD, ""),
             calendar_url=options.get(CONF_CALDAV_CALENDAR, ""),

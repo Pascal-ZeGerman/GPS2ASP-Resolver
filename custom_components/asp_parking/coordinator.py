@@ -943,13 +943,22 @@ class ASPParkingCoordinator:
                 name="asp_parking_caldav_write",
             )
         else:
-            # No active window (NoASPSchedule, NoMatchSchedule, etc.) — delete any stale event
-            _uid_snapshot = self._caldav_uid
-            self._caldav_delete_task = self.entry.async_create_background_task(
-                self.hass,
-                ASPParkingCoordinator._async_caldav_delete_current(self, _uid_snapshot),
-                name="asp_parking_caldav_delete_on_move",
-            )
+            # No active window (NoASPSchedule, NoMatchSchedule, etc.) — delete any stale event.
+            # BUG-C-004: only spawn a delete task when there is actually a UID
+            # to delete. Without this guard a fresh integration with no stored
+            # event would spawn an asp_parking_caldav_delete_on_move task on
+            # every No-ASP resolve; the task immediately returned (uid=None
+            # short-circuit inside _async_caldav_delete_current), wasting one
+            # background task per pipeline run.
+            if self._caldav_uid is not None:
+                _uid_snapshot = self._caldav_uid
+                self._caldav_delete_task = self.entry.async_create_background_task(
+                    self.hass,
+                    ASPParkingCoordinator._async_caldav_delete_current(
+                        self, _uid_snapshot
+                    ),
+                    name="asp_parking_caldav_delete_on_move",
+                )
 
     async def _maybe_delete_caldav_on_move(self) -> None:
         """Safety-window guard: delete CalDAV event when the car has moved early.
