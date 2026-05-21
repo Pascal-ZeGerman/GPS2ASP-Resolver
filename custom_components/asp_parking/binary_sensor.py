@@ -21,7 +21,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .gps2asp.schedule.models import ASPActiveNow
 from .gps2asp.suspension import apply_suspension
 
-from .const import DOMAIN
+from .const import DOMAIN, VERSION
 from .coordinator import ASPParkingCoordinator
 
 
@@ -77,7 +77,7 @@ class ASPActiveNowBinarySensor(BinarySensorEntity):
             name="ASP Parking Monitor",
             manufacturer="GPS2ASP",
             model="ASP Schedule Resolver",
-            sw_version="0.1.0",
+            sw_version=VERSION,
         )
 
     @property
@@ -144,7 +144,7 @@ class ASPIndexRebuildingBinarySensor(BinarySensorEntity):
             name="ASP Parking Monitor",
             manufacturer="GPS2ASP",
             model="ASP Schedule Resolver",
-            sw_version="0.1.0",
+            sw_version=VERSION,
         )
 
     @property

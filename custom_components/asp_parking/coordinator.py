@@ -305,12 +305,20 @@ class ASPParkingCoordinator:
     def _get_now(self) -> datetime:
         """Return debug datetime override when active, otherwise real now.
 
-        Per D-08: replaces datetime.now(NYC_TZ) for ALL time-sensitive
+        Per D-08: returns the debug datetime override for ALL time-sensitive
         coordinator operations when debug mode is active.
+
+        BUG-H-005 (Phase 35.1-05): In normal mode, delegate to ``dt_util.now()``
+        — Home Assistant's configured timezone — instead of
+        ``datetime.now(NYC_TZ)``. This matches the project convention
+        (MEMORY.md: "Use dt_util.now() (HA configured TZ) not hardcoded
+        NYC_TZ for day-boundary display labels") and lets the coordinator
+        respect a non-NYC HA installation timezone for downstream day/week
+        boundary computations.
         """
         if self._debug_enabled and self._debug_datetime is not None:
             return self._debug_datetime
-        return datetime.now(NYC_TZ)
+        return dt_util.now()
 
     # ------------------------------------------------------------------
     # Lifecycle

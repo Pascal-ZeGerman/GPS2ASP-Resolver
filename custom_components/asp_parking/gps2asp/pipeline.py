@@ -53,6 +53,18 @@ async def resolve_asp(
     rather than propagating. All other errors (OutsideNYCError, NoSegmentFoundError,
     network failures) propagate to the caller.
 
+    Note:
+        Exception handling is intentionally asymmetric: AmbiguousResolutionError
+        is captured into the result structure (the caller receives a None
+        schedule + resolution_error string), while OutsideNYCError,
+        NoSegmentFoundError, and SODAAPIError propagate to the caller. This
+        split allows the HA coordinator to distinguish user-visible confidence
+        failures (in-band, surfaced as a sensor attribute) from infrastructural
+        failures (out-of-band, surfaced as exceptions and logged). Library
+        callers that prefer uniform handling can wrap the call in their own
+        try/except — but the asymmetry is the documented contract and must
+        not be "normalised" by capturing all exceptions into ASPResult.
+
     Args:
         lat: Latitude in WGS84.
         lon: Longitude in WGS84.
