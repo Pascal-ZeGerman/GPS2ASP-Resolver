@@ -42,6 +42,7 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.33
 # NYC-informed estimates; code constant (not runtime-configurable) per user decision.
 # rw_type meanings from CSCL data dictionary (VEHICULAR_RW_TYPES = {1,2,3,4,5})
 _NYC_DEFAULT_WIDTHS: dict[int, float] = {
+    0: 30.0,  # rw_type missing from CSCL (legacy / under-coded segments) — IN-04
     1: 30.0,  # Street — typical NYC residential/commercial block (~30ft curb-to-curb)
     2: 60.0,  # Highway / expressway (~60ft, multiple lanes)
     3: 60.0,  # Bridge — conservative wide estimate (~60ft deck width)
