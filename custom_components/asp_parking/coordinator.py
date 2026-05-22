@@ -1438,8 +1438,18 @@ class ASPParkingCoordinator:
 
     @callback
     def _async_suspension_poll(self, now: datetime) -> None:
-        """Periodic suspension status check."""
-        self.hass.async_create_task(self._async_update_suspension())
+        """Periodic suspension status check.
+
+        WR-01: bind the task to the config entry so HA auto-cancels it on
+        config-entry unload. Previously used ``self.hass.async_create_task``
+        which leaks the in-flight network call past ``async_stop()`` and
+        triggers "task was destroyed while it is pending" warnings on reload.
+        """
+        self.entry.async_create_background_task(
+            self.hass,
+            self._async_update_suspension(),
+            name="asp_parking_suspension_poll",
+        )
 
     async def _async_update_suspension(self) -> None:
         """Fetch suspension status from all sources and update data.
