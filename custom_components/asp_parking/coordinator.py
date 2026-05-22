@@ -58,7 +58,7 @@ from .gps2asp.suspension import HolidayCalendar, NYC311Client, SuspensionInfo
 from .gps2asp.suspension.poller import NYC311AuthError
 
 from . import caldav_sync
-from .caldav_sync import CalDAVConfig
+from .caldav_sync import CalDAVConfig, _sanitise as _caldav_sanitise
 from .const import (
     CONF_CALDAV_CALENDAR,
     CONF_CALDAV_PASSWORD,
@@ -860,15 +860,11 @@ class ASPParkingCoordinator:
                     )
                     return
             except Exception as err:  # noqa: BLE001
-                sanitised = str(err)
                 _pw = self.entry.options.get(CONF_CALDAV_PASSWORD, "")
                 _un = self.entry.options.get(CONF_CALDAV_USERNAME, "")
-                if _pw:
-                    sanitised = sanitised.replace(_pw, "***")
-                if _un:
-                    sanitised = sanitised.replace(_un, "***")
+                sanitised = _caldav_sanitise(str(err), _pw, _un)
                 logger.warning(
-                    "ASP Parking: CalDAV write failed: %s", sanitised, exc_info=True
+                    "ASP Parking: CalDAV write failed: %s", sanitised
                 )
                 if not self._caldav_write_error_notified:
                     _display = sanitised[:200] + ("…" if len(sanitised) > 200 else "")
@@ -936,13 +932,9 @@ class ASPParkingCoordinator:
                     pn_dismiss(self.hass, "asp_parking_caldav_delete_error")
                     self._caldav_delete_error_notified = False
             except Exception as err:  # noqa: BLE001
-                sanitised = str(err)
-                if password:
-                    sanitised = sanitised.replace(password, "***")
-                if username:
-                    sanitised = sanitised.replace(username, "***")
+                sanitised = _caldav_sanitise(str(err), password, username)
                 logger.warning(
-                    "ASP Parking: CalDAV delete failed: %s", sanitised, exc_info=True
+                    "ASP Parking: CalDAV delete failed: %s", sanitised
                 )
                 # Finding 3: separate flag + notification ID from write path.
                 if not self._caldav_delete_error_notified:
