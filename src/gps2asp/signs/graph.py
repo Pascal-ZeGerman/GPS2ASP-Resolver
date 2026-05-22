@@ -167,9 +167,17 @@ class StreetGraph:
         for pid in start_pids:
             queue.append((pid, 0))
 
+        # WR-06: track whether the loop exits due to depth limit truncation
+        # vs queue drain. Both cases currently return ``float("inf")`` and
+        # the caller (`_find_best_covering_span`) silently logs `l4_no_span`
+        # -- with no diagnostic to distinguish "graph genuinely has no path"
+        # from "BFS truncated at _BFS_DEPTH_LIMIT". This kills L4 coverage
+        # silently on long avenues (Broadway: ~150 blocks).
+        hit_depth_limit = False
         while queue:
             pid, depth = queue.popleft()
             if depth >= _BFS_DEPTH_LIMIT:
+                hit_depth_limit = True
                 continue
 
             for neighbor_int in self.adjacency.get(pid, []):
@@ -181,6 +189,12 @@ class StreetGraph:
                     return depth + 1
                 queue.append((neighbor, depth + 1))
 
+        if hit_depth_limit:
+            logger.debug(
+                "BFS hit depth limit %d before exhausting queue; "
+                "consider raising _BFS_DEPTH_LIMIT for long avenues",
+                _BFS_DEPTH_LIMIT,
+            )
         return float("inf")
 
     def span_distance(
