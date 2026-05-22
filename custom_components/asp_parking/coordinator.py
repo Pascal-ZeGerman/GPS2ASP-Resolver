@@ -461,7 +461,11 @@ class ASPParkingCoordinator:
         api_key = self.entry.options.get(CONF_NYC311_API_KEY)
         if api_key:
             self._nyc311_client = NYC311Client(api_key=api_key)
-            self.hass.async_create_task(self._async_initial_311_fetch())
+            self.entry.async_create_background_task(
+                self.hass,
+                self._async_initial_311_fetch(),
+                name="asp_parking_initial_311_fetch",
+            )
 
         unsub_suspension = async_track_time_interval(
             self.hass,
