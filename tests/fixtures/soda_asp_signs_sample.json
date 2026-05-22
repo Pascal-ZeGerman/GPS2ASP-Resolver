@@ -1,0 +1,26 @@
+[
+  {
+    "on_street": "VANDERBILT AVENUE",
+    "from_street": "PROSPECT PLACE",
+    "to_street": "PARK PLACE",
+    "side_of_street": "E"
+  },
+  {
+    "on_street": "PROSPECT PLACE",
+    "from_street": "VANDERBILT AVENUE",
+    "to_street": "UNDERHILL AVENUE",
+    "side_of_street": "N"
+  },
+  {
+    "on_street": "PROSPECT PLACE",
+    "from_street": "VANDERBILT AVENUE",
+    "to_street": "UNDERHILL AVENUE",
+    "side_of_street": "S"
+  },
+  {
+    "on_street": "BROADWAY",
+    "from_street": "WEST 79 STREET",
+    "to_street": "WEST 80 STREET",
+    "side_of_street": "W"
+  }
+]
