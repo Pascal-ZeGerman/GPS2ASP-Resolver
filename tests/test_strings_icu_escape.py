@@ -34,9 +34,10 @@ def _load_strings() -> dict:
     return json.loads(_STRINGS_PATH.read_text(encoding="utf-8"))
 
 
-def test_caldav_event_title_template_is_icu_escaped() -> None:
+@pytest.mark.parametrize("strings_path", [_STRINGS_PATH, _EN_PATH])
+def test_caldav_event_title_template_is_icu_escaped(strings_path: Path) -> None:
     """The caldav_event_title_template description must use '{street}' (ICU-escaped)."""
-    data = _load_strings()
+    data = json.loads(strings_path.read_text(encoding="utf-8"))
     description = data["options"]["step"]["caldav"]["data_description"][
         "caldav_event_title_template"
     ]
@@ -72,6 +73,7 @@ def test_strings_and_en_json_byte_identical() -> None:
     )
 
 
+@pytest.mark.parametrize("strings_path", [_STRINGS_PATH, _EN_PATH])
 @pytest.mark.parametrize(
     "key_path",
     [
@@ -79,14 +81,14 @@ def test_strings_and_en_json_byte_identical() -> None:
         ("options", "error", "caldav_invalid_template"),
     ],
 )
-def test_no_raw_curly_placeholders(key_path: tuple) -> None:
+def test_no_raw_curly_placeholders(key_path: tuple, strings_path: Path) -> None:
     """No unescaped {street}/{time}/{side} placeholders may appear in caldav strings.
 
     After ICU-escaping, any occurrence of {street}, {time}, or {side} in
     these strings must be wrapped in single quotes — i.e. ``'{street}'``,
     never bare ``{street}``.
     """
-    data = _load_strings()
+    data = json.loads(strings_path.read_text(encoding="utf-8"))
     value = data
     for part in key_path:
         value = value[part]
