@@ -103,6 +103,8 @@ from .const import (
     BUTTON_DOUBLE_PRESS_WINDOW_HOURS,
     INDEX_DOWNLOAD_URL,
     REMOTE_FRESH_DAYS,
+    STALE_CHECK_INTERVAL_HOURS,
+    STALE_INDEX_DAYS,
 )
 from .index_io import (
     INDEX_DIR,
@@ -590,6 +592,14 @@ class ASPParkingCoordinator:
             _sync_read_build_timestamp, INDEX_DIR
         )
 
+        # Phase 38 Plan 03 (IDX-07 + IDX-05 persistence): init the
+        # asp_parking_index_stale Store with a FIXED key, hydrate
+        # last_button_press / last_stale_check, spawn the startup
+        # fire-and-forget stale-check (D-01), and register the daily 24h
+        # interval (D-02).  Must run AFTER _last_rebuilt is populated so
+        # the startup task can compare against the actual index age.
+        await self._async_init_stale_lifecycle()
+
         logger.info(
             "ASP Parking coordinator started: tracking %s, "
             "movement threshold %.0fm, refresh every %dh",
@@ -905,6 +915,140 @@ class ASPParkingCoordinator:
             )
             self._remote_age_cache = (dt_util.utcnow(), None)
             return None
+
+    # ------------------------------------------------------------------
+    # Phase 38 Plan 03: stale detection lifecycle (IDX-07 + IDX-05 persistence)
+    # ------------------------------------------------------------------
+
+    async def _async_init_stale_lifecycle(self) -> None:
+        """Initialise the index-stale Store, hydrate state, wire startup + daily check.
+
+        SPEC §Requirement 3: Store uses a FIXED key
+        (``"asp_parking_index_stale"``) — NOT per-entry-id — so the
+        24h double-press window and last_stale_check are shared across
+        any future multi-entry installs.
+
+        Wiring sequence (called from ``async_start`` after ``_last_rebuilt``
+        is populated):
+
+          1. Construct ``Store(self.hass, version=1, key="asp_parking_index_stale")``
+          2. ``async_load`` payload; hydrate ``_last_button_press`` and
+             ``_last_stale_check`` if the payload is a dict with the expected
+             keys.  Non-dict payloads emit a WARNING and fall back to None.
+          3. D-01: spawn a fire-and-forget startup background task running
+             ``_async_check_stale_and_rebuild`` (no args) via
+             ``entry.async_create_background_task``.
+          4. D-02: register a daily 24h ``async_track_time_interval``
+             pointing at the SAME helper; unsub appended to
+             ``self._listeners`` so ``async_stop`` cleans it up.
+        """
+        self._index_stale_store = Store(
+            self.hass, version=1, key="asp_parking_index_stale"
+        )
+        raw = await self._index_stale_store.async_load()
+        if isinstance(raw, dict):
+            lbp_raw = raw.get("last_button_press")
+            lsc_raw = raw.get("last_stale_check")
+            self._last_button_press = (
+                dt_util.parse_datetime(lbp_raw) if lbp_raw else None
+            )
+            self._last_stale_check = (
+                dt_util.parse_datetime(lsc_raw) if lsc_raw else None
+            )
+        else:
+            if raw is not None:
+                logger.warning(
+                    "asp_parking: index_stale store contained unexpected type "
+                    "%s; discarding",
+                    type(raw).__name__,
+                )
+            self._last_button_press = None
+            self._last_stale_check = None
+
+        # D-01: startup fire-and-forget background task.
+        self.entry.async_create_background_task(
+            self.hass,
+            self._async_check_stale_and_rebuild(),
+            name="asp_parking_index_stale_check_startup",
+        )
+
+        # D-02: daily 24h interval — same helper as the startup task.
+        unsub_stale = async_track_time_interval(
+            self.hass,
+            self._async_check_stale_and_rebuild,
+            timedelta(hours=STALE_CHECK_INTERVAL_HOURS),
+        )
+        self._listeners.append(unsub_stale)
+
+    async def _async_check_stale_and_rebuild(
+        self, now: datetime | None = None
+    ) -> None:
+        """Shared startup + daily-interval stale-check helper.
+
+        Pitfall 12: the callback must accept BOTH zero args (startup
+        fire-and-forget background task) AND a single positional
+        ``datetime`` (``async_track_time_interval`` invokes with
+        ``now: datetime``).  The default ``now=None`` makes both calling
+        conventions valid.
+
+        Branch semantics:
+          * ``_last_rebuilt is None`` → first-install guard; skip rebuild,
+            skip notification, but still persist ``last_stale_check``
+            so the check progresses on every run.
+          * ``age <= STALE_INDEX_DAYS`` → fresh; skip silently (no
+            notification, no rebuild).  Boundary: exactly 60 days
+            is NOT stale (SPEC "> 60 days" is strict-less).
+          * ``self._is_rebuilding`` → rebuild already in progress; skip
+            trigger (also skips notification to avoid double-notify).
+          * Otherwise → post ``"asp_parking_index_stale"`` notification
+            AND await ``async_request_rebuild(triggered_by="stale_check")``
+            (D-03: stale_check skips the 24h double-press anchor).
+
+        ``last_stale_check`` is always written inside the ``finally``
+        block — every branch advances the Store record.
+        """
+        try:
+            if self._last_rebuilt is None:
+                logger.debug(
+                    "ASP Parking: stale check skipped (_last_rebuilt is None)"
+                )
+                return
+            age = dt_util.utcnow() - self._last_rebuilt
+            if age <= timedelta(days=STALE_INDEX_DAYS):
+                return
+            if self._is_rebuilding:
+                logger.debug(
+                    "ASP Parking: stale check skipped (rebuild already in progress)"
+                )
+                return
+            # Lazy import (matches the rebuild-method pattern in this file).
+            from homeassistant.components.persistent_notification import (
+                async_create as pn_create,
+            )
+            pn_create(
+                self.hass,
+                (
+                    f"Spatial index is {age.days} days old (threshold: "
+                    f"{STALE_INDEX_DAYS} days). Auto-rebuilding in the background."
+                ),
+                title="ASP Parking: Index is stale",
+                notification_id="asp_parking_index_stale",
+            )
+            await self.async_request_rebuild(triggered_by="stale_check")
+        finally:
+            # SPEC AC: always write last_stale_check on every code path.
+            self._last_stale_check = dt_util.utcnow()
+            if self._index_stale_store is not None:
+                await self._index_stale_store.async_save(
+                    {
+                        "last_button_press": (
+                            self._last_button_press.isoformat()
+                            if self._last_button_press
+                            else None
+                        ),
+                        "last_stale_check": self._last_stale_check.isoformat(),
+                    }
+                )
 
     # ------------------------------------------------------------------
     # ha-nyc311 bridge helpers

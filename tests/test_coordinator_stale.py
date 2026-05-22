@@ -197,8 +197,14 @@ async def test_boundary_60_days_is_not_stale(pn_module: SimpleNamespace):
 
     SPEC wording "> 60 days" = strict-less; the helper uses
     ``age <= timedelta(days=STALE_INDEX_DAYS)`` to skip.
+
+    Note: We pull the timestamp 1 second younger than the strict 60d
+    mark so the elapsed micro-clock between fixture setup and the
+    helper's ``dt_util.utcnow()`` read does not push age over the
+    boundary.  The next test (`test_61_days_is_stale`) covers the
+    strictly-older case.
     """
-    sixty = datetime.now(timezone.utc) - timedelta(days=STALE_INDEX_DAYS)
+    sixty = datetime.now(timezone.utc) - timedelta(days=STALE_INDEX_DAYS, seconds=-1)
     stub = _make_coord_stub_stale(last_rebuilt=sixty)
     check = _bind(stub, "_async_check_stale_and_rebuild")
     await check()
@@ -444,6 +450,9 @@ async def test_async_start_initializes_index_stale_store_with_fixed_key(
     )
 
     stub = _make_coord_stub_stale(last_rebuilt=None)
+    # Bind the helper so _async_init_stale_lifecycle can spawn the
+    # startup background task referencing self._async_check_stale_and_rebuild.
+    stub._async_check_stale_and_rebuild = _bind(stub, "_async_check_stale_and_rebuild")
     init_lifecycle = _bind(stub, "_async_init_stale_lifecycle")
     await init_lifecycle()
 
@@ -483,6 +492,7 @@ async def test_async_start_hydrates_last_button_press_from_store(
     )
 
     stub = _make_coord_stub_stale(last_rebuilt=None)
+    stub._async_check_stale_and_rebuild = _bind(stub, "_async_check_stale_and_rebuild")
     init_lifecycle = _bind(stub, "_async_init_stale_lifecycle")
     await init_lifecycle()
 
@@ -517,6 +527,7 @@ async def test_async_start_spawns_startup_background_task(
     )
 
     stub = _make_coord_stub_stale(last_rebuilt=None)
+    stub._async_check_stale_and_rebuild = _bind(stub, "_async_check_stale_and_rebuild")
     init_lifecycle = _bind(stub, "_async_init_stale_lifecycle")
     await init_lifecycle()
 
@@ -558,6 +569,7 @@ async def test_async_start_registers_daily_interval(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(coord_mod, "async_track_time_interval", interval_spy)
 
     stub = _make_coord_stub_stale(last_rebuilt=None)
+    stub._async_check_stale_and_rebuild = _bind(stub, "_async_check_stale_and_rebuild")
     init_lifecycle = _bind(stub, "_async_init_stale_lifecycle")
     await init_lifecycle()
 
@@ -601,6 +613,7 @@ async def test_store_corrupt_payload_falls_back_to_none(
     )
 
     stub = _make_coord_stub_stale(last_rebuilt=None)
+    stub._async_check_stale_and_rebuild = _bind(stub, "_async_check_stale_and_rebuild")
     init_lifecycle = _bind(stub, "_async_init_stale_lifecycle")
     caplog.set_level(logging.WARNING, logger="custom_components.asp_parking.coordinator")
     await init_lifecycle()
