@@ -16,6 +16,9 @@ _INTEGRATION_DIR = Path(__file__).resolve().parent.parent / "custom_components" 
 _STRINGS_PATH = _INTEGRATION_DIR / "strings.json"
 _EN_PATH = _INTEGRATION_DIR / "translations" / "en.json"
 
+# Phase 31 byte-identity guard (strings.json == translations/en.json) lives in
+# tests/test_strings_icu_escape.py — no need to repeat it here.
+
 
 def test_config_step_titles_exact() -> None:
     """All 3 config-flow step titles must equal their exact Step N of 3: ... strings."""
@@ -66,7 +69,7 @@ def test_options_step_titles_not_prefixed() -> None:
     options_steps = data["options"]["step"]
     for step_key, step_val in options_steps.items():
         title = step_val.get("title", "")
-        assert not title.startswith("Step"), (
+        assert not title.lower().startswith("step"), (
             f"Phase 37 boundary violation: options.step.{step_key}.title starts "
-            f"with 'Step'. Options-flow titles are out of scope. Got: {title!r}"
+            f"with 'step' (case-insensitive). Options-flow titles are out of scope. Got: {title!r}"
         )
