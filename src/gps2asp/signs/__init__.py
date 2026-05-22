@@ -86,11 +86,14 @@ def materialize_cached_records(
 
     Used by the HA coordinator's parking-area sign cache to deliver
     the same result shape as retrieve_signs() without making a network
-    call. Empty `records` => NoMatchFound; records present but all
-    sign_description fields are empty after stripping => NoASPSigns;
-    otherwise SignRetrievalSuccess. NOTE: This function does NOT filter
-    by SANITATION BROOM — callers must ensure records are already
-    BROOM-filtered before passing them here.
+    call. Empty `records` => NoMatchFound; records present but after
+    deduplication and SANITATION BROOM filtering no signs remain =>
+    NoASPSigns; otherwise SignRetrievalSuccess.
+
+    NOTE: This function applies a defensive SANITATION BROOM filter (IN-03).
+    Callers should pass BROOM-filtered records from ``build_block_query`` for
+    efficiency; the in-function filter is a defence-in-depth guard against
+    future callers that bypass ``build_block_query``.
 
     Args:
         records: Raw SODA API record dicts as returned by SODAClient.fetch_signs.
