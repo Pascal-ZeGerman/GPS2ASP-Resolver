@@ -436,9 +436,13 @@ class ASPParkingCoordinator:
                 self._caldav_uid = raw.get("uid")
             else:
                 if raw is not None:
+                    # IN-05: include entry_id so multi-entry installs can
+                    # identify which entry's store is corrupted.
                     logger.warning(
-                        "CalDAV store contained unexpected type %s; discarding",
+                        "CalDAV store contained unexpected type %s for "
+                        "entry_id=%s; discarding",
                         type(raw).__name__,
+                        self.entry.entry_id,
                     )
                 self._caldav_uid = None
 
