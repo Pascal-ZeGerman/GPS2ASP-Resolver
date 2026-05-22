@@ -14,8 +14,11 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
+
+import httpx
 
 from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE
 from homeassistant.core import (
@@ -95,11 +98,16 @@ from .const import (
     DEFAULT_SUSPENSION_INTERVAL,
     DOMAIN,
     GPS_DEBOUNCE_COOLDOWN,
+    GITHUB_INDEX_RELEASE_TAG,
+    GITHUB_RELEASES_API_BASE,
+    BUTTON_DOUBLE_PRESS_WINDOW_HOURS,
     INDEX_DOWNLOAD_URL,
+    REMOTE_FRESH_DAYS,
 )
 from .index_io import (
     INDEX_DIR,
     _sync_atomic_swap,
+    _sync_build_from_source,
     _sync_cleanup_stale,
     _sync_download_and_extract,
     _sync_read_build_timestamp,
@@ -121,6 +129,17 @@ _BOROUGH_NAMES: dict[str, str] = {
     "4": "Queens",
     "5": "Staten Island",
 }
+
+
+class RebuildPath(Enum):
+    """Phase 38 (IDX-05): which executor strategy services a rebuild request.
+
+    DOWNLOAD       — fast-path GitHub release zip (_sync_download_and_extract)
+    FROM_SOURCE    — full CSCL rebuild from live API (_sync_build_from_source)
+    """
+
+    DOWNLOAD = "download"
+    FROM_SOURCE = "from_source"
 
 
 @dataclass
@@ -264,6 +283,18 @@ class ASPParkingCoordinator:
         self._rebuild_task: asyncio.Task[None] | None = None
         self._rebuild_lock: asyncio.Lock = asyncio.Lock()
         self._last_rebuilt: datetime | None = None
+
+        # Phase 38: dual-path rebuild + stale detection (IDX-05).
+        # ``_index_stale_store`` is initialised by Plan 03 in ``async_start``;
+        # this plan writes through it defensively when present so the
+        # 24h double-press window survives HA restarts once Plan 03 lands.
+        # ``_remote_age_cache`` caches the GitHub Releases response for
+        # 10 minutes to absorb the 60-req/hour anonymous rate limit
+        # (RESEARCH Pitfall 2).
+        self._index_stale_store: Store | None = None
+        self._last_button_press: datetime | None = None
+        self._last_stale_check: datetime | None = None
+        self._remote_age_cache: tuple[datetime, float | None] | None = None
 
         # Phase 34: CalDAV calendar sync (CALDAV-03..CALDAV-06).
         # Lock is constructed inside __init__ (NOT at class scope — Pitfall 2).
@@ -580,20 +611,52 @@ class ASPParkingCoordinator:
     # Phase 33: index rebuild orchestration (IDX-01..IDX-04)
     # ------------------------------------------------------------------
 
-    async def async_request_rebuild(self) -> None:
+    async def async_request_rebuild(self, *, triggered_by: str = "button") -> None:
         """Public entry point: fire-and-forget spawn of the rebuild task.
 
         IDX-02 concurrent-press protection: if a rebuild is already in
         progress, this is a no-op (the flag is the gate; the lock alone
         would only serialize a second press behind the first one).
 
+        Args:
+            triggered_by: One of ``"button"`` (default — applies the
+                24h double-press override per IDX-05) or ``"stale_check"``
+                (skips the 24h override per D-03).  ``button.py`` calls
+                with no args so the default keeps existing call sites
+                byte-identical.
+
         RESEARCH Pitfall 1: uses ``entry.async_create_background_task`` so
         the task is auto-cancelled when the config entry is unloaded —
         ``async_stop`` does not need explicit handling.
         """
         if self._is_rebuilding:
-            logger.info("ASP Parking: rebuild already in progress -- press ignored")
+            logger.info(
+                "ASP Parking: rebuild already in progress (triggered_by=%s) "
+                "-- request ignored",
+                triggered_by,
+            )
             return
+
+        # Phase 38 / SPEC Requirement 1.6: write ``last_button_press``
+        # BEFORE spawning so a second press during a running rebuild
+        # still sees a recent press.  Stale-check requests MUST NOT
+        # touch this anchor (D-03 — button-only double-press window).
+        # The Store itself is owned by Plan 03; this plan writes through
+        # it defensively if hydrated, otherwise is a no-op.
+        if triggered_by == "button":
+            self._last_button_press = dt_util.utcnow()
+            if self._index_stale_store is not None:
+                await self._index_stale_store.async_save(
+                    {
+                        "last_button_press": self._last_button_press.isoformat(),
+                        "last_stale_check": (
+                            self._last_stale_check.isoformat()
+                            if self._last_stale_check
+                            else None
+                        ),
+                    }
+                )
+
         # Set the flag BEFORE spawning so a second call during the same
         # event-loop turn cannot bypass the guard (CR-01 / IDX-02).
         self._is_rebuilding = True
@@ -604,15 +667,15 @@ class ASPParkingCoordinator:
         # self._async_do_rebuild() since `self` is an ASPParkingCoordinator.
         self._rebuild_task = self.entry.async_create_background_task(
             self.hass,
-            ASPParkingCoordinator._async_do_rebuild(self),
+            ASPParkingCoordinator._async_do_rebuild(self, triggered_by=triggered_by),
             name="asp_parking_index_rebuild",
         )
 
-    async def _async_do_rebuild(self) -> None:
+    async def _async_do_rebuild(self, *, triggered_by: str = "button") -> None:
         """Background task body — performs the full rebuild lifecycle.
 
         Strict ordering (RESEARCH Pitfall 2):
-          cleanup_stale -> download_and_extract -> atomic_swap
+          cleanup_stale -> (download OR build_from_source) -> atomic_swap
           -> SpatialIndex.reset -> _sign_cache.clear -> read_build_timestamp
 
         Notification IDs are distinct from the first-time-setup IDs in
@@ -620,6 +683,10 @@ class ASPParkingCoordinator:
           - in-progress: ``asp_parking_index_rebuild``
           - success:     ``asp_parking_index_rebuild_success``
           - error:       ``asp_parking_index_rebuild_error``
+
+        Args:
+            triggered_by: Routed to ``_async_decide_rebuild_path`` so the
+                24h double-press override is button-only (D-03).
 
         The ``finally`` block ALWAYS resets ``_is_rebuilding=False`` and
         re-notifies entities — D-06 guarantees the button never gets stuck.
@@ -641,12 +708,30 @@ class ASPParkingCoordinator:
             )
 
             try:
+                # Phase 38 (IDX-05): decide which executor strategy to run
+                # BEFORE doing any work so the INFO log records intent even
+                # if the chosen path fails.
+                path, reason = await self._async_decide_rebuild_path(triggered_by)
+                logger.info(
+                    "asp_parking: index rebuild path=%s reason=%s",
+                    path.value,
+                    reason,
+                )
+
                 # RESEARCH Pitfall 5: wipe any stale _tmp/_bak/_download.zip
                 # from a prior crash BEFORE writing fresh artifacts.
                 await self.hass.async_add_executor_job(_sync_cleanup_stale, INDEX_DIR)
-                await self.hass.async_add_executor_job(
-                    _sync_download_and_extract, INDEX_DIR, INDEX_DOWNLOAD_URL
-                )
+
+                if path == RebuildPath.DOWNLOAD:
+                    await self.hass.async_add_executor_job(
+                        _sync_download_and_extract, INDEX_DIR, INDEX_DOWNLOAD_URL
+                    )
+                else:
+                    # FROM_SOURCE — full CSCL rebuild (Plan 01 IDX-06).
+                    await self.hass.async_add_executor_job(
+                        _sync_build_from_source, INDEX_DIR
+                    )
+
                 await self.hass.async_add_executor_job(_sync_atomic_swap, INDEX_DIR)
 
                 # RESEARCH Pitfall 2: reset MUST happen AFTER atomic_swap so the
@@ -666,6 +751,9 @@ class ASPParkingCoordinator:
                 )
 
                 pn_dismiss(self.hass, "asp_parking_index_rebuild")
+                # Phase 38: dismiss the stale-check notification (if any) —
+                # the rebuild that resolves staleness has just succeeded.
+                pn_dismiss(self.hass, "asp_parking_index_stale")
                 ts_str = (
                     self._last_rebuilt.strftime("%Y-%m-%d %H:%M UTC")
                     if self._last_rebuilt
@@ -720,6 +808,103 @@ class ASPParkingCoordinator:
                 pn_dismiss(self.hass, "asp_parking_index_rebuild")
                 self._is_rebuilding = False
                 self._async_notify_entities()
+
+    # ------------------------------------------------------------------
+    # Phase 38: dual-path rebuild routing (IDX-05)
+    # ------------------------------------------------------------------
+
+    async def _async_decide_rebuild_path(
+        self, triggered_by: str
+    ) -> tuple[RebuildPath, str]:
+        """Return ``(path, reason_log_tag)`` for the rebuild router.
+
+        Decision matrix:
+          * button + last press within 24h           -> FROM_SOURCE / double_press
+          * either   + remote API failure / no asset -> FROM_SOURCE / github_api_failed
+          * either   + remote asset age < 30 days     -> DOWNLOAD    / remote_fresh
+          * either   + remote asset age >= 30 days    -> FROM_SOURCE / remote_stale
+
+        D-03: ``triggered_by="stale_check"`` SKIPS the 24h double-press
+        override entirely — that rule is button-only.
+        """
+        if triggered_by == "button" and self._last_button_press is not None:
+            window = dt_util.utcnow() - self._last_button_press
+            if window < timedelta(hours=BUTTON_DOUBLE_PRESS_WINDOW_HOURS):
+                return RebuildPath.FROM_SOURCE, "double_press"
+
+        age_days = await self._fetch_remote_asset_age_days()
+        if age_days is None:
+            return RebuildPath.FROM_SOURCE, "github_api_failed"
+        if age_days < REMOTE_FRESH_DAYS:
+            return RebuildPath.DOWNLOAD, "remote_fresh"
+        return RebuildPath.FROM_SOURCE, "remote_stale"
+
+    async def _fetch_remote_asset_age_days(self) -> float | None:
+        """Return the GitHub-hosted prebuilt asset age in days, or None on failure.
+
+        Caches the result for 10 minutes per coordinator instance to absorb
+        the 60-req/hour anonymous GitHub rate limit (RESEARCH Pitfall 2).
+
+        Reads ``created_at`` (NOT ``updated_at``) per Pitfall 3 — the
+        asset's update timestamp is bumped by metadata edits and would
+        misrepresent the actual rebuild age.
+
+        URL uses ``GET /repos/.../releases/tags/index-v1`` (Pitfall 1).
+        The "latest release" GitHub endpoint currently returns the v3.0.0
+        entry which has ZERO assets, so we pin to the ``index-v1`` tag —
+        the canonical home of ``index.zip``.
+        """
+        # 10-minute cache TTL.
+        if self._remote_age_cache is not None:
+            cached_at, cached_value = self._remote_age_cache
+            if (dt_util.utcnow() - cached_at) < timedelta(minutes=10):
+                return cached_value
+
+        url = (
+            f"{GITHUB_RELEASES_API_BASE}/releases/tags/{GITHUB_INDEX_RELEASE_TAG}"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    url, headers={"Accept": "application/vnd.github+json"}
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            assets = data.get("assets") or []
+            if not assets:
+                logger.warning(
+                    "asp_parking: github releases tag %s has no assets "
+                    "-- falling back to from_source",
+                    GITHUB_INDEX_RELEASE_TAG,
+                )
+                self._remote_age_cache = (dt_util.utcnow(), None)
+                return None
+            # Prefer the canonical index.zip asset; fall back to first.
+            target = next(
+                (a for a in assets if a.get("name") == "index.zip"),
+                assets[0],
+            )
+            created_at_raw = target.get("created_at")  # Pitfall 3
+            if not created_at_raw:
+                self._remote_age_cache = (dt_util.utcnow(), None)
+                return None
+            created_at = dt_util.parse_datetime(created_at_raw)
+            if created_at is None:
+                self._remote_age_cache = (dt_util.utcnow(), None)
+                return None
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            age_days = (dt_util.utcnow() - created_at).total_seconds() / 86400.0
+            self._remote_age_cache = (dt_util.utcnow(), age_days)
+            return age_days
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            logger.warning(
+                "asp_parking: github releases API failed: %s "
+                "-- falling back to from_source",
+                exc,
+            )
+            self._remote_age_cache = (dt_util.utcnow(), None)
+            return None
 
     # ------------------------------------------------------------------
     # ha-nyc311 bridge helpers
