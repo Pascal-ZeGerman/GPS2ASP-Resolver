@@ -780,6 +780,14 @@ class ASPParkingCoordinator:
             and self._caldav_store is not None
         ):
             _uid_snapshot = self._caldav_uid
+            # WR-08: clear the local pointer SYNCHRONOUSLY. The intent here
+            # is "this event is being deleted" -- waiting for the background
+            # task to clear the field leaves a window where the local field
+            # contradicts the user-visible intent. Any concurrent write task
+            # that observes ``self._caldav_uid is None`` will skip the
+            # delete-stale-uid branch and never race the standalone delete
+            # task. The delete task itself uses the snapshot, not the field.
+            self._caldav_uid = None
             self._caldav_delete_task = self.entry.async_create_background_task(
                 self.hass,
                 ASPParkingCoordinator._async_caldav_delete_current(self, _uid_snapshot),
@@ -906,6 +914,11 @@ class ASPParkingCoordinator:
                     uid=uid,
                 )
                 # Success: clear UID only if it still matches what we deleted (Finding 1).
+                # WR-08: the suspension-flip path now pre-clears
+                # ``self._caldav_uid`` synchronously before spawning this task,
+                # so for that caller this branch is a defensive no-op. Other
+                # callers (e.g. ``_maybe_delete_caldav_on_move`` which spawns
+                # without pre-clearing) still rely on this conditional clear.
                 if self._caldav_uid == uid:
                     self._caldav_uid = None
                 # Only update the store if it still holds the UID we deleted,
