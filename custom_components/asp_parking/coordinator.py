@@ -1390,6 +1390,18 @@ class ASPParkingCoordinator:
             tuple[str, str, str, str], dict[str, list[dict] | int]
         ] = {}
         for cand in candidates:
+            # WR-02: skip segments with missing cross-street names. CSCL has
+            # boundary segments / ramps / named-only intersections with empty
+            # ``from_street`` / ``to_street`` -- building a block query with
+            # ``from_street=''`` poisons the cache with unmatchable entries
+            # and wastes a SODA round-trip per such segment per side. Mirrors
+            # the BUG-S-003 guard already present in the L3 client-side filter.
+            if not cand.from_street or not cand.to_street:
+                logger.debug(
+                    "Phase 26: skipping segment_id=%s — missing cross-street name",
+                    cand.segment_id,
+                )
+                continue
             # Normalize CSCL names to SODA format for the API query (Level 1),
             # matching the name expansion done by retrieve_signs() -> name_variants().
             on_soda = name_variants(cand.full_street_name)[0]
