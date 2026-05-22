@@ -313,3 +313,35 @@ async def test_diagnostics_strips_userinfo_from_caldav_url(
     assert result["config"][CONF_CALDAV_URL] == "https://srv.example.com/dav/", (
         "CR-02 regression: CONF_CALDAV_URL must have embedded userinfo stripped"
     )
+
+
+async def test_diagnostics_strips_userinfo_from_caldav_url_nonstandard_port(
+    hass, enable_custom_integrations
+) -> None:
+    """CR-02 (non-standard port): ``https://user:pw@host:5232/dav/`` must be sanitised.
+
+    Regression guard for CalDAV URLs that include a non-standard port in the
+    authority component.  The port must be preserved in the sanitised URL while
+    the ``user:password@`` userinfo is removed.
+    """
+    from custom_components.asp_parking.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    entry = _make_entry(
+        hass,
+        options={
+            CONF_CALDAV_URL: "https://alice:secretpw@srv.example.com:5232/dav/",
+            CONF_CALDAV_USERNAME: "alice",
+            CONF_CALDAV_PASSWORD: "secretpw",
+        },
+    )
+
+    result = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert "secretpw" not in json.dumps(result), (
+        "CR-02 regression: CalDAV URL embedded password leaked (non-standard port case)"
+    )
+    assert result["config"][CONF_CALDAV_URL] == "https://srv.example.com:5232/dav/", (
+        "CR-02 regression: port must be preserved after userinfo is stripped"
+    )
