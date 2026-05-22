@@ -1095,11 +1095,17 @@ class ASPParkingCoordinator:
 
         # Phase 34 / CALDAV-05: if a CalDAV event is active and the car has moved
         # far enough before the safety window, delete the stale event.
-        self.entry.async_create_background_task(
-            self.hass,
-            self._maybe_delete_caldav_on_move(),
-            name="asp_parking_caldav_move_guard",
-        )
+        # WR-03: only spawn the move-guard task when CalDAV state is actually
+        # live -- the body of ``_maybe_delete_caldav_on_move`` would no-op out
+        # for users who never configured CalDAV, but spawning a coroutine per
+        # GPS update on a fast tracker (taxi, ride-share) wastes hundreds of
+        # task-frame allocations per hour. Mirrors the BUG-C-004 guard.
+        if self._caldav_uid is not None and self._caldav_store is not None:
+            self.entry.async_create_background_task(
+                self.hass,
+                self._maybe_delete_caldav_on_move(),
+                name="asp_parking_caldav_move_guard",
+            )
 
         self.hass.async_create_task(self._debouncer.async_call())
 
