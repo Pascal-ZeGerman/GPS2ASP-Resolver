@@ -294,6 +294,16 @@ def _classify_ambiguity(perp_distance: float, dist_to_endpoints: float) -> str:
     keeps the log-label boundary stable without coupling _classify_ambiguity
     to the confidence-scoring API.
 
+    IN-01: the static 10ft threshold here is for **log classification only**;
+    it does not match the width-relative algorithm threshold and may
+    produce labels that diverge by up to ~1 ft at the boundary. For
+    example, a 9.9ft perpendicular distance on a wide 60ft avenue is
+    *not ambiguous* to the algorithm (algorithm threshold ~9.9ft) but
+    is still classified ``ambiguous_low_confidence`` by this function
+    because 9.9 > 10.0 is false. This off-by-one discrepancy is
+    acceptable for log-labelling purposes — the algorithm's decision is
+    authoritative, and the log label is a human-readable hint only.
+
     Args:
         perp_distance: Perpendicular distance to centerline in feet.
         dist_to_endpoints: Distance to nearest endpoint in feet.
