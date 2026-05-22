@@ -2,14 +2,14 @@
   "config": {
     "step": {
       "user": {
-        "title": "Select Vehicle",
+        "title": "Step 1 of 3: Select Vehicle",
         "description": "Choose the device tracker that provides your car's GPS location.",
         "data": {
           "device_tracker": "Device tracker"
         }
       },
       "settings": {
-        "title": "Settings",
+        "title": "Step 2 of 3: Settings",
         "description": "Fine-tune when the integration re-resolves the parking schedule.",
         "data": {
           "movement_threshold": "Movement threshold",
@@ -23,7 +23,7 @@
         }
       },
       "api_keys": {
-        "title": "NYC 311 API Key (Optional)",
+        "title": "Step 3 of 3: API Keys",
         "description": "Enter your NYC 311 API key to receive weather and emergency suspension alerts. Leave blank to skip — holiday suspensions still work without it.",
         "data": {
           "nyc311_api_key": "NYC 311 API key"
