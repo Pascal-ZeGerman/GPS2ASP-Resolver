@@ -107,6 +107,16 @@ def materialize_cached_records(
     if not records:
         return NoMatchFound()
     signs = _deduplicate(records)
+    # IN-03: defensive BROOM filter. Callers MUST pass BROOM-filtered records
+    # (the contract is documented above), but this guard catches any future
+    # caller that bypasses ``build_block_query`` -- a silent contamination
+    # bug would otherwise inject non-broom records (e.g. NO STANDING signs)
+    # into the schedule pipeline. Cheap and idempotent on already-filtered
+    # input.
+    signs = [
+        sign for sign in signs
+        if "SANITATION BROOM" in sign.sign_description
+    ]
     if not signs:
         return NoASPSigns()
     return SignRetrievalSuccess(
