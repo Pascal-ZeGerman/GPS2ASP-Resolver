@@ -46,9 +46,8 @@ from homeassistant.util import dt as dt_util
 # blocker that Plan 32-02 satisfies. Do NOT silence the import error.
 from custom_components.asp_parking.util import now_ha_local
 
-# Phase 36 SENSOR-01: import the production sensor + _SIDE_LABELS dict.
-# Until Plan 36-01 Task 2 ships _SIDE_LABELS, this import RAISES ImportError
-# at collection time — that is the RED gate for TestSideLabel.
+# Phase 36 SENSOR-01: _SIDE_LABELS is the module-level cardinal-direction mapping
+# added in this phase. Imported here to validate it in TestSideLabel.
 from custom_components.asp_parking.sensor import (
     ASPNextMoveTimeSensor,
     _SIDE_LABELS,
@@ -602,6 +601,87 @@ class TestSideLabel:
         assert "side_of_street" in attrs
         assert attrs["side_of_street"] == ""
         assert "side_label" not in attrs
+
+    def test_side_label_present_for_north_on_next_move_sensor_asp_active_now(
+        self,
+    ) -> None:
+        """side_of_street='N' with ASPActiveNow schedule → side_label='North side'."""
+        from custom_components.asp_parking.gps2asp.schedule.models import (
+            ASPActiveNow as VendoredASPActiveNow,
+            CleaningWindow as VendoredCleaningWindow,
+            ASPDay as VendoredASPDay,
+        )
+
+        _now = datetime.now(tz=NYC_TZ)
+        _cw = VendoredCleaningWindow(
+            day=VendoredASPDay.MONDAY,
+            start_time=time(8, 30),
+            end_time=time(10, 0),
+            start_datetime=_now.replace(hour=8, minute=30, second=0, microsecond=0),
+            end_datetime=_now.replace(hour=10, minute=0, second=0, microsecond=0),
+            source_signs=["NO PARKING 8:30AM-10AM MON"],
+        )
+        schedule = VendoredASPActiveNow(
+            status="asp_active_now",
+            active_window=_cw,
+            on_street="PROSPECT PLACE",
+            from_street="VANDERBILT AVENUE",
+            to_street="UNDERHILL AVENUE",
+            side_of_street="N",
+            source_signs=["NO PARKING 8:30AM-10AM MON"],
+            summary="Mon 8:30-10am",
+        )
+
+        coord = MagicMock()
+        coord.entry = MagicMock()
+        coord.entry.entry_id = "test_entry_p36_active_now"
+        coord.entry.options = {}
+
+        data = SimpleNamespace()
+        data.schedule_result = schedule
+        data.suspension_state = VendoredSuspensionInfo(
+            is_suspended=False, reason=None, source="none"
+        )
+        data.last_resolved = None
+        data.last_gps_update = None
+        data.last_error = None
+        data.last_error_time = None
+        data.confidence_score = None
+        data.sign_count = 0
+        data.parse_failures = 0
+        data.soda_level = 0
+        data.borough = None
+        data.distance_ft = None
+        data.street_width_ft = None
+        data.segment_id = None
+        data.last_lat = None
+        data.last_lon = None
+        data.last_notified_window = None
+        data.special_state = None
+        coord.data = data
+
+        sensor = ASPNextMoveTimeSensor(coord)
+        attrs = sensor.extra_state_attributes
+        assert attrs["side_of_street"] == "N"
+        assert attrs["side_label"] == "North side"
+
+
+# ---------------------------------------------------------------------------
+# WR-01 parity guard: test_ha_integration._SIDE_LABELS must stay in sync
+# with sensor._SIDE_LABELS.
+# ---------------------------------------------------------------------------
+
+
+from custom_components.asp_parking.sensor import _SIDE_LABELS as _SENSOR_SIDE_LABELS
+from tests.test_ha_integration import _SIDE_LABELS as _TEST_SIDE_LABELS
+
+
+def test_test_ha_integration_side_labels_parity() -> None:
+    """Guard: local _SIDE_LABELS in test_ha_integration.py stays in sync with sensor.py."""
+    assert _TEST_SIDE_LABELS == _SENSOR_SIDE_LABELS, (
+        "test_ha_integration._SIDE_LABELS has drifted from sensor._SIDE_LABELS; "
+        "update the local copy."
+    )
 
 
 # ===========================================================================

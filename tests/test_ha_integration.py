@@ -311,16 +311,25 @@ def _make_cleaning_window(
     start_dt: datetime | None = None,
     end_dt: datetime | None = None,
 ) -> CleaningWindow:
-    """Helper to build a CleaningWindow with defaults."""
+    """Helper to build a CleaningWindow with defaults.
+
+    When start_dt/end_dt are supplied explicitly, start_time/end_time are
+    derived from those datetimes (converted to NYC local time) rather than
+    from the default start_h/start_m parameters. This keeps the CleaningWindow
+    internally consistent: start_time and start_datetime always represent the
+    same clock time (WR-02).
+    """
     now = datetime.now(tz=NYC_TZ)
     if start_dt is None:
         start_dt = now.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
     if end_dt is None:
         end_dt = now.replace(hour=end_h, minute=end_m, second=0, microsecond=0)
+    local_start = start_dt.astimezone(NYC_TZ)
+    local_end = end_dt.astimezone(NYC_TZ)
     return CleaningWindow(
         day=day,
-        start_time=time(start_h, start_m),
-        end_time=time(end_h, end_m),
+        start_time=time(local_start.hour, local_start.minute),
+        end_time=time(local_end.hour, local_end.minute),
         start_datetime=start_dt,
         end_datetime=end_dt,
         source_signs=["NO PARKING 8:30AM-10AM MON"],
@@ -591,6 +600,7 @@ class TestSensorAttributes:
         assert attrs["street_name"] == "PROSPECT PLACE"
         assert attrs["cross_streets"] == "VANDERBILT AVENUE to UNDERHILL AVENUE"
         assert attrs["side_of_street"] == "N"
+        assert attrs["side_label"] == "North side"  # Phase 36 SENSOR-01
 
         # Window group
         assert "next_window_start" in attrs
@@ -1555,6 +1565,60 @@ def test_resolved_street_sensor_omits_side_label_for_unrecognized_letter() -> No
     assert "side_of_street" in attrs
     assert attrs["side_of_street"] == "X"
     assert "side_label" not in attrs
+
+
+@pytest.mark.ha_integration
+def test_resolved_street_sensor_side_label_present_for_asp_active_now() -> None:
+    """Phase 36 WR-03: ASPActiveNow schedule on resolved-street sensor → side_label emitted.
+
+    Guards against a future refactor accidentally restricting the isinstance
+    guard to ScheduleFound only, which would silently drop side_label on
+    active-now mornings.
+    """
+    from unittest.mock import MagicMock
+
+    from custom_components.asp_parking.sensor import ASPResolvedStreetSensor
+    from custom_components.asp_parking.gps2asp.schedule.models import (
+        ASPActiveNow as VendoredASPActiveNow,
+        CleaningWindow as VendoredCleaningWindow,
+        ASPDay as VendoredASPDay,
+    )
+
+    now = datetime.now(tz=NYC_TZ)
+    cw = VendoredCleaningWindow(
+        day=VendoredASPDay.MONDAY,
+        start_time=time(8, 30),
+        end_time=time(10, 0),
+        start_datetime=now.replace(hour=8, minute=30, second=0, microsecond=0),
+        end_datetime=now.replace(hour=10, minute=0, second=0, microsecond=0),
+        source_signs=["NO PARKING 8:30AM-10AM MON"],
+    )
+    schedule = VendoredASPActiveNow(
+        status="asp_active_now",
+        active_window=cw,
+        on_street="PROSPECT PLACE",
+        from_street="VANDERBILT AVENUE",
+        to_street="UNDERHILL AVENUE",
+        side_of_street="S",
+        source_signs=["NO PARKING 8:30AM-10AM MON"],
+        summary="Mon 8:30-10am",
+    )
+
+    coord = MagicMock()
+    coord.data = ASPParkingData()
+    coord.data.borough = "Brooklyn"
+    coord.data.distance_ft = 12.34
+    coord.data.street_width_ft = 30.0
+    coord.data.segment_id = 987654
+    coord.data.confidence_score = 0.85
+    coord.data.schedule_result = schedule
+    coord.entry = MagicMock()
+    coord.entry.entry_id = "test_entry_p36_active_now"
+
+    sensor = ASPResolvedStreetSensor(coord)
+    attrs = sensor.extra_state_attributes
+    assert attrs["side_of_street"] == "S"
+    assert attrs["side_label"] == "South side"
 
 
 @pytest.mark.ha_integration
