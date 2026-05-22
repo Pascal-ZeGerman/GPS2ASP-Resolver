@@ -123,6 +123,19 @@ class SODAClient:
                 return response.json()
             except httpx.HTTPStatusError as exc:
                 last_error = exc
+                # CR-03: 401/403 are permanent auth errors -- no amount of
+                # retrying will succeed if the NYC_OPEN_DATA_APP_TOKEN env var
+                # is invalid or absent. Short-circuit to avoid wasting 6+
+                # seconds of event-loop time per pipeline run. This mirrors
+                # the equivalent guard in suspension/__init__.py (BUG-T-009).
+                if exc.response.status_code in (401, 403):
+                    logger.warning(
+                        "SODA API attempt %d/%d: auth error %d -- not retrying",
+                        attempt + 1,
+                        self.MAX_RETRIES,
+                        exc.response.status_code,
+                    )
+                    break
                 # BUG-S-006: on the final attempt no sleep follows, so the log
                 # must NOT promise "retry in Xs" -- instead state that retries
                 # are exhausted. Pair the sleep with the retry-log branch so
