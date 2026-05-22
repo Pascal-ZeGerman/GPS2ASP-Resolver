@@ -6,14 +6,29 @@ this integration. CalDAV-08 is enforced by this module being the sole
 caldav importer in the integration and by using ONLY caldav.aio (the
 async client) — never caldav.DAVClient (the sync one).
 
-Import safety: ``caldav.aio`` was introduced in caldav 3.x. The HA built-in
-CalDAV integration pins ``caldav==2.1.0``, which predates the ``aio``
-submodule. When ``caldav.aio`` is absent this module installs a
-``_CompatAsyncDAVClient`` shim as ``caldav.aio.AsyncDAVClient`` so all
-production code and tests can use the same attribute without branching.
-The shim wraps the sync ``caldav.DAVClient`` via ``run_in_executor`` so
-blocking I/O never hits the HA event loop. On caldav 3.x the shim is
-never installed and the native async client is used directly.
+Import safety: this module's ``manifest.json`` pins ``caldav[async]==3.2.0``
+so in practice ``caldav.aio`` is always present at runtime and the
+``_CompatAsyncDAVClient`` shim defined below is defensively unreachable.
+
+The shim is preserved for the edge case where a stripped-down caldav
+redistribution is encountered (e.g. an out-of-band patched wheel on a
+production HA instance) — when ``import caldav.aio`` fails, the shim is
+installed as ``caldav.aio.AsyncDAVClient`` so all production code and
+tests can use the same attribute without branching. The shim wraps the
+sync ``caldav.DAVClient`` via ``run_in_executor`` so blocking I/O never
+hits the HA event loop.
+
+Note on ``caldav.lib.error``: this submodule is imported unconditionally
+at module top (``from caldav.lib import error as caldav_error``) because
+it has shipped with every caldav release this integration cares to
+support (3.2.0+). If a future caldav refactor moves or removes this
+submodule, the integration will fail at import time -- that is
+intentional, the alternative would be a synthetic exception class that
+silently swallows error categorisation.
+
+WR-05: the original docstring claimed support for caldav 2.x; the
+manifest pin makes that claim moot. The shim is kept as defence-in-depth
+but the compatibility window documented here is "caldav 3.2.0+".
 """
 
 from __future__ import annotations
