@@ -112,7 +112,7 @@
           "caldav_username": "CalDAV account username.",
           "caldav_password": "CalDAV account password or app-specific password.",
           "caldav_safety_window": "Position changes within this window before the next move time will NOT delete the calendar event. Default 15 minutes.",
-          "caldav_event_title_template": "Title template. Placeholders: {street}, {time}, {side}. Default: ASP: {street}."
+          "caldav_event_title_template": "Title template. Placeholders: '{street}', '{time}', '{side}'. Default: ASP: '{street}'."
         }
       },
       "caldav_calendar": {
@@ -129,7 +129,7 @@
       "stale_timeout_too_small": "Must be at least 1 h.",
       "invalid_api_key": "Invalid API key — check your NYC 311 API portal subscription key.",
       "caldav_auth_failed": "Could not authenticate with the CalDAV server. Check the URL, username, and password.",
-      "caldav_invalid_template": "Invalid title template. Use only plain text and supported placeholders: {street}, {side}, {time}."
+      "caldav_invalid_template": "Invalid title template. Use only plain text and supported placeholders: '{street}', '{side}', '{time}'. No spaces inside braces."
     }
   },
   "entity": {
