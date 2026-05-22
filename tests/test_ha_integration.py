@@ -1169,9 +1169,13 @@ class TestSuspensionPoll:
         self.data.last_lat / last_lon, confirming independence from GPS movement.
         """
         src = _COORDINATOR_SRC.read_text()
-        # The update method must check the current date
-        assert "self._get_now().date()" in src, (
-            "coordinator.py suspension poll does not derive 'today' via _get_now()"
+        # The update method must check the current date. WR-07: the date is
+        # now derived via ``_get_now_nyc()`` (NYC calendar tz) instead of
+        # ``_get_now()`` (HA-local tz) so that holiday lookups land on the
+        # correct NYC date for installations in non-NYC timezones.
+        assert "self._get_now_nyc().date()" in src, (
+            "coordinator.py suspension poll does not derive 'today' via "
+            "_get_now_nyc() (WR-07 regression)"
         )
         # Confirm _async_suspension_poll does not gate on last_lat / last_lon
         poll_start = src.find("def _async_suspension_poll")
@@ -1924,6 +1928,11 @@ class TestNyc311Bridge:
             _holiday_calendar=mock_holiday,
             _async_notify_entities=MagicMock(),
             _get_now=MagicMock(
+                return_value=MagicMock(date=MagicMock(return_value=date.today()))
+            ),
+            # WR-07: suspension flow now uses ``_get_now_nyc().date()`` for
+            # NYC-calendar holiday lookups.
+            _get_now_nyc=MagicMock(
                 return_value=MagicMock(date=MagicMock(return_value=date.today()))
             ),
             _bridge_state_to_info=staticmethod(
