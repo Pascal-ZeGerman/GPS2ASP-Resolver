@@ -324,10 +324,35 @@ class ASPParkingCoordinator:
         NYC_TZ for day-boundary display labels") and lets the coordinator
         respect a non-NYC HA installation timezone for downstream day/week
         boundary computations.
+
+        WARNING: this returns HA-local time. Use ``_get_now_nyc()`` for any
+        operation that must use NYC's calendar date (holiday suspension
+        lookups, NYC-specific calendar boundaries). See WR-07.
         """
         if self._debug_enabled and self._debug_datetime is not None:
             return self._debug_datetime
         return dt_util.now()
+
+    def _get_now_nyc(self) -> datetime:
+        """Return current time in NYC timezone for calendar-date operations.
+
+        WR-07: ``_get_now()`` returns HA-local time, which is correct for
+        display labels ("Today" / "Tomorrow" in the user's UI timezone)
+        but WRONG for NYC-specific calendar lookups such as holiday
+        suspension checks. An HA installation in ``Pacific/Honolulu``
+        (UTC-10) running ``self._get_now().date()`` to look up "is today
+        a NYC ASP holiday?" will return the previous NYC day for ~10
+        hours after NYC midnight — silently mis-classifying the holiday.
+
+        Use this method (not ``_get_now``) when feeding a date into
+        ``HolidayCalendar.is_suspended(date)`` or any other NYC-calendar
+        operation. Use ``_get_now`` for display labels and for next-move
+        scheduling (which already carries timezone info via the
+        ``ScheduleFound.next_move`` datetime).
+        """
+        if self._debug_enabled and self._debug_datetime is not None:
+            return self._debug_datetime
+        return dt_util.now().astimezone(NYC_TZ)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -421,7 +446,10 @@ class ASPParkingCoordinator:
         self._holiday_calendar = HolidayCalendar()
         await self._holiday_calendar.load()
 
-        today = self._get_now().date()
+        # WR-07: holiday calendar uses NYC calendar dates. ``_get_now()``
+        # returns HA-local time -- correct for display, wrong for NYC date
+        # lookups when HA is configured for a non-NYC timezone.
+        today = self._get_now_nyc().date()
         holiday_info = self._holiday_calendar.is_suspended(today)
         if holiday_info.is_suspended:
             self._async_apply_suspension_state(holiday_info)
@@ -1491,7 +1519,8 @@ class ASPParkingCoordinator:
             # Bridge unavailable/unknown: fall through to direct sources
 
         # D-07/D-08: No bridge or bridge unavailable -- use holiday calendar + 311 API
-        today = self._get_now().date()
+        # WR-07: holiday calendar takes NYC calendar dates -- use NYC tz, not HA local.
+        today = self._get_now_nyc().date()
 
         if self._holiday_calendar is None:
             logger.error(
