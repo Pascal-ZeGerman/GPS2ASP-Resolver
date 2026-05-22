@@ -67,9 +67,10 @@ INDEX_DOWNLOAD_URL = (
 # IDX-06 / Plan 38-01: from-source CSCL rebuild constants
 #
 # GITHUB_INDEX_RELEASE_TAG = "index-v1" — deviation acknowledgement: ROADMAP/SPEC
-# reference `GET /releases/latest`, but research probe confirmed `latest` returns
-# v3.0.0 with ZERO assets while `index.zip` lives on tag `index-v1`. Plan 02
-# consumes this tag via `GET /repos/.../releases/tags/{GITHUB_INDEX_RELEASE_TAG}`.
+# reference the "latest release" GitHub endpoint, but a research probe confirmed
+# that endpoint returns v3.0.0 with ZERO assets while `index.zip` lives on tag
+# `index-v1`.  Plan 02 consumes this tag via
+# `GET /repos/.../releases/tags/{GITHUB_INDEX_RELEASE_TAG}`.
 GITHUB_RELEASES_API_BASE = "https://api.github.com/repos/Pascal-ZeGerman/GPS2ASP-Resolver"
 GITHUB_INDEX_RELEASE_TAG = "index-v1"
 CSCL_GEOJSON_URL = "https://data.cityofnewyork.us/resource/inkn-q76z.geojson"
