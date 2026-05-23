@@ -29,6 +29,7 @@ from homeassistant.core import (
 )
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import (
+    async_call_later,
     async_track_state_change_event,
     async_track_time_interval,
 )
@@ -49,6 +50,7 @@ from .gps2asp.resolver.spatial_index import SpatialIndex
 from .gps2asp.schedule import compute_schedule
 from .gps2asp.schedule.models import (
     AllUnparseable,
+    ASPActiveNow,
     CleaningWindow,
     ScheduleFound,
     ScheduleResult,
@@ -277,6 +279,10 @@ class ASPParkingCoordinator:
         ] = {}
         self._preseed_task: asyncio.Task[None] | None = None
         self._unsub_cache_rebuild: CALLBACK_TYPE | None = None
+        # Phase 39: one-shot window-boundary timer handle (D-03).
+        # Dedicated attribute — NOT appended to self._listeners.
+        # async_stop() explicitly calls self._boundary_timer_cancel().
+        self._boundary_timer_unsub: CALLBACK_TYPE | None = None
 
         # Phase 33: index rebuild lifecycle (IDX-02..IDX-04).
         # Lock is constructed inside __init__ (NOT at class scope) so it binds
@@ -615,6 +621,7 @@ class ASPParkingCoordinator:
         self._listeners.clear()
         self._entity_update_callbacks.clear()
         self._debouncer.async_cancel()
+        self._boundary_timer_cancel()  # Phase 39 (D-03): explicit cancel, not via _listeners
         logger.info("ASP Parking coordinator stopped")
 
     # ------------------------------------------------------------------
@@ -1480,6 +1487,94 @@ class ASPParkingCoordinator:
         self.hass.async_create_task(self._debouncer.async_call())
 
     # ------------------------------------------------------------------
+    # Phase 39: window-boundary timer (one-shot async_call_later)
+    # ------------------------------------------------------------------
+
+    @callback
+    def _boundary_timer_cancel(self) -> None:
+        """Cancel and clear the stored boundary timer handle.
+
+        D-09: clears ``_boundary_timer_unsub`` to None BEFORE invoking the
+        stored callable so a double-call on retry is impossible even if the
+        cancel callable raises.  Safe to call when ``_boundary_timer_unsub``
+        is already None (no-op).
+        """
+        if self._boundary_timer_unsub is not None:
+            cancel = self._boundary_timer_unsub
+            self._boundary_timer_unsub = None
+            cancel()
+
+    @callback
+    def _async_schedule_boundary_timer(self, schedule: ScheduleResult) -> None:
+        """Register a one-shot timer that fires at the next window boundary.
+
+        D-02: unconditionally cancels any prior timer first, then:
+          - ASPActiveNow → fires at active_window.end_datetime
+          - ScheduleFound with next_window → fires at next_window.start_datetime
+          - ScheduleFound with next_window=None (D-01) → skips, logs DEBUG
+          - Any other status (NoASPSchedule, NoMatchSchedule, AllUnparseable) → skips, logs DEBUG
+
+        D-06: delay is clamped to max(0.0, ...) to handle race where the
+        boundary has already passed by the time the pipeline completes.
+
+        D-04/WR-01: the fire closure spawns ``_async_resolve_pipeline`` via
+        ``entry.async_create_background_task`` so HA auto-cancels the in-flight
+        task when the config entry unloads.
+
+        NOTE: uses ``dt_util.utcnow()`` directly — NOT ``self._get_now()`` — so the
+        wall-clock anchor is real loop time, not the debug-datetime override.
+        """
+        # D-02: cancel any prior timer unconditionally.
+        # Inline the D-09 cancel pattern (clear-first) so this method works
+        # both on real ASPParkingCoordinator instances and on SimpleNamespace
+        # test stubs that do not forward method lookups to the class.
+        if self._boundary_timer_unsub is not None:
+            _cancel = self._boundary_timer_unsub
+            self._boundary_timer_unsub = None
+            _cancel()
+
+        if isinstance(schedule, ASPActiveNow):
+            boundary_dt = schedule.active_window.end_datetime
+            kind = "active_window.end"
+        elif isinstance(schedule, ScheduleFound):
+            if schedule.next_window is None:
+                logger.debug(
+                    "ScheduleFound with next_window=None — boundary timer not scheduled"
+                )
+                return
+            boundary_dt = schedule.next_window.start_datetime
+            kind = "next_window.start"
+        else:
+            logger.debug(
+                "schedule.status=%s — boundary timer not scheduled",
+                getattr(schedule, "status", type(schedule).__name__),
+            )
+            return
+
+        # D-06: clamp to 0.0 so past boundaries fire on the next event-loop tick.
+        delay = max(
+            0.0,
+            (dt_util.as_utc(boundary_dt) - dt_util.utcnow()).total_seconds(),
+        )
+
+        @callback
+        def _on_boundary_fire(_now: datetime) -> None:
+            """Timer callback: spawn pipeline re-run as a lifecycle-tied background task."""
+            self.entry.async_create_background_task(
+                self.hass,
+                self._async_resolve_pipeline(),
+                name="asp_parking_boundary_timer",
+            )
+
+        self._boundary_timer_unsub = async_call_later(self.hass, delay, _on_boundary_fire)
+        logger.debug(
+            "Boundary timer scheduled: %s in %.1fs (%s)",
+            kind,
+            delay,
+            boundary_dt.isoformat(),
+        )
+
+    # ------------------------------------------------------------------
     # Pipeline execution
     # ------------------------------------------------------------------
 
@@ -1559,6 +1654,11 @@ class ASPParkingCoordinator:
                     else None
                 ),
             )
+
+            # Phase 39 (D-05): register one-shot boundary timer before
+            # updating self.data — boundary scheduling is success-path only
+            # (Pitfall 5: never add this call to an except branch).
+            self._async_schedule_boundary_timer(schedule)
 
             # Success: update all data fields
             self.data.schedule_result = schedule
