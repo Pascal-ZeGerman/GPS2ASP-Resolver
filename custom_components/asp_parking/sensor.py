@@ -242,11 +242,11 @@ class ASPNextMoveTimeSensor(SensorEntity):
         data = self._coordinator.data
         attrs: dict[str, str | float | int | list | None] = {}
 
-        # Capture "today" once so that native_value (_format_move_time) and
-        # extra_state_attributes share the same date snapshot. Without this,
-        # a midnight boundary crossed between the two property reads produces a
-        # transient inconsistency (WR-03: urgency/"next_move_is_today" and the
-        # display string can disagree for one HA state cycle).
+        # Capture "today" once so that urgency and the boolean attributes
+        # (next_move_is_today, next_move_is_tomorrow) within extra_state_attributes
+        # share a single date snapshot (intra-property race fix).
+        # Note: native_value evaluates its own date independently via _format_move_time;
+        # a one-cycle display/attribute disagreement at exact midnight is accepted.
         today = now_ha_local().date()
 
         # Date-relationship booleans (D-06: always present, default False)
