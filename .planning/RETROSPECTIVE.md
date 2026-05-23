@@ -2,6 +2,53 @@
 
 *A living document updated after each milestone. Lessons feed forward into future planning.*
 
+## Milestone: v3.2 — UX Improvements and Monthly Updates
+
+**Shipped:** 2026-05-19
+**Phases:** 4 (31–34) | **Plans:** 14 | **Timeline:** 7 days (2026-05-10 → 2026-05-17) | **Commits:** 96
+
+### What Was Built
+
+- `vendor-guard.yml` + `scripts/sync_vendored.py` — automated CI drift detection for vendored gps2asp mirror; 27-test TDD suite; strings.json byte-sync
+- Three-tier date-aware sensor format ("⚠ Today, H:MM AM" / "Tomorrow, H:MM AM" / "Weekday (M/D), H:MM AM"); HA-local timezone Today gate; `now_ha_local()` helper
+- `index_io.py` + three new HA entities — download-from-GitHub-releases, atomic dir swap, zip-slip refusal, `asyncio.Lock` concurrency guard, `SpatialIndex.reset()`
+- `caldav_sync.py` — pure async CalDAV glue (SHA-256 UID, VEVENT build, validate/list/write/delete); coordinator suspension choke-point; Store-persisted UID; `async_remove_entry` cleanup; credentials redacted from diagnostics
+
+### What Worked
+
+- **CI guard shipped first (Phase 31)** — all subsequent phases inherited vendored-mirror protection automatically; zero drift incidents in Phases 32-34
+- **now_ha_local() extracted early** — Phase 32 introduced the helper; Phase 34 reused it without duplication; forward-planned dependencies paid off
+- **Suspension choke-point refactor (Phase 34)** — consolidating 6 scattered suspension-mutation sites into one method (`_async_apply_suspension_state`) eliminated Pitfall 8 entirely; clean and testable
+- **SHA-256 deterministic UID** — decided before any code was written; persists correctly across restarts without storing state in options (which would trigger reload)
+
+### What Was Inefficient
+
+- **ROADMAP.md and STATE.md not updated after Phase 34 execution** — milestone was marked "shipped" in STATE.md but internal position and CALDAV requirements were left stale; forensic audit at milestone close caught it
+- **Phase 33 live-HA UAT deferred again** — same pattern as Phase 25 (Phase 22 before that); human UAT requiring a live HA instance continues to be deferred rather than integrated
+- **HANDOFF.json from Phase 17 was never cleaned up** — orphaned for 7+ weeks across two milestone closings; forensic audit finally surfaced it
+
+### Patterns Established
+
+- CI guard ships first in a milestone — protects all subsequent phases automatically
+- Suspension choke-point pattern — single method owns all suspension-state mutation; never scatter suspension writes
+- `Store` for cross-restart UID persistence — `entry.options` triggers reload; `hass.data` is lost on restart; `Store` is the right tool
+- `caldav_sync.py` as HA-specific glue NOT mirrored — CalDAV is integration-only; keep the CI guard clean by not adding exception lists
+
+### Key Lessons
+
+1. **Update tracking files at execution time, not at milestone close** — Phase 34's ROADMAP.md progress row and CALDAV-* requirements checkboxes were left stale for days; update the row in ROADMAP.md when you write the SUMMARY
+2. **Clean up HANDOFF.json at the end of every session** — if work was paused and then resumed from a different entry point, delete the old handoff immediately
+3. **Schedule live-HA UAT as a concrete calendar item** — three milestones running, live-HA scenarios keep being deferred; it won't happen unless it's explicitly scheduled
+4. **forensic --forensic catches what yolo mode skips** — the forensic progress check found 4 issues that would have been invisible in a standard progress check
+
+### Cost Observations
+
+- Model mix: claude-sonnet-4-6 throughout (switched from opus to reduce cost)
+- Sessions: ~8 distinct execution sessions over 7 days
+- Notable: 96 commits in 7 days — highest commit velocity of any milestone; indicates tight TDD discipline (RED/GREEN/commit rhythm)
+
+---
+
 ## Milestone: v3.0 — Suspension Handling
 
 **Shipped:** 2026-04-30
