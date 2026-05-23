@@ -51,7 +51,9 @@ from custom_components.asp_parking.util import now_ha_local
 from custom_components.asp_parking.sensor import (
     ASPNextMoveTimeSensor,
     _SIDE_LABELS,
+    _SIDE_LABELS as _SENSOR_SIDE_LABELS,  # alias for parity guard
 )
+from tests.test_ha_integration import _SIDE_LABELS as _TEST_SIDE_LABELS
 from custom_components.asp_parking.gps2asp.schedule.models import (
     ScheduleFound as VendoredScheduleFound,
     WeeklySchedule as VendoredWeeklySchedule,
@@ -672,10 +674,7 @@ class TestSideLabel:
 # ---------------------------------------------------------------------------
 
 
-from custom_components.asp_parking.sensor import _SIDE_LABELS as _SENSOR_SIDE_LABELS
-from tests.test_ha_integration import _SIDE_LABELS as _TEST_SIDE_LABELS
-
-
+@pytest.mark.ha_integration
 def test_test_ha_integration_side_labels_parity() -> None:
     """Guard: local _SIDE_LABELS in test_ha_integration.py stays in sync with sensor.py."""
     assert _TEST_SIDE_LABELS == _SENSOR_SIDE_LABELS, (
