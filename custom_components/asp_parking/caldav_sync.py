@@ -6,29 +6,30 @@ this integration. CalDAV-08 is enforced by this module being the sole
 caldav importer in the integration and by using ONLY caldav.aio (the
 async client) — never caldav.DAVClient (the sync one).
 
-Import safety: this module's ``manifest.json`` pins ``caldav[async]==3.2.0``
-so in practice ``caldav.aio`` is always present at runtime and the
-``_CompatAsyncDAVClient`` shim defined below is defensively unreachable.
+Import safety: HA 2026.x hard-pins ``caldav==2.1.0`` for its built-in CalDAV
+component, which takes precedence over any custom-integration requirement.
+This module's ``manifest.json`` therefore also pins ``caldav==2.1.0`` so the
+stated requirement matches what HA actually installs.
 
-The shim is preserved for the edge case where a stripped-down caldav
-redistribution is encountered (e.g. an out-of-band patched wheel on a
-production HA instance) — when ``import caldav.aio`` fails, the shim is
-installed as ``caldav.aio.AsyncDAVClient`` so all production code and
-tests can use the same attribute without branching. The shim wraps the
-sync ``caldav.DAVClient`` via ``run_in_executor`` so blocking I/O never
-hits the HA event loop.
+Because caldav 2.1.0 predates the ``aio`` submodule, ``import caldav.aio``
+fails and the ``_CompatAsyncDAVClient`` shim below is always active in
+production. The shim wraps the sync ``caldav.DAVClient`` via
+``run_in_executor`` so blocking I/O never hits the HA event loop.
 
 Note on ``caldav.lib.error``: this submodule is imported unconditionally
 at module top (``from caldav.lib import error as caldav_error``) because
 it has shipped with every caldav release this integration cares to
-support (3.2.0+). If a future caldav refactor moves or removes this
+support (2.1.0+). If a future caldav refactor moves or removes this
 submodule, the integration will fail at import time -- that is
 intentional, the alternative would be a synthetic exception class that
 silently swallows error categorisation.
 
-WR-05: the original docstring claimed support for caldav 2.x; the
-manifest pin makes that claim moot. The shim is kept as defence-in-depth
-but the compatibility window documented here is "caldav 3.2.0+".
+BUG-C-006: caldav 2.1.0's ``Calendar.search()`` backward-compat error
+handler contains a bug (``*kwargs2`` passes dict keys as positional args,
+colliding with the ``sort_keys`` named parameter). The shim's
+``_CompatCalendar.event_by_uid`` bypasses this by calling
+``search(uid=uid, comp_class=caldav.Event)`` directly instead of
+delegating to the buggy ``event_by_uid()`` → ``object_by_uid()`` chain.
 """
 
 from __future__ import annotations
