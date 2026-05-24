@@ -1279,3 +1279,247 @@ async def test_compat_principal_invocation_pattern():
         "the attribute) and the shim must be updated to use "
         "`lambda: self._client.principal()`."
     )
+
+
+# ---------------------------------------------------------------------------
+# Shim activation — module-level try/except ImportError path
+#
+# This section tests the code path that runs in production when
+# HA has caldav==2.1.0 installed (which has no caldav.aio submodule).
+# The module-level block:
+#
+#   try:
+#       import caldav.aio
+#   except ImportError:
+#       caldav.aio = SimpleNamespace(AsyncDAVClient=_CompatAsyncDAVClient)
+#
+# is never exercised in the dev environment (caldav 3.x is installed and
+# exposes a real caldav.aio). These tests simulate the 2.x environment by
+# temporarily hiding caldav.aio and re-importing caldav_sync.
+# ---------------------------------------------------------------------------
+
+
+def test_shim_activated_when_caldav_aio_absent():
+    """Module-level shim installs _CompatAsyncDAVClient into caldav.aio on ImportError.
+
+    Simulates caldav 2.1.0 (no caldav.aio) by removing caldav.aio from
+    sys.modules and re-importing caldav_sync. Verifies that after the fresh
+    import caldav.aio.AsyncDAVClient is the compat shim, not the real 3.x class.
+    """
+    import sys
+    import caldav
+    from custom_components.asp_parking.caldav_sync import _CompatAsyncDAVClient
+
+    mod_key = "custom_components.asp_parking.caldav_sync"
+    saved_mod = sys.modules.get(mod_key)
+    saved_caldav_aio_mod = sys.modules.get("caldav.aio")
+    saved_caldav_aio_attr = getattr(caldav, "aio", None)
+
+    try:
+        # Force `import caldav.aio` to raise ImportError — simulates caldav 2.x.
+        # sys.modules entry of None causes ImportError; deleting the attribute
+        # ensures getattr(caldav, 'aio', ...) also misses before the shim sets it.
+        sys.modules["caldav.aio"] = None  # type: ignore[assignment]
+        if "aio" in caldav.__dict__:
+            del caldav.__dict__["aio"]
+
+        # Remove caldav_sync from both sys.modules and the package's attribute dict
+        # so Python re-executes the module file on the next import.
+        sys.modules.pop(mod_key, None)
+        import custom_components.asp_parking as _pkg
+        _pkg.__dict__.pop("caldav_sync", None)
+
+        from custom_components.asp_parking import caldav_sync as fresh  # noqa: F401
+
+        assert hasattr(caldav, "aio"), "caldav.aio must exist after fresh import (set by shim)"
+        installed = caldav.aio.AsyncDAVClient
+        # Re-importing the module creates a fresh class object, so `is` comparison
+        # across module instances fails. Check qualified name + module instead.
+        assert installed.__name__ == "_CompatAsyncDAVClient", (
+            f"Expected _CompatAsyncDAVClient; got {installed.__name__!r}"
+        )
+        assert "caldav_sync" in installed.__module__, (
+            f"Expected class from caldav_sync module; got module={installed.__module__!r}"
+        )
+    finally:
+        # Restore sys.modules and caldav.aio attribute
+        if saved_caldav_aio_mod is not None:
+            sys.modules["caldav.aio"] = saved_caldav_aio_mod
+        elif "caldav.aio" in sys.modules:
+            del sys.modules["caldav.aio"]
+
+        if saved_caldav_aio_attr is not None:
+            caldav.aio = saved_caldav_aio_attr
+        elif hasattr(caldav, "aio"):
+            delattr(caldav, "aio")
+
+        # Restore original cached module
+        if saved_mod is not None:
+            sys.modules[mod_key] = saved_mod
+        else:
+            sys.modules.pop(mod_key, None)
+
+
+# ---------------------------------------------------------------------------
+# _CompatCalendar — uncovered methods and error paths
+# ---------------------------------------------------------------------------
+
+
+async def test_compat_calendar_get_display_name_dispatches_via_executor():
+    """_CompatCalendar.get_display_name() returns the sync calendar's display name via executor."""
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar
+
+    sync_cal = MagicMock()
+    sync_cal.get_display_name = MagicMock(return_value="My Calendar")
+    sync_cal.url = "https://srv/cal/"
+
+    compat_cal = _CompatCalendar(sync_cal)
+    name = await compat_cal.get_display_name()
+
+    assert name == "My Calendar"
+    sync_cal.get_display_name.assert_called_once()
+
+
+async def test_compat_calendar_add_event_dispatches_via_executor():
+    """_CompatCalendar.add_event() passes args and kwargs through to the sync calendar."""
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar
+
+    fake_result = object()
+    sync_cal = MagicMock()
+    sync_cal.add_event = MagicMock(return_value=fake_result)
+    sync_cal.url = "https://srv/cal/"
+
+    compat_cal = _CompatCalendar(sync_cal)
+    result = await compat_cal.add_event(ical="BEGIN:VCALENDAR\nEND:VCALENDAR\n")
+
+    assert result is fake_result
+    sync_cal.add_event.assert_called_once_with(ical="BEGIN:VCALENDAR\nEND:VCALENDAR\n")
+
+
+async def test_compat_calendar_event_by_uid_raises_not_found_when_search_returns_empty():
+    """_CompatCalendar.event_by_uid() raises NotFoundError when search() returns no results.
+
+    BUG-C-006 fix: the shim calls search(uid=uid, comp_class=caldav.Event) directly.
+    When the server returns nothing, we raise NotFoundError ourselves.
+    """
+    import caldav
+    from caldav.lib import error as caldav_error
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar
+
+    uid = "missing@asp-parking.local"
+    sync_cal = MagicMock()
+    sync_cal.search = MagicMock(return_value=[])  # server found nothing
+    sync_cal.url = "https://srv/cal/"
+
+    compat_cal = _CompatCalendar(sync_cal)
+
+    with pytest.raises(caldav_error.NotFoundError):
+        await compat_cal.event_by_uid(uid)
+
+    sync_cal.search.assert_called_once_with(uid=uid, comp_class=caldav.Event)
+
+
+async def test_compat_calendar_event_by_uid_raises_not_found_when_no_uid_matches():
+    """_CompatCalendar.event_by_uid() raises NotFoundError when results exist but none match uid.
+
+    Some servers return events for broader search criteria; the shim filters
+    by e.id == uid and raises NotFoundError if the filter yields nothing.
+    """
+    import caldav
+    from caldav.lib import error as caldav_error
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar
+
+    uid = "target@asp-parking.local"
+    wrong_evt = MagicMock()
+    wrong_evt.id = "different@asp-parking.local"  # id does not match
+
+    sync_cal = MagicMock()
+    sync_cal.search = MagicMock(return_value=[wrong_evt])
+    sync_cal.url = "https://srv/cal/"
+
+    compat_cal = _CompatCalendar(sync_cal)
+
+    with pytest.raises(caldav_error.NotFoundError):
+        await compat_cal.event_by_uid(uid)
+
+
+def test_compat_calendar_url_property_delegates_to_sync_cal():
+    """_CompatCalendar.url is a pass-through property to the underlying sync calendar URL."""
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar
+
+    sync_cal = MagicMock()
+    sync_cal.url = "https://srv/cal/personal/"
+
+    compat_cal = _CompatCalendar(sync_cal)
+
+    assert compat_cal.url == "https://srv/cal/personal/"
+
+
+# ---------------------------------------------------------------------------
+# _CompatPrincipal.calendars() — wraps sync list in _CompatCalendar
+# ---------------------------------------------------------------------------
+
+
+async def test_compat_principal_calendars_wraps_each_in_compat_calendar():
+    """_CompatPrincipal.calendars() returns a list of _CompatCalendar instances.
+
+    The sync principal's calendars() is called via run_in_executor and each
+    result is wrapped so callers can use await cal.get_display_name() etc.
+    """
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar, _CompatPrincipal
+
+    sync_cal_a = MagicMock()
+    sync_cal_a.url = "https://srv/cal/a/"
+    sync_cal_b = MagicMock()
+    sync_cal_b.url = "https://srv/cal/b/"
+
+    sync_principal = MagicMock()
+    sync_principal.calendars = MagicMock(return_value=[sync_cal_a, sync_cal_b])
+
+    compat_principal = _CompatPrincipal(sync_principal)
+    result = await compat_principal.calendars()
+
+    assert len(result) == 2
+    assert all(isinstance(c, _CompatCalendar) for c in result)
+    assert result[0]._cal is sync_cal_a
+    assert result[1]._cal is sync_cal_b
+    sync_principal.calendars.assert_called_once()
+
+
+async def test_compat_principal_calendars_returns_empty_list_when_no_calendars():
+    """_CompatPrincipal.calendars() returns [] when the sync principal has no calendars."""
+    from custom_components.asp_parking.caldav_sync import _CompatPrincipal
+
+    sync_principal = MagicMock()
+    sync_principal.calendars = MagicMock(return_value=[])
+
+    compat_principal = _CompatPrincipal(sync_principal)
+    result = await compat_principal.calendars()
+
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# _CompatAsyncDAVClient — missing DAVClient error path
+# ---------------------------------------------------------------------------
+
+
+async def test_compat_async_dav_client_aenter_raises_runtime_error_when_dav_client_missing():
+    """_CompatAsyncDAVClient.__aenter__ raises RuntimeError when caldav.DAVClient is absent.
+
+    Defensive guard for a caldav package that removed DAVClient entirely.
+    """
+    import caldav
+    from custom_components.asp_parking.caldav_sync import _CompatAsyncDAVClient
+
+    # caldav.DAVClient is resolved via caldav's module-level __getattr__, so it is
+    # not present in caldav.__dict__. Shadow it by setting the name to None in the
+    # dict directly — that takes precedence over __getattr__ and causes getattr()
+    # to return None, triggering the RuntimeError guard in __aenter__.
+    caldav.DAVClient = None  # type: ignore[assignment]
+    try:
+        client = _CompatAsyncDAVClient(url="https://srv/", username="u", password="p")
+        with pytest.raises(RuntimeError, match="caldav.DAVClient not found"):
+            await client.__aenter__()
+    finally:
+        del caldav.DAVClient  # restore __getattr__ resolution
