@@ -85,7 +85,27 @@ class _CompatCalendar:
 
     async def event_by_uid(self, uid: str) -> _CompatEvent:
         loop = asyncio.get_running_loop()
-        evt = await loop.run_in_executor(None, self._cal.event_by_uid, uid)
+
+        def _sync_event_by_uid() -> Any:
+            # BUG-C-006: caldav 2.1.0's event_by_uid() → object_by_uid() → search(root)
+            # calls search() without comp_class (comp_class=None). When the server returns
+            # a ReportError AND backward_compatibility_mode is enabled, caldav 2.1.0 calls
+            # self.search(sort_keys=sort_keys, *kwargs2, **kwargs) — `*kwargs2` iterates the
+            # dict KEYS as positional args, landing "split_expanded" at positional slot 4
+            # (= sort_keys) while sort_keys=sort_keys is ALSO a keyword → TypeError.
+            #
+            # Fix: bypass event_by_uid() and call search(uid=uid, comp_class=caldav.Event)
+            # directly. comp_class=Event is truthy → `not comp_class` is False → the buggy
+            # backward-compat handler is skipped unconditionally. caldav 2.1.0's
+            # build_search_xml_query() handles `uid` via **kwargs so the query is correct.
+            results = self._cal.search(uid=uid, comp_class=caldav.Event)
+            matches = [e for e in results if e.id == uid]
+            if not matches:
+                from caldav.lib import error as _caldav_err
+                raise _caldav_err.NotFoundError(f"{uid} not found on server")
+            return matches[0]
+
+        evt = await loop.run_in_executor(None, _sync_event_by_uid)
         return _CompatEvent(evt)
 
     async def add_event(self, *args: Any, **kwargs: Any) -> Any:

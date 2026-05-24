@@ -1205,18 +1205,26 @@ def test_compat_principal_calendar_forwards_cal_url_kwarg():
 
 
 async def test_compat_calendar_event_by_uid_wraps_result():
-    """_CompatCalendar.event_by_uid() wraps the sync return value in _CompatEvent."""
+    """_CompatCalendar.event_by_uid() wraps the sync return value in _CompatEvent.
+
+    BUG-C-006: the shim bypasses caldav 2.1.0's event_by_uid()/object_by_uid() chain
+    (which triggers a TypeError via the buggy backward-compat search() handler) and
+    calls search(uid=uid, comp_class=caldav.Event) directly instead.
+    """
+    import caldav
     from custom_components.asp_parking.caldav_sync import _CompatCalendar, _CompatEvent
 
+    uid = "abc@asp-parking.local"
     sync_evt = MagicMock()
+    sync_evt.id = uid  # exact-UID post-filter requires .id == uid
     sync_cal = MagicMock()
-    sync_cal.event_by_uid = MagicMock(return_value=sync_evt)
+    sync_cal.search = MagicMock(return_value=[sync_evt])
     sync_cal.url = "https://srv/cal/"
 
     compat_cal = _CompatCalendar(sync_cal)
-    result = await compat_cal.event_by_uid("abc@asp-parking.local")
+    result = await compat_cal.event_by_uid(uid)
 
-    sync_cal.event_by_uid.assert_called_once_with("abc@asp-parking.local")
+    sync_cal.search.assert_called_once_with(uid=uid, comp_class=caldav.Event)
     assert isinstance(result, _CompatEvent)
     assert result._evt is sync_evt
 
