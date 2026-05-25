@@ -1,4 +1,6 @@
 .planning/
+.claude/
+CLAUDE.md
 
 # Spatial index files (too large for git, built via build script / downloaded on first HA setup)
 src/gps2asp/data/index/*.idx
