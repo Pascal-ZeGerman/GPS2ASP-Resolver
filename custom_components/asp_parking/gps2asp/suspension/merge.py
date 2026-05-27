@@ -28,7 +28,7 @@ def apply_suspension(
     Otherwise returns a new frozen instance with suspended=True,
     suspension_reason set to info.reason, and resolution_reason derived
     from info.source ('holiday' -> 'suspended_holiday', 'emergency' ->
-    'suspended_emergency').
+    'suspended_emergency', unknown -> 'suspended_unknown').
 
     Args:
         schedule: Pipeline output from compute_schedule().
@@ -43,22 +43,23 @@ def apply_suspension(
     if not isinstance(schedule, (ScheduleFound, ASPActiveNow)):
         return schedule
 
-    resolution_reason: Literal["suspended_holiday", "suspended_emergency"]
+    resolution_reason: Literal[
+        "suspended_holiday", "suspended_emergency", "suspended_unknown"
+    ]
     if info.source == "holiday":
         resolution_reason = "suspended_holiday"
     elif info.source in ("emergency", "ha_nyc311"):
         resolution_reason = "suspended_emergency"
     else:
         # BUG-T-006: elevate unknown-source log to ERROR so HA diagnostics
-        # surface future-introduced sources (e.g. "weather", "construction")
-        # instead of silently mis-classifying them as holidays. The
-        # default-to-suspended_holiday behaviour is intentionally preserved
-        # for backward compatibility per RESEARCH.md.
+        # surface future-introduced sources (e.g. "weather", "construction").
+        # Use "suspended_unknown" so the sensor label itself signals that
+        # something unexpected occurred rather than silently mis-classifying.
         logger.error(
-            "apply_suspension: unknown source %r — defaulting to 'suspended_holiday'",
+            "apply_suspension: unknown source %r — using 'suspended_unknown'",
             info.source,
         )
-        resolution_reason = "suspended_holiday"
+        resolution_reason = "suspended_unknown"
 
     return dataclasses.replace(
         schedule,

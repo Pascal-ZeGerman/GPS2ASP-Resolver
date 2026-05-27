@@ -912,7 +912,7 @@ class ASPParkingCoordinator:
             age_days = (dt_util.utcnow() - created_at).total_seconds() / 86400.0
             self._remote_age_cache = (dt_util.utcnow(), age_days)
             return age_days
-        except (httpx.HTTPError, ValueError, KeyError) as exc:
+        except (httpx.HTTPError, httpx.TransportError, ValueError, KeyError) as exc:
             logger.warning(
                 "asp_parking: github releases API failed: %s "
                 "-- falling back to from_source",
@@ -954,12 +954,28 @@ class ASPParkingCoordinator:
         if isinstance(raw, dict):
             lbp_raw = raw.get("last_button_press")
             lsc_raw = raw.get("last_stale_check")
-            self._last_button_press = (
-                dt_util.parse_datetime(lbp_raw) if lbp_raw else None
-            )
-            self._last_stale_check = (
-                dt_util.parse_datetime(lsc_raw) if lsc_raw else None
-            )
+            if lbp_raw:
+                parsed_lbp = dt_util.parse_datetime(lbp_raw)
+                if parsed_lbp is None:
+                    logger.warning(
+                        "asp_parking: index_stale store has invalid "
+                        "last_button_press %r; discarding",
+                        lbp_raw,
+                    )
+                self._last_button_press = parsed_lbp
+            else:
+                self._last_button_press = None
+            if lsc_raw:
+                parsed_lsc = dt_util.parse_datetime(lsc_raw)
+                if parsed_lsc is None:
+                    logger.warning(
+                        "asp_parking: index_stale store has invalid "
+                        "last_stale_check %r; discarding",
+                        lsc_raw,
+                    )
+                self._last_stale_check = parsed_lsc
+            else:
+                self._last_stale_check = None
         else:
             if raw is not None:
                 logger.warning(
@@ -1040,20 +1056,31 @@ class ASPParkingCoordinator:
                 notification_id="asp_parking_index_stale",
             )
             await self.async_request_rebuild(triggered_by="stale_check")
+        except Exception:  # noqa: BLE001
+            logger.error(
+                "ASP Parking: stale-check/rebuild encountered unexpected error",
+                exc_info=True,
+            )
         finally:
             # SPEC AC: always write last_stale_check on every code path.
             self._last_stale_check = dt_util.utcnow()
             if self._index_stale_store is not None:
-                await self._index_stale_store.async_save(
-                    {
-                        "last_button_press": (
-                            self._last_button_press.isoformat()
-                            if self._last_button_press
-                            else None
-                        ),
-                        "last_stale_check": self._last_stale_check.isoformat(),
-                    }
-                )
+                try:
+                    await self._index_stale_store.async_save(
+                        {
+                            "last_button_press": (
+                                self._last_button_press.isoformat()
+                                if self._last_button_press
+                                else None
+                            ),
+                            "last_stale_check": self._last_stale_check.isoformat(),
+                        }
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "ASP Parking: could not persist stale-check timestamp",
+                        exc_info=True,
+                    )
 
     # ------------------------------------------------------------------
     # ha-nyc311 bridge helpers
@@ -1202,7 +1229,7 @@ class ASPParkingCoordinator:
                 _un = self.entry.options.get(CONF_CALDAV_USERNAME, "")
                 sanitised = _caldav_sanitise(str(err), _pw, _un)
                 logger.warning(
-                    "ASP Parking: CalDAV write failed: %s", sanitised
+                    "ASP Parking: CalDAV write failed: %s", sanitised, exc_info=True
                 )
                 if not self._caldav_write_error_notified:
                     _display = sanitised[:200] + ("…" if len(sanitised) > 200 else "")
@@ -1272,7 +1299,7 @@ class ASPParkingCoordinator:
             except Exception as err:  # noqa: BLE001
                 sanitised = _caldav_sanitise(str(err), password, username)
                 logger.warning(
-                    "ASP Parking: CalDAV delete failed: %s", sanitised
+                    "ASP Parking: CalDAV delete failed: %s", sanitised, exc_info=True
                 )
                 # Finding 3: separate flag + notification ID from write path.
                 if not self._caldav_delete_error_notified:
@@ -1762,6 +1789,30 @@ class ASPParkingCoordinator:
                 err,
             )
 
+        except ValueError as err:
+            # Data-integrity or programming errors (e.g. zero-length segment from
+            # determine_side, or SpatialIndex path mismatch after rebuild).  These
+            # are intentionally loud -- do NOT silently retain stale state.
+            self.data.last_error = str(err)
+            self.data.last_error_time = dt_util.utcnow()
+            logger.error(
+                "Pipeline data-integrity error at (%.4f, %.4f): %s",
+                lat,
+                lon,
+                err,
+                exc_info=True,
+            )
+            from homeassistant.components.persistent_notification import (
+                async_create as pn_create,
+            )
+            pn_create(
+                self.hass,
+                f"A data-integrity error occurred at ({lat:.4f}, {lon:.4f}): {err}. "
+                "Sensor values may be stale. Check your Home Assistant logs for details.",
+                title="ASP Parking: Pipeline Error",
+                notification_id="asp_parking_pipeline_integrity_error",
+            )
+
         except Exception as err:  # noqa: BLE001
             # SODA API errors, network errors, unexpected exceptions
             # Fall back to last known state -- do NOT clear schedule or special_state
@@ -1868,6 +1919,8 @@ class ASPParkingCoordinator:
         new_cache: dict[
             tuple[str, str, str, str], dict[str, list[dict] | int]
         ] = {}
+        fetch_attempt_count = 0
+        fetch_failure_count = 0
         for cand in candidates:
             # WR-02: skip segments with missing cross-street names. CSCL has
             # boundary segments / ramps / named-only intersections with empty
@@ -1894,9 +1947,11 @@ class ASPParkingCoordinator:
                     to_soda,
                     side,
                 )
+                fetch_attempt_count += 1
                 try:
                     records = await client.fetch_signs(query)
                 except Exception:  # noqa: BLE001
+                    fetch_failure_count += 1
                     logger.debug(
                         "Phase 26: pre-seed fetch failed for %s/%s/%s/%s",
                         cand.full_street_name,
@@ -1919,6 +1974,12 @@ class ASPParkingCoordinator:
                 )
                 new_cache[key] = {"records": records, "soda_level": 1}
 
+        if fetch_failure_count > 0 and fetch_failure_count == fetch_attempt_count:
+            logger.warning(
+                "Phase 26: pre-seed completed with all %d fetch(es) failing "
+                "and 0 cache entries; SODA may be unavailable",
+                fetch_failure_count,
+            )
         self._sign_cache = new_cache
         logger.info(
             "Phase 26: pre-seed complete — %d (segment, side) entries cached "
@@ -2131,8 +2192,18 @@ class ASPParkingCoordinator:
         _async_update_suspension already handles network/auth errors gracefully.
         """
         if self._holiday_calendar is not None:
-            await self._holiday_calendar.load()
-            logger.debug("ASP Parking: heartbeat — ICS re-fetched, suspension re-checking")
+            try:
+                await self._holiday_calendar.load()
+                logger.debug(
+                    "ASP Parking: heartbeat — ICS re-fetched, suspension re-checking"
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "ASP Parking: heartbeat — ICS re-fetch failed; "
+                    "suspension state may be stale until next heartbeat",
+                    exc_info=True,
+                )
+                # Continue to suspension check with existing calendar data.
 
         await self._async_update_suspension()
 

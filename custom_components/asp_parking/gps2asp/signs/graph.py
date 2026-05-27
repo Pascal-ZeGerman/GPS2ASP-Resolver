@@ -190,9 +190,10 @@ class StreetGraph:
                 queue.append((neighbor, depth + 1))
 
         if hit_depth_limit:
-            logger.debug(
+            logger.warning(
                 "BFS hit depth limit %d before exhausting queue; "
-                "consider raising _BFS_DEPTH_LIMIT for long avenues",
+                "Level 4 mid-span lookup may return NoMatchSchedule on long avenues "
+                "(consider raising _BFS_DEPTH_LIMIT)",
                 _BFS_DEPTH_LIMIT,
             )
         return float("inf")

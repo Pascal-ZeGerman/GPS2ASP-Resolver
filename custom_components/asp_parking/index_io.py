@@ -700,7 +700,12 @@ def _sync_fetch_asp_signs(
                 if len(records) < SIGNS_BATCH_SIZE:
                     break
                 offset += SIGNS_BATCH_SIZE
-    except httpx.HTTPError as exc:
+    except (
+        httpx.HTTPError,
+        httpx.TransportError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+    ) as exc:
         # Fail-soft: SODA outages must NOT block a CSCL rebuild. The
         # downstream segments simply get has_asp=False, mirroring the
         # scripts/build_index.py behavior (lines 633-642).
@@ -814,7 +819,13 @@ def _build_rtree_and_metadata(
                 "has_asp_right": has_right,
             }
     finally:
-        idx.close()
+        try:
+            idx.close()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "rtree index close failed; index file may be incomplete",
+                exc_info=True,
+            )
 
     (tmp / "segments.json").write_text(json.dumps(segments_meta))
     return insert_count

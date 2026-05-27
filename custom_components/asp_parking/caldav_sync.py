@@ -169,7 +169,8 @@ class _CompatAsyncDAVClient:
                 await loop.run_in_executor(None, client.close)
             except Exception:
                 logger.debug(
-                    "CalDAV shim: error closing sync client connection",
+                    "CalDAV shim: error closing sync client connection%s",
+                    " (during exception handling)" if exc_info[0] is not None else "",
                     exc_info=True,
                 )
 

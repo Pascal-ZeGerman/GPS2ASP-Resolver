@@ -138,7 +138,8 @@ class ScheduleFound:
             None when not suspended.
         resolution_reason: Machine-readable suspension classification. One of:
             'suspended_holiday' (holiday suspension),
-            'suspended_emergency' (emergency/weather suspension).
+            'suspended_emergency' (emergency/weather suspension),
+            'suspended_unknown' (suspension source not recognised).
             None when not suspended / not yet annotated by apply_suspension().
     """
 
@@ -159,6 +160,7 @@ class ScheduleFound:
         Literal[
             "suspended_holiday",
             "suspended_emergency",
+            "suspended_unknown",
         ]
         | None
     ) = None
@@ -182,7 +184,8 @@ class ASPActiveNow:
             None when not suspended.
         resolution_reason: Machine-readable suspension classification. One of:
             'suspended_holiday' (holiday suspension),
-            'suspended_emergency' (emergency/weather suspension).
+            'suspended_emergency' (emergency/weather suspension),
+            'suspended_unknown' (suspension source not recognised).
             None when not suspended / not yet annotated by apply_suspension().
     """
 
@@ -201,6 +204,7 @@ class ASPActiveNow:
         Literal[
             "suspended_holiday",
             "suspended_emergency",
+            "suspended_unknown",
         ]
         | None
     ) = None

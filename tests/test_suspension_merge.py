@@ -213,10 +213,10 @@ def test_apply_suspension_unknown_source_logs_error(
     with caplog.at_level(logging.ERROR, logger="gps2asp.suspension.merge"):
         result = apply_suspension(schedule_found, info)
 
-    # Behaviour preserved: still annotated, still defaults to suspended_holiday.
+    # Behaviour: still annotated, uses "suspended_unknown" so sensor label signals the issue.
     assert isinstance(result, ScheduleFound)
     assert result.suspended is True
-    assert result.resolution_reason == "suspended_holiday"
+    assert result.resolution_reason == "suspended_unknown"
 
     error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(error_records) == 1, (
