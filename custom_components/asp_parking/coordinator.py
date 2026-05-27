@@ -417,7 +417,12 @@ class ASPParkingCoordinator:
                     self._debug_datetime = parsed.astimezone(NYC_TZ)
                 else:
                     self._debug_datetime = parsed.replace(tzinfo=NYC_TZ)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as exc:
+                logger.warning(
+                    "ASP Parking: invalid debug datetime %r — ignoring (%s)",
+                    raw_dt,
+                    exc,
+                )
                 self._debug_datetime = None
         elif isinstance(raw_dt, datetime):
             self._debug_datetime = (
@@ -1075,6 +1080,8 @@ class ASPParkingCoordinator:
                             "last_stale_check": self._last_stale_check.isoformat(),
                         }
                     )
+                except asyncio.CancelledError:
+                    raise
                 except Exception:  # noqa: BLE001
                     logger.warning(
                         "ASP Parking: could not persist stale-check timestamp",
@@ -1508,7 +1515,11 @@ class ASPParkingCoordinator:
                 name="asp_parking_caldav_move_guard",
             )
 
-        self.hass.async_create_task(self._debouncer.async_call())
+        self.entry.async_create_background_task(
+            self.hass,
+            self._debouncer.async_call(),
+            name="asp_parking_debounce",
+        )
 
     # ------------------------------------------------------------------
     # Phase 39: window-boundary timer (one-shot async_call_later)
@@ -2219,7 +2230,11 @@ class ASPParkingCoordinator:
                 self._pending_lat = lat
             if self._pending_lon is None:
                 self._pending_lon = lon
-            self.hass.async_create_task(self._debouncer.async_call())
+            self.entry.async_create_background_task(
+                self.hass,
+                self._debouncer.async_call(),
+                name="asp_parking_debounce",
+            )
         else:
             logger.debug(
                 "ASP Parking: heartbeat — no GPS coordinates, pipeline re-run skipped"

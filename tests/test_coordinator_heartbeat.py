@@ -60,6 +60,7 @@ def _make_stub(
         _pending_lat=pending_lat,
         _pending_lon=pending_lon,
         hass=SimpleNamespace(async_create_task=MagicMock()),
+        entry=SimpleNamespace(async_create_background_task=MagicMock()),
         _debouncer=AsyncMock(async_call=AsyncMock()),
     )
 
@@ -80,8 +81,8 @@ async def test_heartbeat_with_gps():
     stub._holiday_calendar.load.assert_awaited_once()
     # Suspension must have been re-checked
     stub._async_update_suspension.assert_awaited_once()
-    # Debouncer must have been triggered (via async_create_task)
-    stub.hass.async_create_task.assert_called_once()
+    # Debouncer must have been triggered (via async_create_background_task)
+    stub.entry.async_create_background_task.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -108,7 +109,7 @@ async def test_heartbeat_null_calendar():
     # Suspension must still be called even when calendar is None
     stub._async_update_suspension.assert_awaited_once()
     # Debouncer not triggered (no GPS)
-    stub.hass.async_create_task.assert_not_called()
+    stub.entry.async_create_background_task.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -131,4 +132,4 @@ async def test_heartbeat_pending_coords_preserved():
         f"Expected _pending_lon=-73.1111, got {stub._pending_lon}"
     )
     # Debouncer still triggered (GPS was available)
-    stub.hass.async_create_task.assert_called_once()
+    stub.entry.async_create_background_task.assert_called_once()

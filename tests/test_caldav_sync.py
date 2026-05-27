@@ -883,9 +883,9 @@ async def test_list_calendars_get_display_name_raises_generic_exception():
 
 
 async def test_write_or_update_event_add_event_raises_propagates():
-    """Edge 4: delete succeeds (stored_uid differs) but add_event raises → CalDAVAuthError propagates.
+    """Edge 4: delete succeeds (stored_uid differs) but add_event raises → CalDAVWriteError propagates.
 
-    add_event failures are wrapped in CalDAVAuthError to ensure credentials
+    add_event failures are wrapped in CalDAVWriteError to ensure credentials
     are sanitised from any error message echoed back by the server.
     """
     cs = _require_caldav_sync()
@@ -930,7 +930,7 @@ async def test_write_or_update_event_add_event_raises_propagates():
         "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
         return_value=fake_client,
     ):
-        with pytest.raises(cs.CalDAVAuthError) as exc_info:
+        with pytest.raises(cs.CalDAVWriteError) as exc_info:
             await cs.write_or_update_event(
                 config=config,
                 entry_id=entry_id,
@@ -940,7 +940,7 @@ async def test_write_or_update_event_add_event_raises_propagates():
 
     msg = str(exc_info.value)
     assert "quota exceeded" in msg, (
-        f"Error detail missing from CalDAVAuthError: {msg!r}"
+        f"Error detail missing from CalDAVWriteError: {msg!r}"
     )
     assert "s3cr3t" not in msg, f"Password must be sanitised from error: {msg!r}"
 

@@ -169,7 +169,7 @@ class _CompatAsyncDAVClient:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, client.close)
             except Exception:
-                logger.debug(
+                logger.warning(
                     "CalDAV shim: error closing sync client connection%s",
                     " (during exception handling)" if exc_info[0] is not None else "",
                     exc_info=True,
@@ -227,6 +227,10 @@ PRODID = "-//ASP Parking//GPS2ASP//EN"
 
 class CalDAVAuthError(Exception):
     """Raised when CalDAV credential validation or API call fails."""
+
+
+class CalDAVWriteError(Exception):
+    """Raised when a CalDAV event write or delete operation fails (not an auth issue)."""
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +519,8 @@ async def validate_connection(*, url: str, username: str, password: str) -> None
         raise CalDAVAuthError(
             f"Server error: {_sanitise(str(err), password, username)}"
         ) from err
+    except asyncio.CancelledError:
+        raise
     except Exception as err:  # noqa: BLE001 — wrap everything (D-03)
         raise CalDAVAuthError(
             f"Connection error: {_sanitise(str(err), password, username)}"
@@ -549,6 +555,8 @@ async def list_calendars(
             for cal in calendars:
                 try:
                     name = await cal.get_display_name()
+                except asyncio.CancelledError:
+                    raise
                 except Exception:  # noqa: BLE001 — fall back to URL for any failure
                     logger.warning(
                         "CalDAV: could not fetch display name for calendar %s, falling back to URL",
@@ -568,6 +576,8 @@ async def list_calendars(
         raise CalDAVAuthError(
             f"Server error: {_sanitise(str(err), password, username)}"
         ) from err
+    except asyncio.CancelledError:
+        raise
     except Exception as err:  # noqa: BLE001 — wrap everything (D-03)
         raise CalDAVAuthError(
             f"Connection error: {_sanitise(str(err), password, username)}"
@@ -634,12 +644,14 @@ async def write_or_update_event(
         try:
             await cal.add_event(ical=ical_text)
         except caldav_error.DAVError as exc:
-            raise CalDAVAuthError(
+            raise CalDAVWriteError(
                 f"Failed to write event to calendar {config.calendar_url!r}: "
                 f"{_sanitise(str(exc), config.password, config.username)}"
             ) from exc
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001
-            raise CalDAVAuthError(
+            raise CalDAVWriteError(
                 f"Unexpected error writing CalDAV event: "
                 f"{_sanitise(str(exc), config.password, config.username)}"
             ) from exc
