@@ -1011,14 +1011,18 @@ async def test_safety_window_one_second_before_boundary_spawns_delete():
 # --- _async_caldav_write_or_update store-save failure ---
 
 
-async def test_write_or_update_store_save_raises_caught_and_notifies(monkeypatch):
-    """async_save raising OSError is caught by the broad except handler.
+async def test_write_or_update_store_save_raises_no_false_sync_failure(monkeypatch):
+    """async_save OSError is NOT treated as a CalDAV write failure.
 
-    The `try` block in _async_caldav_write_or_update wraps both the
-    caldav_sync call AND async_save, so an OSError from async_save is caught,
-    logged, and surfaced as a persistent notification rather than propagating.
-    This documents the actual behavior: storage failures are NOT silently
-    swallowed — they trigger the error notification path.
+    The Store persistence is in its own inner try/except (separate from the
+    caldav_sync call). An OSError from async_save must:
+      - NOT create the "CalDAV sync failed" persistent notification
+      - NOT set _caldav_write_error_notified = True
+      - NOT raise to the caller
+
+    This prevents a storage failure from being misreported as a CalDAV
+    credential or write error, confusing the user into thinking the calendar
+    event was not written when it actually was.
     """
     _require_caldav_sync()
     stub = _make_coord_stub_caldav()
@@ -1038,16 +1042,18 @@ async def test_write_or_update_store_save_raises_caught_and_notifies(monkeypatch
         return_value=new_uid,
     ):
         write = _bind(stub, "_async_caldav_write_or_update")
-        # Must NOT raise — the OSError is caught by the broad except block
+        # Must NOT raise — the OSError is caught by the inner Store except block
         await write(stub.data.schedule_result)
 
-    # The error notification must be created (first failure in streak)
-    assert pn_create.call_count == 1, (
-        f"OSError from async_save must trigger one error notification; "
-        f"got {pn_create.call_count} calls"
+    # Must NOT create the CalDAV error notification — the write succeeded
+    assert pn_create.call_count == 0, (
+        f"OSError from async_save must NOT trigger a 'CalDAV sync failed' notification "
+        f"(event was written successfully); got {pn_create.call_count} pn_create calls"
     )
-    assert stub._caldav_write_error_notified is True, (
-        "_caldav_write_error_notified must be True after async_save failure"
+    # Must NOT set the error flag — this was a storage issue, not a CalDAV issue
+    assert stub._caldav_write_error_notified is False, (
+        "_caldav_write_error_notified must remain False after a Store failure "
+        "(the calendar event was successfully written to the CalDAV server)"
     )
 
 

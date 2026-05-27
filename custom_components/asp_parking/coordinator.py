@@ -665,23 +665,32 @@ class ASPParkingCoordinator:
         # touch this anchor (D-03 — button-only double-press window).
         # The Store itself is owned by Plan 03; this plan writes through
         # it defensively if hydrated, otherwise is a no-op.
+        # Set the flag BEFORE any await so a second press during the Store
+        # write cannot bypass the IDX-02 concurrent-press guard (CR-01).
+        self._is_rebuilding = True
+
         if triggered_by == "button":
             self._last_button_press = dt_util.utcnow()
             if self._index_stale_store is not None:
-                await self._index_stale_store.async_save(
-                    {
-                        "last_button_press": self._last_button_press.isoformat(),
-                        "last_stale_check": (
-                            self._last_stale_check.isoformat()
-                            if self._last_stale_check
-                            else None
-                        ),
-                    }
-                )
-
-        # Set the flag BEFORE spawning so a second call during the same
-        # event-loop turn cannot bypass the guard (CR-01 / IDX-02).
-        self._is_rebuilding = True
+                try:
+                    await self._index_stale_store.async_save(
+                        {
+                            "last_button_press": self._last_button_press.isoformat(),
+                            "last_stale_check": (
+                                self._last_stale_check.isoformat()
+                                if self._last_stale_check
+                                else None
+                            ),
+                        }
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "ASP Parking: could not persist last_button_press timestamp; "
+                        "double-press window will not survive a restart",
+                        exc_info=True,
+                    )
         self._async_notify_entities()
         # Construct the coroutine via the class to keep this method testable
         # with a SimpleNamespace stub that binds only async_request_rebuild
@@ -827,10 +836,11 @@ class ASPParkingCoordinator:
             finally:
                 # D-06: ALWAYS clear the flag and re-notify so the button
                 # is usable again and the binary_sensor flips back to off.
-                # Dismiss the in-progress notification even on CancelledError
-                # (BaseException) so it never stays stuck after a HA restart.
-                pn_dismiss(self.hass, "asp_parking_index_rebuild")
+                # _is_rebuilding is cleared FIRST so a second CancelledError
+                # or exception inside pn_dismiss / _async_notify_entities
+                # cannot leave the flag stuck True permanently.
                 self._is_rebuilding = False
+                pn_dismiss(self.hass, "asp_parking_index_rebuild")
                 self._async_notify_entities()
 
     # ------------------------------------------------------------------
@@ -919,10 +929,13 @@ class ASPParkingCoordinator:
             age_days = (dt_util.utcnow() - created_at).total_seconds() / 86400.0
             self._remote_age_cache = (dt_util.utcnow(), age_days)
             return age_days
-        except (httpx.HTTPError, httpx.TransportError, ValueError, KeyError) as exc:
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "asp_parking: github releases API failed: %s "
+                "asp_parking: github releases API failed (%s: %s) "
                 "-- falling back to from_source",
+                type(exc).__name__,
                 exc,
             )
             self._remote_age_cache = (dt_util.utcnow(), None)
@@ -969,7 +982,9 @@ class ASPParkingCoordinator:
                         "last_button_press %r; discarding",
                         lbp_raw,
                     )
-                self._last_button_press = parsed_lbp
+                    self._last_button_press = None
+                else:
+                    self._last_button_press = parsed_lbp
             else:
                 self._last_button_press = None
             if lsc_raw:
@@ -980,7 +995,9 @@ class ASPParkingCoordinator:
                         "last_stale_check %r; discarding",
                         lsc_raw,
                     )
-                self._last_stale_check = parsed_lsc
+                    self._last_stale_check = None
+                else:
+                    self._last_stale_check = parsed_lsc
             else:
                 self._last_stale_check = None
         else:
@@ -1064,6 +1081,13 @@ class ASPParkingCoordinator:
             logger.error(
                 "ASP Parking: stale-check/rebuild encountered unexpected error",
                 exc_info=True,
+            )
+            pn_create(
+                self.hass,
+                "The automatic stale-index check failed unexpectedly. "
+                "Check your Home Assistant logs for details.",
+                title="ASP Parking: Stale Check Failed",
+                notification_id="asp_parking_index_stale_check_error",
             )
         finally:
             # SPEC AC: always write last_stale_check on every code path.
@@ -1200,10 +1224,22 @@ class ASPParkingCoordinator:
                     stored_uid=self._caldav_uid,
                 )
                 # Success: persist UID via load-merge-save so future store keys are preserved.
+                # Store persistence is in its own try/except so a disk/HA-storage
+                # failure does NOT trigger the "CalDAV sync failed" notification —
+                # the calendar event was written successfully.
                 self._caldav_uid = new_uid
-                _store_data = await self._caldav_store.async_load() or {}  # type: ignore[union-attr]
-                _store_data["uid"] = new_uid
-                await self._caldav_store.async_save(_store_data)  # type: ignore[union-attr]
+                try:
+                    _store_data = await self._caldav_store.async_load() or {}  # type: ignore[union-attr]
+                    _store_data["uid"] = new_uid
+                    await self._caldav_store.async_save(_store_data)  # type: ignore[union-attr]
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "ASP Parking: CalDAV event written but UID persistence failed "
+                        "(event is on the calendar; next restart may re-create it)",
+                        exc_info=True,
+                    )
                 if self._caldav_write_error_notified:
                     pn_dismiss(self.hass, "asp_parking_caldav_error")
                     self._caldav_write_error_notified = False

@@ -169,7 +169,12 @@ class _CompatAsyncDAVClient:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, client.close)
             except Exception:
-                logger.warning(
+                # Use DEBUG when we're already inside exception handling (e.g.
+                # CancelledError during HA shutdown) — close failures in that
+                # context are expected and not user-actionable.  Use WARNING
+                # only for unexpected close errors during normal teardown.
+                _log_fn = logger.debug if exc_info[0] is not None else logger.warning
+                _log_fn(
                     "CalDAV shim: error closing sync client connection%s",
                     " (during exception handling)" if exc_info[0] is not None else "",
                     exc_info=True,

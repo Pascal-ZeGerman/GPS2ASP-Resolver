@@ -945,6 +945,133 @@ async def test_write_or_update_event_add_event_raises_propagates():
     assert "s3cr3t" not in msg, f"Password must be sanitised from error: {msg!r}"
 
 
+@pytest.mark.asyncio
+async def test_write_or_update_event_dav_error_raises_write_error():
+    """CalDAVWriteError DAVError path: caldav_error.DAVError from add_event → CalDAVWriteError.
+
+    Distinct from the generic Exception path — the message prefix must be
+    'Failed to write event to calendar', not 'Unexpected error writing'.
+    """
+    from caldav.lib import error as caldav_error
+
+    cs = _require_caldav_sync()
+
+    entry_id = "entry_dav"
+    start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
+    window = _make_cleaning_window(start=start, end=start.replace(hour=9, minute=30))
+    schedule = _make_schedule_found(start=start)
+    object.__setattr__(schedule, "next_window", window)
+
+    cal = AsyncMock()
+    cal.event_by_uid = AsyncMock(side_effect=caldav_error.NotFoundError())
+    cal.add_event = AsyncMock(side_effect=caldav_error.DAVError("server 507"))
+
+    principal = SimpleNamespace(
+        calendar=MagicMock(return_value=cal),
+        calendars=AsyncMock(return_value=[]),
+    )
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    config = cs.CalDAVConfig(
+        url="https://srv/dav/",
+        username="alice",
+        password="s3cr3t",
+        calendar_url="https://srv/cal/work/",
+        title_template="ASP: {street}",
+        safety_window_minutes=15,
+    )
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        with pytest.raises(cs.CalDAVWriteError) as exc_info:
+            await cs.write_or_update_event(
+                config=config,
+                entry_id=entry_id,
+                schedule=schedule,
+                stored_uid=None,
+            )
+
+    msg = str(exc_info.value)
+    assert "Failed to write event to calendar" in msg, (
+        f"Expected 'Failed to write event to calendar' prefix; got: {msg!r}"
+    )
+    assert "s3cr3t" not in msg, f"Password must be sanitised from error: {msg!r}"
+
+
+@pytest.mark.asyncio
+async def test_validate_connection_cancelled_error_propagates():
+    """CancelledError from get_principal must not be swallowed as CalDAVAuthError."""
+    import asyncio
+
+    cs = _require_caldav_sync()
+
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(side_effect=asyncio.CancelledError())
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await cs.validate_connection(
+                url="https://srv/dav/", username="u", password="p"
+            )
+
+
+@pytest.mark.asyncio
+async def test_list_calendars_cancelled_error_propagates():
+    """CancelledError at the outer level must not be swallowed as CalDAVAuthError."""
+    import asyncio
+
+    cs = _require_caldav_sync()
+
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(side_effect=asyncio.CancelledError())
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await cs.list_calendars(url="https://srv/dav/", username="u", password="p")
+
+
+@pytest.mark.asyncio
+async def test_list_calendars_get_display_name_cancelled_propagates():
+    """CancelledError from get_display_name must not fall into the URL-fallback path."""
+    import asyncio
+
+    cs = _require_caldav_sync()
+
+    cal = AsyncMock()
+    cal.url = "https://srv/cal/work/"
+    cal.get_display_name = AsyncMock(side_effect=asyncio.CancelledError())
+
+    principal = AsyncMock()
+    principal.calendars = AsyncMock(return_value=[cal])
+
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await cs.list_calendars(url="https://srv/dav/", username="u", password="p")
+
+
 def test_build_vevent_ical_naive_datetime_no_tzid():
     """Edge 5: naive start_datetime (no tzinfo) → no raise, no TZID= in output (floating DTSTART)."""
     cs = _require_caldav_sync()

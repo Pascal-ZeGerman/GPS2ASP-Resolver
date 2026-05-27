@@ -96,7 +96,7 @@ async def test_heartbeat_without_gps():
     stub._holiday_calendar.load.assert_awaited_once()
     stub._async_update_suspension.assert_awaited_once()
     # Debouncer must NOT have been triggered
-    stub.hass.async_create_task.assert_not_called()
+    stub.entry.async_create_background_task.assert_not_called()
 
 
 @pytest.mark.asyncio
