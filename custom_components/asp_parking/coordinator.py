@@ -1662,8 +1662,8 @@ class ASPParkingCoordinator:
                     del self._sign_cache[cache_key]
                     cached_entry = None
             if cached_entry is not None:
-                cached_records = cached_entry["records"]
-                cached_level = cached_entry.get("soda_level", 1)
+                cached_records: list[dict[Any, Any]] = cached_entry["records"]  # type: ignore[assignment]
+                cached_level: int = cached_entry.get("soda_level", 1)  # type: ignore[assignment]
                 sign_result = materialize_cached_records(
                     cached_records,
                     on_street=resolution.on_street,
