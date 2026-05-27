@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import httpx
 
@@ -389,9 +389,7 @@ class ASPParkingCoordinator:
         scheduling (which already carries timezone info via the
         ``ScheduleFound.next_move`` datetime).
         """
-        if self._debug_enabled and self._debug_datetime is not None:
-            return self._debug_datetime
-        return dt_util.now().astimezone(NYC_TZ)
+        return self._get_now().astimezone(NYC_TZ)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -628,7 +626,7 @@ class ASPParkingCoordinator:
     # Phase 33: index rebuild orchestration (IDX-01..IDX-04)
     # ------------------------------------------------------------------
 
-    async def async_request_rebuild(self, *, triggered_by: str = "button") -> None:
+    async def async_request_rebuild(self, *, triggered_by: Literal["button", "stale_check"] = "button") -> None:
         """Public entry point: fire-and-forget spawn of the rebuild task.
 
         IDX-02 concurrent-press protection: if a rebuild is already in
@@ -688,7 +686,7 @@ class ASPParkingCoordinator:
             name="asp_parking_index_rebuild",
         )
 
-    async def _async_do_rebuild(self, *, triggered_by: str = "button") -> None:
+    async def _async_do_rebuild(self, *, triggered_by: Literal["button", "stale_check"] = "button") -> None:
         """Background task body — performs the full rebuild lifecycle.
 
         Strict ordering (RESEARCH Pitfall 2):
@@ -1618,8 +1616,13 @@ class ASPParkingCoordinator:
                 # BUG-S-007 (Phase 35.1-05): extract both records and the SODA
                 # fallback level the records were produced at, so the sensor's
                 # soda_level attribute reflects reality (not hardcoded 1).
-                # .get("soda_level", 1) defends against legacy bare-list cache
-                # entries from rolling restarts during the schema migration.
+                # isinstance guard: a bare-list entry from a rolling restart
+                # during the schema migration would crash on ["records"] — evict
+                # it and fall through to a live SODA call instead.
+                if not isinstance(cached_entry, dict):
+                    del self._sign_cache[cache_key]
+                    cached_entry = None
+            if cached_entry is not None:
                 cached_records = cached_entry["records"]
                 cached_level = cached_entry.get("soda_level", 1)
                 sign_result = materialize_cached_records(
