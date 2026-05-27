@@ -25,7 +25,7 @@ so Plan 04 / Plan 05 cannot diverge.
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.asp_parking.const import (
     CONF_DEVICE_TRACKER,
@@ -85,25 +85,29 @@ def _require_async_remove_entry():
 
 
 async def test_async_remove_entry_deletes_event_and_store_when_uid_present(
-    hass, enable_custom_integrations, hass_storage
+    hass, enable_custom_integrations
 ):
     """CALDAV-07 happy path: stored UID → caldav_sync.delete_event called with that UID;
-    Store file removed afterwards."""
+    Store.async_remove() called afterwards.
+
+    Mocks Store.async_load() directly rather than using hass_storage pre-seeding so
+    the test is robust across PHACC versions (hass_storage format changed in 0.13.333).
+    """
     async_remove_entry = _require_async_remove_entry()
 
     entry = _make_entry(hass, options=_full_caldav_options())
 
-    storage_key = f"{DOMAIN}_caldav_{entry.entry_id}"
-    hass_storage[storage_key] = {
-        "version": 1,
-        "key": storage_key,
-        "data": {"uid": "abc123@asp-parking.local"},
-    }
+    mock_store = MagicMock()
+    mock_store.async_load = AsyncMock(return_value={"uid": "abc123@asp-parking.local"})
+    mock_store.async_remove = AsyncMock()
 
-    with patch(
-        "custom_components.asp_parking.caldav_sync.delete_event",
-        new_callable=AsyncMock,
-    ) as mock_delete:
+    with (
+        patch("homeassistant.helpers.storage.Store", return_value=mock_store),
+        patch(
+            "custom_components.asp_parking.caldav_sync.delete_event",
+            new_callable=AsyncMock,
+        ) as mock_delete,
+    ):
         await async_remove_entry(hass, entry)
 
     mock_delete.assert_awaited_once()
@@ -112,10 +116,8 @@ async def test_async_remove_entry_deletes_event_and_store_when_uid_present(
     assert call_kwargs.get("uid") == "abc123@asp-parking.local", (
         f"delete_event must be called with the stored UID; got {call_kwargs}"
     )
-    # Store file MUST be removed via Store.async_remove()
-    assert storage_key not in hass_storage, (
-        "Store key must be removed after async_remove_entry (cleanup)"
-    )
+    # Store.async_remove() MUST be called to clean up persisted state
+    mock_store.async_remove.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -173,33 +175,34 @@ async def test_async_remove_entry_noop_when_no_stored_uid(
 
 
 async def test_async_remove_entry_continues_when_delete_fails(
-    hass, enable_custom_integrations, hass_storage
+    hass, enable_custom_integrations
 ):
     """CALDAV-07 robustness: when caldav_sync.delete_event raises
     RuntimeError('server unreachable'), the exception is caught + logged,
-    no exception propagates from async_remove_entry, AND the Store key
-    is still removed (best-effort cleanup — RESEARCH Pattern 6 lines 619-624)."""
+    no exception propagates from async_remove_entry, AND Store.async_remove()
+    is still called (best-effort cleanup — RESEARCH Pattern 6 lines 619-624).
+
+    Mocks Store.async_load() directly rather than using hass_storage pre-seeding so
+    the test is robust across PHACC versions (hass_storage format changed in 0.13.333).
+    """
     async_remove_entry = _require_async_remove_entry()
 
     entry = _make_entry(hass, options=_full_caldav_options())
 
-    storage_key = f"{DOMAIN}_caldav_{entry.entry_id}"
-    hass_storage[storage_key] = {
-        "version": 1,
-        "key": storage_key,
-        "data": {"uid": "abc123@asp-parking.local"},
-    }
+    mock_store = MagicMock()
+    mock_store.async_load = AsyncMock(return_value={"uid": "abc123@asp-parking.local"})
+    mock_store.async_remove = AsyncMock()
 
-    with patch(
-        "custom_components.asp_parking.caldav_sync.delete_event",
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("server unreachable"),
+    with (
+        patch("homeassistant.helpers.storage.Store", return_value=mock_store),
+        patch(
+            "custom_components.asp_parking.caldav_sync.delete_event",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("server unreachable"),
+        ),
     ):
         # Must NOT raise — failure is caught + logged
         await async_remove_entry(hass, entry)
 
-    # Best-effort cleanup: Store key STILL removed even on delete failure
-    assert storage_key not in hass_storage, (
-        "Best-effort cleanup: Store must be removed even when caldav delete fails "
-        "(T-34-04 mitigation — Pattern 6 lines 619-624)"
-    )
+    # Best-effort cleanup: Store.async_remove() called even on delete failure
+    mock_store.async_remove.assert_awaited_once()

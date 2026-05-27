@@ -40,11 +40,9 @@ import pytest
 from custom_components.asp_parking.coordinator import ASPParkingCoordinator
 from custom_components.asp_parking.gps2asp.schedule.models import (
     ASPActiveNow,
-    AllUnparseable,
     ASPDay,
     CleaningWindow,
     NoASPSchedule,
-    NoMatchSchedule,
     ScheduleFound,
 )
 

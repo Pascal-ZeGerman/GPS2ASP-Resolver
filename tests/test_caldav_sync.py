@@ -1308,12 +1308,19 @@ def test_shim_activated_when_caldav_aio_absent():
     """
     import sys
     import caldav
-    from custom_components.asp_parking.caldav_sync import _CompatAsyncDAVClient
 
     mod_key = "custom_components.asp_parking.caldav_sync"
     saved_mod = sys.modules.get(mod_key)
     saved_caldav_aio_mod = sys.modules.get("caldav.aio")
     saved_caldav_aio_attr = getattr(caldav, "aio", None)
+
+    # Save the package-level attribute BEFORE the test mutates it.
+    # `from package import submodule` sets package.__dict__["submodule"] as a
+    # side-effect. Without restoring this, later tests that do `from . import
+    # caldav_sync` inside async functions get the fresh module object (not the
+    # one that patch() targets), causing cross-test pollution.
+    import custom_components.asp_parking as _pkg
+    saved_pkg_attr = _pkg.__dict__.get("caldav_sync")
 
     try:
         # Force `import caldav.aio` to raise ImportError — simulates caldav 2.x.
@@ -1326,7 +1333,6 @@ def test_shim_activated_when_caldav_aio_absent():
         # Remove caldav_sync from both sys.modules and the package's attribute dict
         # so Python re-executes the module file on the next import.
         sys.modules.pop(mod_key, None)
-        import custom_components.asp_parking as _pkg
         _pkg.__dict__.pop("caldav_sync", None)
 
         from custom_components.asp_parking import caldav_sync as fresh  # noqa: F401
@@ -1353,11 +1359,19 @@ def test_shim_activated_when_caldav_aio_absent():
         elif hasattr(caldav, "aio"):
             delattr(caldav, "aio")
 
-        # Restore original cached module
+        # Restore original cached module in sys.modules
         if saved_mod is not None:
             sys.modules[mod_key] = saved_mod
         else:
             sys.modules.pop(mod_key, None)
+
+        # Restore package __dict__ entry — prevents cross-test pollution where
+        # `from . import caldav_sync` inside async functions resolves to the
+        # fresh module instead of the one targeted by patch().
+        if saved_pkg_attr is not None:
+            _pkg.__dict__["caldav_sync"] = saved_pkg_attr
+        else:
+            _pkg.__dict__.pop("caldav_sync", None)
 
 
 # ---------------------------------------------------------------------------
@@ -1425,7 +1439,6 @@ async def test_compat_calendar_event_by_uid_raises_not_found_when_no_uid_matches
     Some servers return events for broader search criteria; the shim filters
     by e.id == uid and raises NotFoundError if the filter yields nothing.
     """
-    import caldav
     from caldav.lib import error as caldav_error
     from custom_components.asp_parking.caldav_sync import _CompatCalendar
 

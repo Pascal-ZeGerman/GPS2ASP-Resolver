@@ -10,9 +10,11 @@ Background:
 
     For description / error messages that mention placeholder names purely
     as documentation (not as render-time arguments), the curly braces must
-    be ICU-escaped by surrounding them with single quotes, e.g.
-    ``'{street}'``. This causes FormatJS to emit the literal text
-    ``{street}`` to the user.
+    be ICU-escaped. The preferred form isolates each brace in its own
+    single-quoted escape so the identifier is not inside quotes:
+    ``'{'street'}'`` (ICU: ``'{'`` = literal ``{``, ``street`` = literal
+    text, ``'}'`` = literal ``}``). This form is accepted by hassfest which
+    rejects the older ``'{street}'`` pattern (identifier inside quotes).
 
 These tests guard against regression of the Phase 35 headline fix.
 """
@@ -36,31 +38,36 @@ def _load_strings() -> dict:
 
 @pytest.mark.parametrize("strings_path", [_STRINGS_PATH, _EN_PATH])
 def test_caldav_event_title_template_is_icu_escaped(strings_path: Path) -> None:
-    """The caldav_event_title_template description must use '{street}' (ICU-escaped)."""
+    """The caldav_event_title_template description must use '{'street'}' (ICU-escaped).
+
+    The brace-escape form ``'{'name'}'`` is used instead of ``'{name}'`` because
+    hassfest rejects identifiers inside single-quoted ICU escape sequences.
+    """
     data = json.loads(strings_path.read_text(encoding="utf-8"))
     description = data["options"]["step"]["caldav"]["data_description"][
         "caldav_event_title_template"
     ]
-    assert "'{street}'" in description, (
+    assert "'{'street'}'" in description, (
         "Phase 35 regression: caldav_event_title_template description must "
-        "contain ICU-escaped '{street}' to prevent FormatJS MISSING_VALUE errors. "
+        "contain ICU-escaped '{'street'}' to prevent FormatJS MISSING_VALUE errors. "
         f"Got: {description!r}"
     )
     # The description references three placeholder names — all must be escaped.
-    assert "'{time}'" in description
-    assert "'{side}'" in description
+    assert "'{'time'}'" in description
+    assert "'{'side'}'" in description
 
 
 def test_caldav_invalid_template_is_icu_escaped() -> None:
-    """The caldav_invalid_template error must use '{street}', '{side}', '{time}' (ICU-escaped)."""
+    """The caldav_invalid_template error must use '{'street'}', '{'side'}', '{'time'}'."""
     data = _load_strings()
     error = data["options"]["error"]["caldav_invalid_template"]
-    assert "'{street}'" in error, (
+    assert "'{'street'}'" in error, (
         "Phase 35 regression: caldav_invalid_template must contain ICU-escaped "
-        f"'{{street}}'. Got: {error!r}"
+        "'{'street'}' to prevent FormatJS MISSING_VALUE errors. "
+        f"Got: {error!r}"
     )
-    assert "'{side}'" in error
-    assert "'{time}'" in error
+    assert "'{'side'}'" in error
+    assert "'{'time'}'" in error
 
 
 def test_strings_and_en_json_byte_identical() -> None:
