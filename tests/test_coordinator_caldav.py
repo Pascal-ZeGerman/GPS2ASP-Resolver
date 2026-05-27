@@ -1011,14 +1011,18 @@ async def test_safety_window_one_second_before_boundary_spawns_delete():
 # --- _async_caldav_write_or_update store-save failure ---
 
 
-async def test_write_or_update_store_save_raises_caught_and_notifies(monkeypatch):
-    """async_save raising OSError is caught by the broad except handler.
+async def test_write_or_update_store_save_raises_no_false_sync_failure(monkeypatch):
+    """async_save OSError is NOT treated as a CalDAV write failure.
 
-    The `try` block in _async_caldav_write_or_update wraps both the
-    caldav_sync call AND async_save, so an OSError from async_save is caught,
-    logged, and surfaced as a persistent notification rather than propagating.
-    This documents the actual behavior: storage failures are NOT silently
-    swallowed — they trigger the error notification path.
+    The Store persistence is in its own inner try/except (separate from the
+    caldav_sync call). An OSError from async_save must:
+      - NOT create the "CalDAV sync failed" persistent notification
+      - NOT set _caldav_write_error_notified = True
+      - NOT raise to the caller
+
+    This prevents a storage failure from being misreported as a CalDAV
+    credential or write error, confusing the user into thinking the calendar
+    event was not written when it actually was.
     """
     _require_caldav_sync()
     stub = _make_coord_stub_caldav()
@@ -1038,14 +1042,142 @@ async def test_write_or_update_store_save_raises_caught_and_notifies(monkeypatch
         return_value=new_uid,
     ):
         write = _bind(stub, "_async_caldav_write_or_update")
-        # Must NOT raise — the OSError is caught by the broad except block
+        # Must NOT raise — the OSError is caught by the inner Store except block
         await write(stub.data.schedule_result)
 
-    # The error notification must be created (first failure in streak)
-    assert pn_create.call_count == 1, (
-        f"OSError from async_save must trigger one error notification; "
-        f"got {pn_create.call_count} calls"
+    # Must NOT create the CalDAV error notification — the write succeeded
+    assert pn_create.call_count == 0, (
+        f"OSError from async_save must NOT trigger a 'CalDAV sync failed' notification "
+        f"(event was written successfully); got {pn_create.call_count} pn_create calls"
     )
-    assert stub._caldav_write_error_notified is True, (
-        "_caldav_write_error_notified must be True after async_save failure"
+    # Must NOT set the error flag — this was a storage issue, not a CalDAV issue
+    assert stub._caldav_write_error_notified is False, (
+        "_caldav_write_error_notified must remain False after a Store failure "
+        "(the calendar event was successfully written to the CalDAV server)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 35.1 Plan 06 — BUG-C-002 / BUG-C-003 / BUG-C-004 regression tests
+# ---------------------------------------------------------------------------
+
+
+async def test_caldav_write_re_checks_suspension_after_await(monkeypatch):
+    """BUG-C-002: suspension flipping True DURING write_or_update_event must
+    cause a delete-on-flip task to be spawned for the just-written UID.
+
+    Race scenario:
+      1. _async_caldav_write_or_update acquires the lock and confirms
+         is_suspended=False before the await.
+      2. caldav_sync.write_or_update_event() runs (network I/O);
+         meanwhile the suspension state flips to True (holiday-fired or
+         manual suspension during the same tick).
+      3. After the await returns with a new UID, the coordinator MUST
+         re-check suspension_state.is_suspended. If True, the event we
+         just wrote is now stale — spawn a delete task for new_uid.
+
+    RED expectation: no post-await re-check exists today; no delete task is
+    spawned. The test asserts both the delete task AND that the task name
+    contains 'delete_on_suspension_race', a literal Plan 06 must add.
+    """
+    _require_caldav_sync()
+    stub = _make_coord_stub_caldav()
+    schedule = stub.data.schedule_result
+
+    pn_create = MagicMock()
+    pn_dismiss = MagicMock()
+    monkeypatch.setitem(
+        sys.modules,
+        "homeassistant.components.persistent_notification",
+        SimpleNamespace(async_create=pn_create, async_dismiss=pn_dismiss),
+    )
+
+    new_uid = "race-uid@asp-parking.local"
+
+    async def _flip_suspension_then_return(**kwargs):
+        # Simulate the network call: while the await is in-flight, a
+        # concurrent code path (a holiday calendar refresh, a manual
+        # suspension service call, etc.) sets is_suspended=True.
+        stub.data.suspension_state = _make_suspension_info(is_suspended=True)
+        return new_uid
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.write_or_update_event",
+        new=_flip_suspension_then_return,
+    ):
+        write = _bind(stub, "_async_caldav_write_or_update")
+        await write(schedule)
+
+    # The coordinator must have spawned a delete task for the just-written UID
+    assert stub.entry.async_create_background_task.call_count == 1, (
+        "BUG-C-002: post-await suspension re-check must spawn exactly one "
+        f"delete-on-flip task; got {stub.entry.async_create_background_task.call_count}"
+    )
+    name = stub.entry.async_create_background_task.call_args.kwargs.get("name")
+    assert name is not None and "delete_on_suspension_race" in name, (
+        f"BUG-C-002: delete-on-flip task name must contain "
+        f"'delete_on_suspension_race'; got {name!r}"
+    )
+    # The delete task handle must be stored on the coordinator (used by tests
+    # and downstream lifecycle teardown).
+    assert stub._caldav_delete_task is not None, (
+        "BUG-C-002: _caldav_delete_task must reference the spawned delete task"
+    )
+
+
+def test_caldav_config_missing_url_raises_value_error():
+    """BUG-C-003: CalDAVConfig.from_options(options_without_url) must raise
+    a *clear* ValueError, not a opaque KeyError.
+
+    Today caldav_sync.CalDAVConfig.from_options uses a bare subscript
+    `options[CONF_CALDAV_URL]`. When the user has not yet entered a URL
+    (or removed it between resolves), this raises KeyError, which surfaces
+    to the coordinator's broad `except Exception` and produces a generic
+    "CalDAV sync failed" notification with no actionable hint.
+
+    Fix is to use `options.get(CONF_CALDAV_URL, "")`, which lets the
+    __post_init__ validator emit the precise "CalDAVConfig.url must not be
+    empty" ValueError. This RED test pins the contract: ValueError, not
+    KeyError.
+    """
+    _require_caldav_sync()
+    cs = _caldav_sync  # already validated non-None by the line above
+    # Options dict with EVERY CalDAV key except the URL itself.
+    options = {
+        CONF_CALDAV_USERNAME: "user",
+        CONF_CALDAV_PASSWORD: "pw",
+        CONF_CALDAV_CALENDAR: "https://example.com/dav/cal/",
+        CONF_CALDAV_SAFETY_WINDOW: 15,
+        CONF_CALDAV_EVENT_TITLE_TEMPLATE: "ASP: {street}",
+    }
+    with pytest.raises(ValueError):
+        cs.CalDAVConfig.from_options(options)
+
+
+async def test_no_caldav_task_when_no_uid_and_no_window():
+    """BUG-C-004: when both _caldav_uid is None AND schedule.next_window is None,
+    _async_caldav_hook_after_resolve must NOT spawn a delete task.
+
+    Pipeline-per-run no-op: a fresh integration (no stored UID) hitting a
+    No-ASP block (no next_window) was spawning an
+    asp_parking_caldav_delete_on_move task that immediately returned with
+    nothing to do — wasted task per resolve.
+
+    Fix is to guard the delete-spawn with `if self._caldav_uid is not None:`.
+    """
+    stub = _make_coord_stub_caldav(caldav_uid=None, is_suspended=False)
+    # Build a schedule object that resembles NoASPSchedule (no next_window)
+    no_window_schedule = SimpleNamespace(status="no_asp_schedule", next_window=None)
+
+    hook = _bind(stub, "_async_caldav_hook_after_resolve")
+    await hook(no_window_schedule)
+
+    assert stub.entry.async_create_background_task.call_count == 0, (
+        "BUG-C-004: with _caldav_uid=None AND next_window=None the hook "
+        "must NOT spawn any delete task; got "
+        f"{stub.entry.async_create_background_task.call_count}"
+    )
+    assert stub._caldav_delete_task is None, (
+        "BUG-C-004: _caldav_delete_task must remain None when there is "
+        "nothing to delete"
     )

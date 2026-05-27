@@ -38,6 +38,17 @@ from gps2asp.suspension import SuspensionInfo, apply_suspension  # noqa: E402
 NYC_TZ = ZoneInfo("America/New_York")
 UTC_TZ = timezone.utc
 
+# Phase 36 SENSOR-01: mirror of custom_components/asp_parking/sensor.py _SIDE_LABELS.
+# Defined here (not imported) to avoid pulling in HA-dependent sensor.py at
+# collection time — test_ha_integration.py is designed to run without HA.
+# IMPORTANT: keep in sync with sensor._SIDE_LABELS manually if labels change.
+_SIDE_LABELS: dict[str, str] = {
+    "N": "North side",
+    "S": "South side",
+    "E": "East side",
+    "W": "West side",
+}
+
 
 def _format_move_time(dt: datetime) -> str:
     """Mirror of ASPNextMoveTimeSensor._format_move_time() for test helpers.
@@ -193,6 +204,11 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
                 ].index(d),
             )
             attrs["cleaning_days"] = day_names
+        elif isinstance(schedule, ASPActiveNow):
+            # BUG-T-005 (Phase 35.1-05): mirror sensor.py — surface the active
+            # cleaning day so the UI never loses the cleaning_days chip on
+            # active-now mornings.
+            attrs["cleaning_days"] = [schedule.active_window.day.name.title()]
 
         # time_window_start/end: mirror production logic — use next_window (the
         # temporally-next window), not weekly.windows[0] (day-sorted first entry).
@@ -225,6 +241,10 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
         attrs["street_name"] = schedule.on_street
         attrs["cross_streets"] = f"{schedule.from_street} to {schedule.to_street}"
         attrs["side_of_street"] = schedule.side_of_street
+        # Phase 36 SENSOR-01: mirror production side_label logic (sensor.py lines 327-332).
+        # Omitted when side_of_street is not one of N/S/E/W — same as production.
+        if (side_label := _SIDE_LABELS.get(schedule.side_of_street)) is not None:
+            attrs["side_label"] = side_label
 
     if isinstance(schedule, ScheduleFound):
         if schedule.next_window is not None:
@@ -291,16 +311,25 @@ def _make_cleaning_window(
     start_dt: datetime | None = None,
     end_dt: datetime | None = None,
 ) -> CleaningWindow:
-    """Helper to build a CleaningWindow with defaults."""
+    """Helper to build a CleaningWindow with defaults.
+
+    When start_dt/end_dt are supplied explicitly, start_time/end_time are
+    derived from those datetimes (converted to NYC local time) rather than
+    from the default start_h/start_m parameters. This keeps the CleaningWindow
+    internally consistent: start_time and start_datetime always represent the
+    same clock time (WR-02).
+    """
     now = datetime.now(tz=NYC_TZ)
     if start_dt is None:
         start_dt = now.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
     if end_dt is None:
         end_dt = now.replace(hour=end_h, minute=end_m, second=0, microsecond=0)
+    local_start = start_dt.astimezone(NYC_TZ)
+    local_end = end_dt.astimezone(NYC_TZ)
     return CleaningWindow(
         day=day,
-        start_time=time(start_h, start_m),
-        end_time=time(end_h, end_m),
+        start_time=time(local_start.hour, local_start.minute),
+        end_time=time(local_end.hour, local_end.minute),
         start_datetime=start_dt,
         end_datetime=end_dt,
         source_signs=["NO PARKING 8:30AM-10AM MON"],
@@ -571,6 +600,7 @@ class TestSensorAttributes:
         assert attrs["street_name"] == "PROSPECT PLACE"
         assert attrs["cross_streets"] == "VANDERBILT AVENUE to UNDERHILL AVENUE"
         assert attrs["side_of_street"] == "N"
+        assert attrs["side_label"] == "North side"  # Phase 36 SENSOR-01
 
         # Window group
         assert "next_window_start" in attrs
@@ -1149,9 +1179,13 @@ class TestSuspensionPoll:
         self.data.last_lat / last_lon, confirming independence from GPS movement.
         """
         src = _COORDINATOR_SRC.read_text()
-        # The update method must check the current date
-        assert "self._get_now().date()" in src, (
-            "coordinator.py suspension poll does not derive 'today' via _get_now()"
+        # The update method must check the current date. WR-07: the date is
+        # now derived via ``_get_now_nyc()`` (NYC calendar tz) instead of
+        # ``_get_now()`` (HA-local tz) so that holiday lookups land on the
+        # correct NYC date for installations in non-NYC timezones.
+        assert "self._get_now_nyc().date()" in src, (
+            "coordinator.py suspension poll does not derive 'today' via "
+            "_get_now_nyc() (WR-07 regression)"
         )
         # Confirm _async_suspension_poll does not gate on last_lat / last_lon
         poll_start = src.find("def _async_suspension_poll")
@@ -1444,7 +1478,147 @@ def test_resolved_street_sensor_exposes_phase_30_diagnostic_attributes() -> None
     assert "from_street" in attrs
     assert "to_street" in attrs
     assert "side_of_street" in attrs
+    assert attrs["side_label"] == "North side"
     assert "confidence_score" in attrs
+
+
+# ---------------------------------------------------------------------------
+# Phase 36 SENSOR-01: side_label attribute on ASPResolvedStreetSensor
+# ---------------------------------------------------------------------------
+
+
+def _build_resolved_street_sensor_with_side(side_of_street: str):
+    """Build an ASPResolvedStreetSensor wired to a vendored ScheduleFound.
+
+    Mirrors test_resolved_street_sensor_exposes_phase_30_diagnostic_attributes
+    but parameterizes side_of_street so callers can exercise N/S/E/W and
+    unrecognized values.
+    """
+    from unittest.mock import MagicMock
+
+    from custom_components.asp_parking.sensor import ASPResolvedStreetSensor
+    from custom_components.asp_parking.gps2asp.schedule.models import (
+        ScheduleFound as VendoredScheduleFound,
+        WeeklySchedule as VendoredWeeklySchedule,
+    )
+
+    schedule = VendoredScheduleFound(
+        status="schedule_found",
+        next_window=None,
+        weekly_schedule=VendoredWeeklySchedule(windows=()),
+        on_street="PROSPECT PLACE",
+        from_street="VANDERBILT AVENUE",
+        to_street="UNDERHILL AVENUE",
+        side_of_street=side_of_street,
+        source_signs=["NO PARKING 8:30AM-10AM MON"],
+        summary="Mon 8:30-10am",
+        parse_failures=[],
+    )
+
+    coord = MagicMock()
+    coord.data = ASPParkingData()
+    coord.data.borough = "Brooklyn"
+    coord.data.distance_ft = 12.34
+    coord.data.street_width_ft = 30.0
+    coord.data.segment_id = 987654
+    coord.data.confidence_score = 0.85
+    coord.data.schedule_result = schedule
+    coord.entry = MagicMock()
+    coord.entry.entry_id = "test_entry_p36"
+
+    return ASPResolvedStreetSensor(coord)
+
+
+@pytest.mark.ha_integration
+@pytest.mark.parametrize(
+    "letter,expected",
+    [
+        ("N", "North side"),
+        ("S", "South side"),
+        ("E", "East side"),
+        ("W", "West side"),
+    ],
+)
+def test_resolved_street_sensor_side_label_mapping_covers_all_four_directions(
+    letter: str, expected: str
+) -> None:
+    """Phase 36 SENSOR-01: ASPResolvedStreetSensor.extra_state_attributes
+    surfaces side_label='<Direction> side' for each of N/S/E/W.
+
+    The raw side_of_street attribute is preserved unchanged (backward compat).
+    """
+    sensor = _build_resolved_street_sensor_with_side(letter)
+    attrs = sensor.extra_state_attributes
+    assert attrs["side_of_street"] == letter
+    assert attrs["side_label"] == expected
+
+
+@pytest.mark.ha_integration
+def test_resolved_street_sensor_omits_side_label_for_unrecognized_letter() -> None:
+    """Phase 36 SENSOR-01 / locked SPEC edge case: unrecognized side_of_street
+    (e.g. 'X') causes side_label key to be OMITTED from extra_state_attributes —
+    NOT inserted as None. The raw side_of_street attribute is still present
+    with the unrecognized value.
+    """
+    sensor = _build_resolved_street_sensor_with_side("X")
+    attrs = sensor.extra_state_attributes
+    assert "side_of_street" in attrs
+    assert attrs["side_of_street"] == "X"
+    assert "side_label" not in attrs
+
+
+@pytest.mark.ha_integration
+def test_resolved_street_sensor_side_label_present_for_asp_active_now() -> None:
+    """Phase 36 WR-03: ASPActiveNow schedule on resolved-street sensor → side_label emitted.
+
+    Guards against a future refactor accidentally restricting the isinstance
+    guard to ScheduleFound only, which would silently drop side_label on
+    active-now mornings.
+    """
+    from unittest.mock import MagicMock
+
+    from custom_components.asp_parking.sensor import ASPResolvedStreetSensor
+    from custom_components.asp_parking.gps2asp.schedule.models import (
+        ASPActiveNow as VendoredASPActiveNow,
+        CleaningWindow as VendoredCleaningWindow,
+        ASPDay as VendoredASPDay,
+    )
+
+    now = datetime.now(tz=NYC_TZ)
+    cw = VendoredCleaningWindow(
+        day=VendoredASPDay.MONDAY,
+        start_time=time(8, 30),
+        end_time=time(10, 0),
+        start_datetime=now.replace(hour=8, minute=30, second=0, microsecond=0),
+        end_datetime=now.replace(hour=10, minute=0, second=0, microsecond=0),
+        source_signs=["NO PARKING 8:30AM-10AM MON"],
+    )
+    schedule = VendoredASPActiveNow(
+        status="asp_active_now",
+        active_window=cw,
+        on_street="PROSPECT PLACE",
+        from_street="VANDERBILT AVENUE",
+        to_street="UNDERHILL AVENUE",
+        side_of_street="S",
+        source_signs=["NO PARKING 8:30AM-10AM MON"],
+        summary="Mon 8:30-10am",
+    )
+
+    coord = MagicMock()
+    coord.data = ASPParkingData()
+    coord.data.borough = "Brooklyn"
+    coord.data.distance_ft = 12.34
+    coord.data.street_width_ft = 30.0
+    coord.data.segment_id = 987654
+    coord.data.confidence_score = 0.85
+    coord.data.schedule_result = schedule
+    coord.entry = MagicMock()
+    coord.entry.entry_id = "test_entry_p36_active_now"
+
+    sensor = ASPResolvedStreetSensor(coord)
+    attrs = sensor.extra_state_attributes
+    assert attrs["side_of_street"] == "S"
+    assert attrs["side_label"] == "South side"
 
 
 @pytest.mark.ha_integration
@@ -1818,6 +1992,11 @@ class TestNyc311Bridge:
             _holiday_calendar=mock_holiday,
             _async_notify_entities=MagicMock(),
             _get_now=MagicMock(
+                return_value=MagicMock(date=MagicMock(return_value=date.today()))
+            ),
+            # WR-07: suspension flow now uses ``_get_now_nyc().date()`` for
+            # NYC-calendar holiday lookups.
+            _get_now_nyc=MagicMock(
                 return_value=MagicMock(date=MagicMock(return_value=date.today()))
             ),
             _bridge_state_to_info=staticmethod(

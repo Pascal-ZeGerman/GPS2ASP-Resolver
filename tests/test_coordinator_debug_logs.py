@@ -210,6 +210,35 @@ def test_no_segment_handler_logs_warning_with_actionable_message():
     )
 
 
+def test_async_start_warns_on_invalid_debug_datetime():
+    """Phase 35.1: invalid CONF_DEBUG_DATETIME string must log a WARNING and set _debug_datetime=None.
+
+    Previously this was a silent discard (except clause with no log).  The PR
+    changes it to logger.warning so the user has a diagnostic signal when they
+    enter an unparseable date string in the debug options.
+    """
+    src = _coord_source()
+    # The warning must reference the raw value and an explanation.
+    assert "invalid debug datetime" in src, (
+        "async_start must log a warning containing 'invalid debug datetime' "
+        "when datetime.fromisoformat() raises — silent discard is not acceptable."
+    )
+    # The exception variable must be included in the message (exc or similar).
+    assert re.search(
+        r"logger\.warning\(.*invalid debug datetime",
+        src,
+        re.DOTALL,
+    ), "logger.warning call for invalid debug datetime not found in coordinator source."
+    # After warning, _debug_datetime must be set to None.
+    assert re.search(
+        r"except\s*\(ValueError,\s*TypeError\).*?self\._debug_datetime\s*=\s*None",
+        src,
+        re.DOTALL,
+    ), (
+        "_debug_datetime must be set to None in the except (ValueError, TypeError) block."
+    )
+
+
 def test_preseeder_outside_nyc_warning_unchanged():
     """D-12: pre-seeder's OutsideNYCError WARNING (~line 711) must be left intact."""
     src = _coord_source()

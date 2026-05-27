@@ -452,3 +452,72 @@ async def test_caldav_step_validate_connection_called_with_submitted_creds(
     assert call_kwargs.get("url") == submitted[CONF_CALDAV_URL]
     assert call_kwargs.get("username") == submitted[CONF_CALDAV_USERNAME]
     assert call_kwargs.get("password") == submitted[CONF_CALDAV_PASSWORD]
+
+
+# ---------------------------------------------------------------------------
+# T-34-01 — password form default must be '' on re-render after error
+# ---------------------------------------------------------------------------
+
+
+async def test_caldav_step_invalid_credentials_password_not_echoed(
+    hass, enable_custom_integrations
+):
+    """T-34-01 (WR-04): on form re-render after failed auth probe, the
+    CONF_CALDAV_PASSWORD field's default value MUST be ``""`` -- never the
+    password the user just submitted (or any stored password).
+
+    Rationale: echoing the password back into the form leaks it to anyone
+    who can shoulder-surf the screen, persists it in HA's config_flow
+    state, and increases the risk surface for the credentials-in-memory
+    threat. config_flow.py:643-647 hardcodes the default to ``""``; this
+    test guards against an accidental refactor that re-introduces the
+    echo.
+    """
+    from custom_components.asp_parking.caldav_sync import CalDAVAuthError
+
+    entry = _make_entry(hass)
+
+    result = await _reach_caldav_step(hass, entry)
+    assert result["step_id"] == "caldav"
+
+    with patch(
+        "custom_components.asp_parking.config_flow.caldav_sync.validate_connection",
+        new_callable=AsyncMock,
+        side_effect=CalDAVAuthError("bad creds"),
+    ):
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                CONF_CALDAV_URL: "https://example.com/dav/",
+                CONF_CALDAV_USERNAME: "u",
+                CONF_CALDAV_PASSWORD: "secret123",
+            },
+        )
+
+    # Form re-rendered with the auth error
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "caldav"
+
+    schema = result["data_schema"]
+    password_default = None
+    found_key = False
+    for key in getattr(schema, "schema", {}):
+        key_name = getattr(key, "schema", key)
+        if key_name == CONF_CALDAV_PASSWORD:
+            found_key = True
+            default_attr = getattr(key, "default", None)
+            # ``default`` is a callable (vol.UNDEFINED-like) or a value;
+            # accept both shapes.
+            password_default = (
+                default_attr() if callable(default_attr) else default_attr
+            )
+            break
+
+    assert found_key, (
+        "CONF_CALDAV_PASSWORD field must be present in the re-rendered "
+        "form schema after a failed auth probe"
+    )
+    assert password_default == "", (
+        "T-34-01 regression: CONF_CALDAV_PASSWORD form default must remain "
+        f"'' after error re-render to prevent credential echo. Got: {password_default!r}"
+    )

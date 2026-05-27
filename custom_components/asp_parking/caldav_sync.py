@@ -6,14 +6,30 @@ this integration. CalDAV-08 is enforced by this module being the sole
 caldav importer in the integration and by using ONLY caldav.aio (the
 async client) — never caldav.DAVClient (the sync one).
 
-Import safety: ``caldav.aio`` was introduced in caldav 3.x. The HA built-in
-CalDAV integration pins ``caldav==2.1.0``, which predates the ``aio``
-submodule. When ``caldav.aio`` is absent this module installs a
-``_CompatAsyncDAVClient`` shim as ``caldav.aio.AsyncDAVClient`` so all
-production code and tests can use the same attribute without branching.
-The shim wraps the sync ``caldav.DAVClient`` via ``run_in_executor`` so
-blocking I/O never hits the HA event loop. On caldav 3.x the shim is
-never installed and the native async client is used directly.
+Import safety: HA 2026.x hard-pins ``caldav==2.1.0`` for its built-in CalDAV
+component, which takes precedence over any custom-integration requirement.
+This module's ``manifest.json`` therefore also pins ``caldav==2.1.0`` so the
+stated requirement matches what HA actually installs.
+
+Because caldav 2.1.0 predates the ``aio`` submodule, ``import caldav.aio``
+fails and the ``_CompatAsyncDAVClient`` shim below is always active in
+production. The shim wraps the sync ``caldav.DAVClient`` via
+``run_in_executor`` so blocking I/O never hits the HA event loop.
+
+Note on ``caldav.lib.error``: this submodule is imported unconditionally
+at module top (``from caldav.lib import error as caldav_error``) because
+it has shipped with every caldav release this integration cares to
+support (2.1.0+). If a future caldav refactor moves or removes this
+submodule, the integration will fail at import time -- that is
+intentional, the alternative would be a synthetic exception class that
+silently swallows error categorisation.
+
+BUG-C-006: caldav 2.1.0's ``Calendar.search()`` backward-compat error
+handler contains a bug (``*kwargs2`` passes dict keys as positional args,
+colliding with the ``sort_keys`` named parameter). The shim's
+``_CompatCalendar.event_by_uid`` bypasses this by calling
+``search(uid=uid, comp_class=caldav.Event)`` directly instead of
+delegating to the buggy ``event_by_uid()`` → ``object_by_uid()`` chain.
 """
 
 from __future__ import annotations
@@ -70,7 +86,28 @@ class _CompatCalendar:
 
     async def event_by_uid(self, uid: str) -> _CompatEvent:
         loop = asyncio.get_running_loop()
-        evt = await loop.run_in_executor(None, self._cal.event_by_uid, uid)
+
+        def _sync_event_by_uid() -> Any:
+            # BUG-C-006: caldav 2.1.0's event_by_uid() → object_by_uid() → search(root)
+            # calls search() without comp_class (comp_class=None). When the server returns
+            # a ReportError AND backward_compatibility_mode is enabled, caldav 2.1.0 calls
+            # self.search(sort_keys=sort_keys, *kwargs2, **kwargs) — `*kwargs2` iterates the
+            # dict KEYS as positional args, landing "split_expanded" at positional slot 4
+            # (= sort_keys) while sort_keys=sort_keys is ALSO a keyword → TypeError.
+            #
+            # Fix: bypass event_by_uid() and call search(uid=uid, comp_class=caldav.Event)
+            # directly. comp_class=Event is truthy → `not comp_class` is False → the buggy
+            # backward-compat handler is skipped unconditionally. caldav 2.1.0's
+            # build_search_xml_query() handles `uid` via **kwargs so the query is correct.
+            results = self._cal.search(uid=uid, comp_class=caldav.Event)
+            matches = [e for e in results if e.id == uid]
+            if not matches:
+                from caldav.lib import error as _caldav_err
+
+                raise _caldav_err.NotFoundError(f"{uid} not found on server")
+            return matches[0]
+
+        evt = await loop.run_in_executor(None, _sync_event_by_uid)
         return _CompatEvent(evt)
 
     async def add_event(self, *args: Any, **kwargs: Any) -> Any:
@@ -89,12 +126,16 @@ class _CompatPrincipal:
         cals = await loop.run_in_executor(None, self._p.calendars)
         return [_CompatCalendar(c) for c in cals]
 
-    async def calendar(self, cal_url: str) -> _CompatCalendar:
-        loop = asyncio.get_running_loop()
-        cal = await loop.run_in_executor(
-            None, lambda: self._p.calendar(cal_url=cal_url)
-        )
-        return _CompatCalendar(cal)
+    def calendar(self, cal_url: str) -> _CompatCalendar:
+        """Return a calendar object for cal_url.
+
+        ``caldav.Principal.calendar(cal_url=...)`` is a local constructor in
+        both caldav 2.x and 3.x — it never makes network I/O, so no
+        run_in_executor wrapping is needed. This method is synchronous to
+        match the caldav 3.x ``AsyncPrincipal.calendar()`` signature so that
+        callers can use a plain (non-awaited) call in both code paths.
+        """
+        return _CompatCalendar(self._p.calendar(cal_url=cal_url))
 
 
 class _CompatAsyncDAVClient:
@@ -128,12 +169,39 @@ class _CompatAsyncDAVClient:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, client.close)
             except Exception:
-                logger.debug(
-                    "CalDAV shim: error closing sync client connection",
+                # Use DEBUG when we're already inside exception handling (e.g.
+                # CancelledError during HA shutdown) — close failures in that
+                # context are expected and not user-actionable.  Use WARNING
+                # only for unexpected close errors during normal teardown.
+                _log_fn = logger.debug if exc_info[0] is not None else logger.warning
+                _log_fn(
+                    "CalDAV shim: error closing sync client connection%s",
+                    " (during exception handling)" if exc_info[0] is not None else "",
                     exc_info=True,
                 )
 
     async def get_principal(self) -> _CompatPrincipal:
+        # BUG-C-005 (Phase 35.1 Plan 06): in some early caldav 2.x releases
+        # `DAVClient.principal` was exposed as a *property* — accessing it
+        # without an explicit call would skip the PROPFIND request and the
+        # shim would return the base DAV URL instead of the user's actual
+        # calendar-home URL (the documented Nextcloud failure mode).
+        #
+        # Empirical inspection of the installed caldav library at
+        # phase-close time (Plan 06, 2026-05-20) confirms `principal` is a
+        # plain callable method:
+        #     >>> type(caldav.DAVClient.__dict__['principal'])
+        #     <class 'function'>
+        # So `loop.run_in_executor(None, self._client.principal)` correctly
+        # passes the bound method to the executor, which then *calls* it
+        # and triggers the PROPFIND. No code change is required for the
+        # currently-installed caldav 3.x version; the comment is left here
+        # as a guard rail so a future caldav release that re-exposes
+        # `principal` as a property does not silently regress to the
+        # base-URL bug. If the inspection ever returns `<class 'property'>`
+        # again, change this line to
+        #     loop.run_in_executor(None, lambda: self._client.principal())
+        # to force the explicit call.
         loop = asyncio.get_running_loop()
         p = await loop.run_in_executor(None, self._client.principal)
         return _CompatPrincipal(p)
@@ -164,6 +232,10 @@ PRODID = "-//ASP Parking//GPS2ASP//EN"
 
 class CalDAVAuthError(Exception):
     """Raised when CalDAV credential validation or API call fails."""
+
+
+class CalDAVWriteError(Exception):
+    """Raised when a CalDAV event write or delete operation fails (not an auth issue)."""
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +293,14 @@ class CalDAVConfig:
         )
 
         return cls(
-            url=options[CONF_CALDAV_URL],
+            # BUG-C-003: use options.get() (not bare subscript). A missing
+            # CONF_CALDAV_URL key used to raise an opaque KeyError that
+            # surfaced as a generic "CalDAV sync failed" notification;
+            # .get(default="") routes through __post_init__'s explicit
+            # `CalDAVConfig.url must not be empty` ValueError so the user
+            # (and downstream `except ValueError` callers) see a clear,
+            # actionable failure.
+            url=options.get(CONF_CALDAV_URL, ""),
             username=options.get(CONF_CALDAV_USERNAME, ""),
             password=options.get(CONF_CALDAV_PASSWORD, ""),
             calendar_url=options.get(CONF_CALDAV_CALENDAR, ""),
@@ -361,9 +440,14 @@ async def _get_calendar(client: Any, calendar_url: str) -> Any:
     Uses ``principal.calendar(cal_url=...)`` for single-calendar lookup
     (no extra collection roundtrip — the principal already knows the
     calendar-home-set URL after ``get_principal``).
+
+    Note: ``principal.calendar()`` is a **synchronous** constructor in both
+    caldav 2.x (via the ``_CompatPrincipal`` shim) and caldav 3.x
+    (``AsyncPrincipal.calendar``). It builds a Calendar object from the URL
+    without any network I/O, so it must NOT be awaited.
     """
     principal = await client.get_principal()
-    return await principal.calendar(cal_url=calendar_url)
+    return principal.calendar(cal_url=calendar_url)
 
 
 async def _delete_uid_quiet(cal: Any, uid: str) -> None:
@@ -440,6 +524,8 @@ async def validate_connection(*, url: str, username: str, password: str) -> None
         raise CalDAVAuthError(
             f"Server error: {_sanitise(str(err), password, username)}"
         ) from err
+    except asyncio.CancelledError:
+        raise
     except Exception as err:  # noqa: BLE001 — wrap everything (D-03)
         raise CalDAVAuthError(
             f"Connection error: {_sanitise(str(err), password, username)}"
@@ -474,6 +560,8 @@ async def list_calendars(
             for cal in calendars:
                 try:
                     name = await cal.get_display_name()
+                except asyncio.CancelledError:
+                    raise
                 except Exception:  # noqa: BLE001 — fall back to URL for any failure
                     logger.warning(
                         "CalDAV: could not fetch display name for calendar %s, falling back to URL",
@@ -493,6 +581,8 @@ async def list_calendars(
         raise CalDAVAuthError(
             f"Server error: {_sanitise(str(err), password, username)}"
         ) from err
+    except asyncio.CancelledError:
+        raise
     except Exception as err:  # noqa: BLE001 — wrap everything (D-03)
         raise CalDAVAuthError(
             f"Connection error: {_sanitise(str(err), password, username)}"
@@ -559,12 +649,14 @@ async def write_or_update_event(
         try:
             await cal.add_event(ical=ical_text)
         except caldav_error.DAVError as exc:
-            raise CalDAVAuthError(
+            raise CalDAVWriteError(
                 f"Failed to write event to calendar {config.calendar_url!r}: "
                 f"{_sanitise(str(exc), config.password, config.username)}"
             ) from exc
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001
-            raise CalDAVAuthError(
+            raise CalDAVWriteError(
                 f"Unexpected error writing CalDAV event: "
                 f"{_sanitise(str(exc), config.password, config.username)}"
             ) from exc

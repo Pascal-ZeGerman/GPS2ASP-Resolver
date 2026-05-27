@@ -189,8 +189,10 @@ async def test_preseed_populates_cache_with_tuple_keys(make_coordinator):
     key_s = ("PROSPECT PL", "VANDERBILT AVE", "UNDERHILL AVE", "S")
     assert key_n in coord._sign_cache
     assert key_s in coord._sign_cache
-    assert coord._sign_cache[key_n] == soda_records
-    assert coord._sign_cache[key_s] == soda_records
+    # BUG-S-007 (Phase 35.1-05): cache values are {"records", "soda_level"}
+    # dicts, not bare records lists. Pre-seed uses L1 block queries.
+    assert coord._sign_cache[key_n] == {"records": soda_records, "soda_level": 1}
+    assert coord._sign_cache[key_s] == {"records": soda_records, "soda_level": 1}
 
 
 async def test_preseed_outside_nyc_logs_and_returns_without_crash(
@@ -224,7 +226,8 @@ async def test_resolve_pipeline_uses_cache_on_hit(make_coordinator):
     coord, _hass, _entry = make_coordinator()
     cache_key = ("PROSPECT PL", "VANDERBILT AVE", "UNDERHILL AVE", "N")
     cached_records = [{"sign_description": "SANITATION BROOM 8AM-9:30AM MON THU"}]
-    coord._sign_cache = {cache_key: cached_records}
+    # BUG-S-007: cache stores {records, soda_level} dicts (not bare lists)
+    coord._sign_cache = {cache_key: {"records": cached_records, "soda_level": 1}}
 
     coord._pending_lat = 40.6778
     coord._pending_lon = -73.9690
@@ -382,7 +385,13 @@ async def test_periodic_rebuild_preserves_cache_and_respawns(make_coordinator):
     live cache must remain intact during the rebuild window.
     """
     coord, _hass, entry = make_coordinator()
-    old_cache = {("X", "Y", "Z", "N"): [{"sign_description": "old"}]}
+    # BUG-S-007: cache stores {records, soda_level} dicts (not bare lists)
+    old_cache = {
+        ("X", "Y", "Z", "N"): {
+            "records": [{"sign_description": "old"}],
+            "soda_level": 1,
+        }
+    }
     coord._sign_cache = old_cache
     coord._parking_lat = 40.6778
     coord._parking_lon = -73.9690
@@ -426,3 +435,155 @@ async def test_preseed_task_uses_entry_async_create_background_task(make_coordin
     assert kwargs.get("name") == "asp_parking_preseed"
     assert args[0] is hass
     assert asyncio.iscoroutine(args[1])
+
+
+# ---------------------------------------------------------------------------
+# BUG-S-007 (Phase 35.1-05): Cache propagates soda_level via materialize
+# ---------------------------------------------------------------------------
+
+
+async def test_materialize_propagates_cached_soda_level(make_coordinator):
+    """BUG-S-007: cache entries store both records and the soda_level that
+    produced them; on a cache hit, the coordinator must pass that level
+    into materialize_cached_records() instead of hardcoding soda_level=1.
+
+    The pre-seed path always uses Level 1 block queries today, so the
+    persisted level for pre-seeded entries is 1 — but the cache schema
+    must support any 1-4 level so that future seed paths (e.g., L2
+    abbreviation variants or L4 spans) propagate correctly. The fix is
+    a schema change: cache values move from ``list[dict]`` to
+    ``{"records": list[dict], "soda_level": int}``, and read sites must
+    extract both fields.
+    """
+    coord, _hass, _entry = make_coordinator()
+    cache_key = ("PROSPECT PL", "VANDERBILT AVE", "UNDERHILL AVE", "N")
+    cached_records = [{"sign_description": "SANITATION BROOM 8AM-9:30AM MON THU"}]
+    # New cache shape: dict with both records and the soda_level
+    coord._sign_cache = {cache_key: {"records": cached_records, "soda_level": 3}}
+
+    coord._pending_lat = 40.6778
+    coord._pending_lon = -73.9690
+
+    resolution = MagicMock()
+    resolution.on_street = "PROSPECT PL"
+    resolution.from_street = "VANDERBILT AVE"
+    resolution.to_street = "UNDERHILL AVE"
+    resolution.side_of_street = "N"
+    resolution.confidence = 0.85
+    resolution.borocode = "3"
+    resolution.perpendicular_distance_ft = 12.5
+    resolution.street_width_ft = 30.0
+    resolution.segment_id = 12345
+
+    benign_schedule = MagicMock()
+    benign_schedule.status = "schedule_found"
+    benign_schedule.parse_failures = []
+
+    from custom_components.asp_parking.gps2asp.signs.models import (
+        SignRetrievalSuccess,
+    )
+
+    with (
+        patch(
+            "custom_components.asp_parking.coordinator.resolve",
+            new=AsyncMock(return_value=resolution),
+        ),
+        patch(
+            "custom_components.asp_parking.coordinator.retrieve_signs",
+            new_callable=AsyncMock,
+        ) as mock_retrieve,
+        patch(
+            "custom_components.asp_parking.coordinator.materialize_cached_records",
+        ) as mock_materialize,
+        patch(
+            "custom_components.asp_parking.coordinator.compute_schedule",
+            return_value=benign_schedule,
+        ),
+        patch.object(
+            ASPParkingCoordinator,
+            "_async_maybe_send_notification",
+            new=AsyncMock(),
+        ),
+    ):
+        # spec=SignRetrievalSuccess so isinstance(sign_result, SignRetrievalSuccess)
+        # inside the coordinator returns True and self.data.soda_level is set
+        # from sign_result.soda_level (not reset to 0 in the non-Success branch).
+        sign_result = MagicMock(spec=SignRetrievalSuccess)
+        sign_result.signs = []
+        sign_result.soda_level = 3
+        mock_materialize.return_value = sign_result
+
+        await coord._async_resolve_pipeline()
+
+    mock_retrieve.assert_not_called()
+    mock_materialize.assert_called_once()
+    # Verify the propagated level — kwarg or positional, level must be 3
+    _args, kwargs = mock_materialize.call_args
+    assert kwargs.get("soda_level") == 3, (
+        f"materialize_cached_records must receive soda_level=3 from cache; "
+        f"got kwargs={kwargs!r}"
+    )
+    # The first positional arg must be the records list (not the dict wrapper)
+    assert _args[0] == cached_records, (
+        f"First arg must be the records list extracted from the cache entry; "
+        f"got {_args[0]!r}"
+    )
+    # And the resulting sensor data must reflect the cached level
+    assert coord.data.soda_level == 3
+
+
+async def test_preseed_writes_new_cache_shape(make_coordinator):
+    """BUG-S-007: pre-seed writes the new {records, soda_level} shape.
+
+    Pre-seed uses Level 1 block queries, so the written soda_level is 1.
+    The KEY change is the SHAPE: each cache value is a dict, not a bare
+    records list.
+    """
+    coord, _hass, _entry = make_coordinator()
+    coord._parking_lat = 40.6778
+    coord._parking_lon = -73.9690
+    coord._parking_radius_m = 500
+
+    cand = _make_segment_candidate(
+        full_street_name="PROSPECT PL",
+        from_street="VANDERBILT AVE",
+        to_street="UNDERHILL AVE",
+        nominaldir="E",  # legal sides => N, S
+    )
+    mock_idx = MagicMock()
+    mock_idx.query_radius = MagicMock(return_value=[cand])
+
+    soda_records = [{"sign_description": "SANITATION BROOM 8AM-9:30AM MON THU"}]
+
+    with (
+        patch(
+            "custom_components.asp_parking.coordinator.convert",
+            return_value=(987654.0, 178432.0),
+        ),
+        patch(
+            "custom_components.asp_parking.coordinator.SpatialIndex.get",
+            new=AsyncMock(return_value=mock_idx),
+        ),
+        patch(
+            "custom_components.asp_parking.coordinator.SODAClient"
+        ) as mock_client_cls,
+    ):
+        mock_client = MagicMock()
+        mock_client.fetch_signs = AsyncMock(return_value=soda_records)
+        mock_client.build_block_query = MagicMock(return_value="WHERE 1=1")
+        mock_client_cls.return_value = mock_client
+
+        await coord._async_preseed_cache()
+
+    key_n = ("PROSPECT PL", "VANDERBILT AVE", "UNDERHILL AVE", "N")
+    assert key_n in coord._sign_cache
+    entry = coord._sign_cache[key_n]
+    assert isinstance(entry, dict), (
+        f"BUG-S-007: cache entries must be dicts with records+soda_level keys; "
+        f"got {type(entry).__name__}"
+    )
+    assert entry["records"] == soda_records
+    assert entry["soda_level"] == 1, (
+        "Pre-seed always queries Level 1 (block query); written soda_level "
+        f"must be 1, got {entry.get('soda_level')!r}"
+    )

@@ -69,6 +69,23 @@ def _make_coord_stub(
         _last_rebuilt=None,
         _sign_cache=sign_cache if sign_cache is not None else {},
         _async_notify_entities=MagicMock(),
+        # Phase 38 (IDX-05) attributes — Phase 33 tests must still pass once
+        # _async_do_rebuild starts calling _async_decide_rebuild_path.  Default
+        # to DOWNLOAD path so the existing test surface (which mocks
+        # _sync_download_and_extract) keeps matching.
+        _index_stale_store=None,
+        _last_button_press=None,
+        _last_stale_check=None,
+        _remote_age_cache=None,
+        _async_decide_rebuild_path=AsyncMock(
+            return_value=(
+                __import__(
+                    "custom_components.asp_parking.coordinator",
+                    fromlist=["RebuildPath"],
+                ).RebuildPath.DOWNLOAD,
+                "remote_fresh",
+            )
+        ),
     )
     return stub
 
