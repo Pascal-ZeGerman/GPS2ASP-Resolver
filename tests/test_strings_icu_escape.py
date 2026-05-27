@@ -27,7 +27,9 @@ from pathlib import Path
 
 import pytest
 
-_INTEGRATION_DIR = Path(__file__).resolve().parent.parent / "custom_components" / "asp_parking"
+_INTEGRATION_DIR = (
+    Path(__file__).resolve().parent.parent / "custom_components" / "asp_parking"
+)
 _STRINGS_PATH = _INTEGRATION_DIR / "strings.json"
 _EN_PATH = _INTEGRATION_DIR / "translations" / "en.json"
 
@@ -37,37 +39,33 @@ def _load_strings() -> dict:
 
 
 @pytest.mark.parametrize("strings_path", [_STRINGS_PATH, _EN_PATH])
-def test_caldav_event_title_template_is_icu_escaped(strings_path: Path) -> None:
-    """The caldav_event_title_template description must use '{'street'}' (ICU-escaped).
+def test_caldav_event_title_template_lists_placeholders(strings_path: Path) -> None:
+    """The caldav_event_title_template description must list all three placeholder names.
 
-    The brace-escape form ``'{'name'}'`` is used instead of ``'{name}'`` because
-    hassfest rejects identifiers inside single-quoted ICU escape sequences.
+    Braces are avoided in description strings because hassfest (HA translation
+    validator) rejects any ICU-like syntax including escaped forms. Placeholder
+    names are shown using [name] notation instead.
     """
     data = json.loads(strings_path.read_text(encoding="utf-8"))
     description = data["options"]["step"]["caldav"]["data_description"][
         "caldav_event_title_template"
     ]
-    assert "'{'street'}'" in description, (
-        "Phase 35 regression: caldav_event_title_template description must "
-        "contain ICU-escaped '{'street'}' to prevent FormatJS MISSING_VALUE errors. "
-        f"Got: {description!r}"
-    )
-    # The description references three placeholder names — all must be escaped.
-    assert "'{'time'}'" in description
-    assert "'{'side'}'" in description
+    for name in ("street", "time", "side"):
+        assert name in description, (
+            f"Phase 35 regression: caldav_event_title_template description must "
+            f"mention placeholder '{name}'. Got: {description!r}"
+        )
 
 
-def test_caldav_invalid_template_is_icu_escaped() -> None:
-    """The caldav_invalid_template error must use '{'street'}', '{'side'}', '{'time'}'."""
+def test_caldav_invalid_template_lists_placeholders() -> None:
+    """The caldav_invalid_template error must mention all three placeholder names."""
     data = _load_strings()
     error = data["options"]["error"]["caldav_invalid_template"]
-    assert "'{'street'}'" in error, (
-        "Phase 35 regression: caldav_invalid_template must contain ICU-escaped "
-        "'{'street'}' to prevent FormatJS MISSING_VALUE errors. "
-        f"Got: {error!r}"
-    )
-    assert "'{'side'}'" in error
-    assert "'{'time'}'" in error
+    for name in ("street", "side", "time"):
+        assert name in error, (
+            f"Phase 35 regression: caldav_invalid_template must mention placeholder "
+            f"'{name}'. Got: {error!r}"
+        )
 
 
 def test_strings_and_en_json_byte_identical() -> None:
@@ -84,7 +82,13 @@ def test_strings_and_en_json_byte_identical() -> None:
 @pytest.mark.parametrize(
     "key_path",
     [
-        ("options", "step", "caldav", "data_description", "caldav_event_title_template"),
+        (
+            "options",
+            "step",
+            "caldav",
+            "data_description",
+            "caldav_event_title_template",
+        ),
         ("options", "error", "caldav_invalid_template"),
     ],
 )
@@ -113,5 +117,5 @@ def test_no_raw_curly_placeholders(key_path: tuple, strings_path: Path) -> None:
                 f"Phase 35 regression: unescaped placeholder {match.group()!r} found "
                 f"in {'.'.join(key_path)}. All curly placeholders in i18n description / "
                 f"error strings must be ICU-escaped as '{name}'. "
-                f"Context: ...{value[max(0, start - 10):min(len(value), end + 10)]}..."
+                f"Context: ...{value[max(0, start - 10) : min(len(value), end + 10)]}..."
             )

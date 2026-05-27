@@ -1320,6 +1320,7 @@ def test_shim_activated_when_caldav_aio_absent():
     # caldav_sync` inside async functions get the fresh module object (not the
     # one that patch() targets), causing cross-test pollution.
     import custom_components.asp_parking as _pkg
+
     saved_pkg_attr = _pkg.__dict__.get("caldav_sync")
 
     try:
@@ -1337,7 +1338,9 @@ def test_shim_activated_when_caldav_aio_absent():
 
         from custom_components.asp_parking import caldav_sync as fresh  # noqa: F401
 
-        assert hasattr(caldav, "aio"), "caldav.aio must exist after fresh import (set by shim)"
+        assert hasattr(caldav, "aio"), (
+            "caldav.aio must exist after fresh import (set by shim)"
+        )
         installed = caldav.aio.AsyncDAVClient
         # Re-importing the module creates a fresh class object, so `is` comparison
         # across module instances fails. Check qualified name + module instead.
@@ -1479,7 +1482,10 @@ async def test_compat_principal_calendars_wraps_each_in_compat_calendar():
     The sync principal's calendars() is called via run_in_executor and each
     result is wrapped so callers can use await cal.get_display_name() etc.
     """
-    from custom_components.asp_parking.caldav_sync import _CompatCalendar, _CompatPrincipal
+    from custom_components.asp_parking.caldav_sync import (
+        _CompatCalendar,
+        _CompatPrincipal,
+    )
 
     sync_cal_a = MagicMock()
     sync_cal_a.url = "https://srv/cal/a/"

@@ -471,10 +471,7 @@ class TestCrossMidnightWindow:
 
     def test_parse_cross_midnight_with_minutes(self) -> None:
         """10:30PM-MIDNIGHT must produce a Tuesday 22:30-23:59:59 window."""
-        sign = (
-            "NO PARKING (SANITATION BROOM SYMBOL) "
-            "TUESDAY 10:30PM-MIDNIGHT <->"
-        )
+        sign = "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY 10:30PM-MIDNIGHT <->"
         result = parse_sign(sign)
         assert result is not None
         assert len(result) == 1
@@ -495,9 +492,7 @@ class TestCrossMidnightWindow:
 
     def test_parse_reverse_non_midnight_window_still_rejected(self) -> None:
         """Degenerate non-midnight reversal like 9AM-8AM is still rejected."""
-        result = parse_sign(
-            "NO PARKING (SANITATION BROOM SYMBOL) MONDAY 9AM-8AM <->"
-        )
+        result = parse_sign("NO PARKING (SANITATION BROOM SYMBOL) MONDAY 9AM-8AM <->")
         assert result is None
 
     def test_parse_midnight_to_midnight_is_rejected(self) -> None:

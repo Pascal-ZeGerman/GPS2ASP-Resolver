@@ -205,10 +205,9 @@ async def _fetch_ics(year: int) -> bytes | None:
                 # must not be retried. Short-circuit with a single warning
                 # so HA diagnostics surface the auth problem instead of a
                 # multi-second retry loop. Matches NYC311Client convention.
-                if (
-                    isinstance(exc, httpx.HTTPStatusError)
-                    and exc.response.status_code in (401, 403)
-                ):
+                if isinstance(
+                    exc, httpx.HTTPStatusError
+                ) and exc.response.status_code in (401, 403):
                     logger.warning(
                         "ICS fetch failed with auth error %d (%s); not retrying "
                         "(auth errors are not transient)",

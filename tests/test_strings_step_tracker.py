@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pytest
 
-_INTEGRATION_DIR = Path(__file__).resolve().parent.parent / "custom_components" / "asp_parking"
+_INTEGRATION_DIR = (
+    Path(__file__).resolve().parent.parent / "custom_components" / "asp_parking"
+)
 _STRINGS_PATH = _INTEGRATION_DIR / "strings.json"
 _EN_PATH = _INTEGRATION_DIR / "translations" / "en.json"
 

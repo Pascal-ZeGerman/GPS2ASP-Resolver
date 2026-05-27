@@ -369,7 +369,9 @@ class TestMissingRwTypeLogIncludesSegmentId:
             # rw_type=99 is not in _NYC_DEFAULT_WIDTHS -> fallback path taken
             resolve_effective_width(0.0, 99, segment_id=123456)
 
-        fallback_records = [r for r in caplog.records if "streetwidth missing" in r.message]
+        fallback_records = [
+            r for r in caplog.records if "streetwidth missing" in r.message
+        ]
         assert len(fallback_records) > 0, "Expected a streetwidth-missing fallback log"
         msg = fallback_records[0].getMessage()
         assert "segment_id" in msg, (

@@ -81,10 +81,7 @@ class SpatialIndex:
                 already-loaded ``_index_dir`` (BUG-R-008).
         """
         if cls._instance is not None:
-            if (
-                index_dir is not None
-                and Path(index_dir) != cls._instance._index_dir
-            ):
+            if index_dir is not None and Path(index_dir) != cls._instance._index_dir:
                 raise ValueError(
                     f"SpatialIndex already loaded from "
                     f"{cls._instance._index_dir}; cannot reload with "

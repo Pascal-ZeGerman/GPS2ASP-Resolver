@@ -326,9 +326,7 @@ class ASPNextMoveTimeSensor(SensorEntity):
             attrs["side_of_street"] = schedule.side_of_street
             # Phase 36 SENSOR-01: display-friendly cardinal label. Omitted when
             # side_of_street is not one of N/S/E/W (per locked SPEC edge case).
-            if (
-                side_label := _SIDE_LABELS.get(schedule.side_of_street)
-            ) is not None:
+            if (side_label := _SIDE_LABELS.get(schedule.side_of_street)) is not None:
                 attrs["side_label"] = side_label
 
         # --- Window group ---

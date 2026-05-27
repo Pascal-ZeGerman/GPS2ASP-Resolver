@@ -53,6 +53,7 @@ def _strip_userinfo(url: str) -> str:
         netloc = f"{netloc}:{parsed.port}"
     return urlunparse(parsed._replace(netloc=netloc))
 
+
 TO_REDACT = {
     CONF_PARKING_LAT,
     CONF_PARKING_LON,

@@ -350,9 +350,7 @@ def _sync_fetch_cscl_features(headers: dict[str, str]) -> list[dict[str, Any]]:
     offset = 0
     page_count = 0
 
-    with httpx.Client(
-        timeout=300, headers=headers, follow_redirects=True
-    ) as client:
+    with httpx.Client(timeout=300, headers=headers, follow_redirects=True) as client:
         while True:
             if page_count >= MAX_CSCL_PAGES:
                 raise RuntimeError(
@@ -685,15 +683,11 @@ def _sync_fetch_asp_signs(
                 if not records:
                     break
                 for record in records:
-                    on_street = _normalize_street_name(
-                        record.get("on_street") or ""
-                    )
+                    on_street = _normalize_street_name(record.get("on_street") or "")
                     from_street = _normalize_street_name(
                         record.get("from_street") or ""
                     )
-                    to_street = _normalize_street_name(
-                        record.get("to_street") or ""
-                    )
+                    to_street = _normalize_street_name(record.get("to_street") or "")
                     side = (record.get("side_of_street") or "").upper().strip()
                     if on_street and side:
                         asp_tuples.add((on_street, from_street, to_street, side))
@@ -710,8 +704,7 @@ def _sync_fetch_asp_signs(
         # downstream segments simply get has_asp=False, mirroring the
         # scripts/build_index.py behavior (lines 633-642).
         logger.warning(
-            "SODA ASP signs fetch failed (offset=%d): %s — "
-            "continuing without ASP data",
+            "SODA ASP signs fetch failed (offset=%d): %s — continuing without ASP data",
             offset,
             exc,
         )
@@ -812,9 +805,7 @@ def _build_rtree_and_metadata(
                 "nominaldir": str(row.get("nominaldir", "") or ""),
                 "rw_type": int(row.get("rw_type", 0)),
                 "streetwidth": streetwidth,
-                "borocode": str(
-                    row.get("boroughcode", row.get("borocode", "")) or ""
-                ),
+                "borocode": str(row.get("boroughcode", row.get("borocode", "")) or ""),
                 "has_asp_left": has_left,
                 "has_asp_right": has_right,
             }
@@ -868,9 +859,7 @@ def _write_graph_zst(
     for pid in retained:
         pid_str = str(pid)
         neighbors = adjacency.get(pid, set())
-        graph_adjacency[pid_str] = sorted(
-            n for n in neighbors if n in retained
-        )
+        graph_adjacency[pid_str] = sorted(n for n in neighbors if n in retained)
         graph_segment_streets[pid_str] = street_names.get(pid, "")
         pid_from, pid_to = cross_streets.get(pid, ("", ""))
         graph_segment_cross_streets[pid_str] = [pid_from, pid_to]
@@ -920,8 +909,10 @@ def _sync_build_from_source(index_dir: Path) -> None:
     # Step 1: Fetch + filter + reproject CSCL features.
     raw_features = _sync_fetch_cscl_features(headers)
     segments = _sync_filter_and_reproject(raw_features)
-    street_names = {row["physicalid"]: str(row.get("full_street_name", "") or "")
-                    for row in segments}
+    street_names = {
+        row["physicalid"]: str(row.get("full_street_name", "") or "")
+        for row in segments
+    }
 
     # Step 2: Build the node lookup once, reuse for cross streets + graph.
     node_lookup = _build_node_lookup(segments)
@@ -936,9 +927,7 @@ def _sync_build_from_source(index_dir: Path) -> None:
     )
 
     # Step 4: R-tree + segments.json + graph.json.zst.
-    insert_count = _build_rtree_and_metadata(
-        segments, cross_streets, asp_lookup, tmp
-    )
+    insert_count = _build_rtree_and_metadata(segments, cross_streets, asp_lookup, tmp)
     graph_segment_count = _write_graph_zst(
         adjacency,
         cross_streets,
@@ -952,9 +941,7 @@ def _sync_build_from_source(index_dir: Path) -> None:
     # Step 5: build_info.json with provenance + timing.
     elapsed = round(time.time() - start, 1)
     build_info = {
-        "build_timestamp": datetime.now(timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        ),
+        "build_timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "cscl_api",
         "filtered_count": insert_count,
         "build_duration_seconds": elapsed,

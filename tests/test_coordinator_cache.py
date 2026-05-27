@@ -459,9 +459,7 @@ async def test_materialize_propagates_cached_soda_level(make_coordinator):
     cache_key = ("PROSPECT PL", "VANDERBILT AVE", "UNDERHILL AVE", "N")
     cached_records = [{"sign_description": "SANITATION BROOM 8AM-9:30AM MON THU"}]
     # New cache shape: dict with both records and the soda_level
-    coord._sign_cache = {
-        cache_key: {"records": cached_records, "soda_level": 3}
-    }
+    coord._sign_cache = {cache_key: {"records": cached_records, "soda_level": 3}}
 
     coord._pending_lat = 40.6778
     coord._pending_lon = -73.9690

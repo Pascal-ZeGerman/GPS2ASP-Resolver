@@ -71,7 +71,9 @@ INDEX_DOWNLOAD_URL = (
 # that endpoint returns v3.0.0 with ZERO assets while `index.zip` lives on tag
 # `index-v1`.  Plan 02 consumes this tag via
 # `GET /repos/.../releases/tags/{GITHUB_INDEX_RELEASE_TAG}`.
-GITHUB_RELEASES_API_BASE = "https://api.github.com/repos/Pascal-ZeGerman/GPS2ASP-Resolver"
+GITHUB_RELEASES_API_BASE = (
+    "https://api.github.com/repos/Pascal-ZeGerman/GPS2ASP-Resolver"
+)
 GITHUB_INDEX_RELEASE_TAG = "index-v1"
 CSCL_GEOJSON_URL = "https://data.cityofnewyork.us/resource/inkn-q76z.geojson"
 SODA_PARKING_SIGNS_URL = "https://data.cityofnewyork.us/resource/nfid-uabd.json"

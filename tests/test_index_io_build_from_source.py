@@ -83,8 +83,13 @@ def test_produces_all_five_files(tmp_path: Path, monkeypatch) -> None:
 
     tmp = tmp_path / "idx_tmp"
     assert tmp.exists()
-    for fname in ("segments.idx", "segments.dat", "segments.json",
-                  "graph.json.zst", "build_info.json"):
+    for fname in (
+        "segments.idx",
+        "segments.dat",
+        "segments.json",
+        "graph.json.zst",
+        "build_info.json",
+    ):
         assert (tmp / fname).exists(), f"missing {fname} under {tmp}"
 
 
@@ -137,9 +142,7 @@ def test_app_token_header_when_env_var_set(tmp_path: Path, monkeypatch) -> None:
 
 
 @respx.mock
-def test_no_app_token_header_when_env_var_unset(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_no_app_token_header_when_env_var_unset(tmp_path: Path, monkeypatch) -> None:
     """Without NYC_OPEN_DATA_APP_TOKEN, the X-App-Token header must be absent."""
     monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
     cscl_route = _route_cscl_two_pages(_load_cscl_fixture())
@@ -171,9 +174,7 @@ def test_pagination_cap_raises(tmp_path: Path, monkeypatch) -> None:
     full_body = {"type": "FeatureCollection", "features": fake_features}
 
     # Mount enough full-batch responses to exceed the cap.
-    responses = [
-        httpx.Response(200, json=full_body) for _ in range(MAX_CSCL_PAGES + 2)
-    ]
+    responses = [httpx.Response(200, json=full_body) for _ in range(MAX_CSCL_PAGES + 2)]
     respx.get(CSCL_GEOJSON_URL).mock(side_effect=responses)
     _route_soda_ok()
 
@@ -210,9 +211,7 @@ def test_cscl_failure_raises(tmp_path: Path, monkeypatch) -> None:
 
 
 @respx.mock
-def test_rw_type_filter_excludes_non_vehicular(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_rw_type_filter_excludes_non_vehicular(tmp_path: Path, monkeypatch) -> None:
     """Fixture includes RW_TYPE=9 (FDR DRIVE) — segments.json must not contain it."""
     monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
     _route_cscl_two_pages(_load_cscl_fixture())

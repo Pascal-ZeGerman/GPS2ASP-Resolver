@@ -1118,10 +1118,7 @@ def test_cross_streets_match_empty_record_fields() -> None:
     # Caller passes empty strings AND record has empty fields:
     # name_variants("") = [""] → "" in {""} is True → wrong match.
     assert (
-        _cross_streets_match(
-            {"from_street": "", "to_street": ""}, "", ""
-        )
-        is False
+        _cross_streets_match({"from_street": "", "to_street": ""}, "", "") is False
     ), (
         "BUG-S-003: Empty-string × empty-string must NOT match — currently "
         "returns True because name_variants('')==['']"
@@ -1224,9 +1221,7 @@ async def test_soda_retry_last_attempt_does_not_log_retry_in() -> None:
 
     # Find the record for attempt 3/3 (the last attempt)
     last_attempt_records = [
-        r
-        for r in log_handler.records
-        if "attempt 3/3" in r.getMessage()
+        r for r in log_handler.records if "attempt 3/3" in r.getMessage()
     ]
     assert len(last_attempt_records) >= 1, (
         f"Expected at least one log record for attempt 3/3, got "

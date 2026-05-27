@@ -53,8 +53,7 @@ GITHUB_TAG_URL = (
     "/releases/tags/index-v1"
 )
 GITHUB_LATEST_URL = (
-    "https://api.github.com/repos/Pascal-ZeGerman/GPS2ASP-Resolver"
-    "/releases/latest"
+    "https://api.github.com/repos/Pascal-ZeGerman/GPS2ASP-Resolver/releases/latest"
 )
 
 
@@ -334,7 +333,9 @@ async def test_remote_age_uses_created_at_not_updated_at():
     age = await fetch()
     assert age is not None
     # created_at -> ~52d; updated_at -> ~22d. Tolerate clock drift.
-    assert 51.0 < age < 53.5, f"age {age} should match created_at (~52d), not updated_at"
+    assert 51.0 < age < 53.5, (
+        f"age {age} should match created_at (~52d), not updated_at"
+    )
 
 
 @respx.mock

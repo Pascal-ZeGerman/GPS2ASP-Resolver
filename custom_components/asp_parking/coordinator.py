@@ -626,7 +626,9 @@ class ASPParkingCoordinator:
     # Phase 33: index rebuild orchestration (IDX-01..IDX-04)
     # ------------------------------------------------------------------
 
-    async def async_request_rebuild(self, *, triggered_by: Literal["button", "stale_check"] = "button") -> None:
+    async def async_request_rebuild(
+        self, *, triggered_by: Literal["button", "stale_check"] = "button"
+    ) -> None:
         """Public entry point: fire-and-forget spawn of the rebuild task.
 
         IDX-02 concurrent-press protection: if a rebuild is already in
@@ -686,7 +688,9 @@ class ASPParkingCoordinator:
             name="asp_parking_index_rebuild",
         )
 
-    async def _async_do_rebuild(self, *, triggered_by: Literal["button", "stale_check"] = "button") -> None:
+    async def _async_do_rebuild(
+        self, *, triggered_by: Literal["button", "stale_check"] = "button"
+    ) -> None:
         """Background task body — performs the full rebuild lifecycle.
 
         Strict ordering (RESEARCH Pitfall 2):
@@ -875,9 +879,7 @@ class ASPParkingCoordinator:
             if (dt_util.utcnow() - cached_at) < timedelta(minutes=10):
                 return cached_value
 
-        url = (
-            f"{GITHUB_RELEASES_API_BASE}/releases/tags/{GITHUB_INDEX_RELEASE_TAG}"
-        )
+        url = f"{GITHUB_RELEASES_API_BASE}/releases/tags/{GITHUB_INDEX_RELEASE_TAG}"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
@@ -1001,9 +1003,7 @@ class ASPParkingCoordinator:
         )
         self._listeners.append(unsub_stale)
 
-    async def _async_check_stale_and_rebuild(
-        self, now: datetime | None = None
-    ) -> None:
+    async def _async_check_stale_and_rebuild(self, now: datetime | None = None) -> None:
         """Shared startup + daily-interval stale-check helper.
 
         Pitfall 12: the callback must accept BOTH zero args (startup
@@ -1030,9 +1030,7 @@ class ASPParkingCoordinator:
         """
         try:
             if self._last_rebuilt is None:
-                logger.debug(
-                    "ASP Parking: stale check skipped (_last_rebuilt is None)"
-                )
+                logger.debug("ASP Parking: stale check skipped (_last_rebuilt is None)")
                 return
             age = dt_util.utcnow() - self._last_rebuilt
             if age <= timedelta(days=STALE_INDEX_DAYS):
@@ -1046,6 +1044,7 @@ class ASPParkingCoordinator:
             from homeassistant.components.persistent_notification import (
                 async_create as pn_create,
             )
+
             pn_create(
                 self.hass,
                 (
@@ -1591,7 +1590,9 @@ class ASPParkingCoordinator:
                 name="asp_parking_boundary_timer",
             )
 
-        self._boundary_timer_unsub = async_call_later(self.hass, delay, _on_boundary_fire)
+        self._boundary_timer_unsub = async_call_later(
+            self.hass, delay, _on_boundary_fire
+        )
         logger.debug(
             "Boundary timer scheduled: %s in %.1fs (%s)",
             kind,
@@ -1805,6 +1806,7 @@ class ASPParkingCoordinator:
             from homeassistant.components.persistent_notification import (
                 async_create as pn_create,
             )
+
             pn_create(
                 self.hass,
                 f"A data-integrity error occurred at ({lat:.4f}, {lon:.4f}): {err}. "
@@ -1916,9 +1918,7 @@ class ASPParkingCoordinator:
         client = SODAClient()  # uses NYC_OPEN_DATA_APP_TOKEN env var if set
         # BUG-S-007 (Phase 35.1-05): cache values are {records, soda_level} dicts.
         # Pre-seed only runs Level 1 block queries, so soda_level=1 here.
-        new_cache: dict[
-            tuple[str, str, str, str], dict[str, list[dict] | int]
-        ] = {}
+        new_cache: dict[tuple[str, str, str, str], dict[str, list[dict] | int]] = {}
         fetch_attempt_count = 0
         fetch_failure_count = 0
         for cand in candidates:
@@ -2221,4 +2221,6 @@ class ASPParkingCoordinator:
                 self._pending_lon = lon
             self.hass.async_create_task(self._debouncer.async_call())
         else:
-            logger.debug("ASP Parking: heartbeat — no GPS coordinates, pipeline re-run skipped")
+            logger.debug(
+                "ASP Parking: heartbeat — no GPS coordinates, pipeline re-run skipped"
+            )

@@ -103,6 +103,7 @@ class _CompatCalendar:
             matches = [e for e in results if e.id == uid]
             if not matches:
                 from caldav.lib import error as _caldav_err
+
                 raise _caldav_err.NotFoundError(f"{uid} not found on server")
             return matches[0]
 

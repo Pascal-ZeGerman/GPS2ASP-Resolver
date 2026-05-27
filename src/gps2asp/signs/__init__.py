@@ -116,10 +116,7 @@ def materialize_cached_records(
     # bug would otherwise inject non-broom records (e.g. NO STANDING signs)
     # into the schedule pipeline. Cheap and idempotent on already-filtered
     # input.
-    signs = [
-        sign for sign in signs
-        if "SANITATION BROOM" in sign.sign_description
-    ]
+    signs = [sign for sign in signs if "SANITATION BROOM" in sign.sign_description]
     if not signs:
         return NoASPSigns()
     return SignRetrievalSuccess(

@@ -555,7 +555,9 @@ class TestComputeSchedule:
         # 2026-02-23 is Monday, 2026-02-24 is Tuesday, 2026-02-27 is Friday
         now = datetime(2026, 2, 23, 15, 0, tzinfo=NYC_TZ)
         tuesday = date(2026, 2, 24)
-        result = compute_schedule(sign_result, now=now, suspended_dates=frozenset({tuesday}))
+        result = compute_schedule(
+            sign_result, now=now, suspended_dates=frozenset({tuesday})
+        )
         assert isinstance(result, ScheduleFound)
         assert result.next_window is not None
         assert result.next_window.day == ASPDay.FRIDAY
@@ -695,9 +697,9 @@ def test_find_next_window_distinguishes_empty_schedule(
         result = find_next_window(schedule, now=now)
 
     assert result is None
-    assert any(
-        "no windows in schedule" in r.message.lower() for r in caplog.records
-    ), f"Expected 'no windows in schedule' warning, got: {[r.message for r in caplog.records]}"
+    assert any("no windows in schedule" in r.message.lower() for r in caplog.records), (
+        f"Expected 'no windows in schedule' warning, got: {[r.message for r in caplog.records]}"
+    )
 
 
 def test_find_next_window_distinguishes_all_suspended(
@@ -725,4 +727,6 @@ def test_find_next_window_distinguishes_all_suspended(
     assert any(
         "suspended" in r.message.lower() and "candidate" in r.message.lower()
         for r in caplog.records
-    ), f"Expected 'all candidate ... suspended' warning, got: {[r.message for r in caplog.records]}"
+    ), (
+        f"Expected 'all candidate ... suspended' warning, got: {[r.message for r in caplog.records]}"
+    )

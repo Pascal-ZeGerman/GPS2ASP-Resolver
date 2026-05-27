@@ -676,9 +676,11 @@ def test_download_and_extract_patches_source_github_release(tmp_path: Path) -> N
     from unittest.mock import MagicMock, patch
 
     zip_bytes = _build_zip_bytes(
-        {"build_info.json": json.dumps(
-            {"build_timestamp": "2026-05-01T00:00:00Z"}
-        ).encode("utf-8")}
+        {
+            "build_info.json": json.dumps(
+                {"build_timestamp": "2026-05-01T00:00:00Z"}
+            ).encode("utf-8")
+        }
     )
 
     mock_resp = MagicMock()

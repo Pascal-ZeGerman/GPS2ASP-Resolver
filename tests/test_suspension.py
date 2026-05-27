@@ -456,7 +456,9 @@ async def test_fetch_ics_no_retry_on_401(caplog: pytest.LogCaptureFixture) -> No
     assert any(
         "401" in r.getMessage() or "auth" in r.getMessage().lower()
         for r in caplog.records
-    ), f"Expected an auth-error warning, got: {[r.getMessage() for r in caplog.records]}"
+    ), (
+        f"Expected an auth-error warning, got: {[r.getMessage() for r in caplog.records]}"
+    )
 
 
 async def test_fetch_ics_no_retry_on_403(caplog: pytest.LogCaptureFixture) -> None:

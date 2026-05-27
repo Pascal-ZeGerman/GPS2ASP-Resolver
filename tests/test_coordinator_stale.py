@@ -317,7 +317,9 @@ async def test_store_payload_iso_8601_format(pn_module: SimpleNamespace):
 
     saved = stub._index_stale_store.async_save.call_args.args[0]
     parsed = dt_util.parse_datetime(saved["last_stale_check"])
-    assert parsed is not None, "last_stale_check must round-trip via dt_util.parse_datetime"
+    assert parsed is not None, (
+        "last_stale_check must round-trip via dt_util.parse_datetime"
+    )
     assert parsed.tzinfo is not None, "last_stale_check must be tz-aware"
 
 
@@ -537,8 +539,7 @@ async def test_async_start_spawns_startup_background_task(
     )
     # Verify name pattern.
     names = [
-        call.kwargs.get("name")
-        or (call.args[2] if len(call.args) > 2 else None)
+        call.kwargs.get("name") or (call.args[2] if len(call.args) > 2 else None)
         for call in stub.entry.async_create_background_task.call_args_list
     ]
     assert "asp_parking_index_stale_check_startup" in names, (
@@ -615,14 +616,18 @@ async def test_store_corrupt_payload_falls_back_to_none(
     stub = _make_coord_stub_stale(last_rebuilt=None)
     stub._async_check_stale_and_rebuild = _bind(stub, "_async_check_stale_and_rebuild")
     init_lifecycle = _bind(stub, "_async_init_stale_lifecycle")
-    caplog.set_level(logging.WARNING, logger="custom_components.asp_parking.coordinator")
+    caplog.set_level(
+        logging.WARNING, logger="custom_components.asp_parking.coordinator"
+    )
     await init_lifecycle()
 
     assert stub._last_button_press is None
     assert stub._last_stale_check is None
     # WARNING log emitted.
     warnings = [
-        r for r in caplog.records if r.levelno == logging.WARNING and "index_stale" in r.getMessage()
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "index_stale" in r.getMessage()
     ]
     assert warnings, (
         f"Corrupt payload should emit a WARNING about index_stale store; "

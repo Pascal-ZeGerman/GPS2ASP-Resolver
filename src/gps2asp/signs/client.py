@@ -165,8 +165,7 @@ class SODAClient:
                 is_last = attempt == self.MAX_RETRIES - 1
                 if is_last:
                     logger.warning(
-                        "SODA API attempt %d/%d failed: %s "
-                        "-- all retries exhausted",
+                        "SODA API attempt %d/%d failed: %s -- all retries exhausted",
                         attempt + 1,
                         self.MAX_RETRIES,
                         exc,
