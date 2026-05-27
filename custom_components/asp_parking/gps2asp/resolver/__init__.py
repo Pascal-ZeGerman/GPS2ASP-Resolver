@@ -244,7 +244,9 @@ async def resolve_segment(
         # — these are the "left of direction" sides. Therefore sides N and W map
         # to the left-of-segment lane (has_asp_left) and sides S and E map to
         # the right-of-segment lane (has_asp_right).
-        assert side is not None  # guaranteed: AmbiguousResolutionError raised above when not is_confident
+        assert (
+            side is not None
+        )  # guaranteed: AmbiguousResolutionError raised above when not is_confident
         side_is_left = side in {"N", "W"}
         has_asp = best.has_asp_left if side_is_left else best.has_asp_right
 
