@@ -45,29 +45,66 @@ GPS (lat, lon) → NY State Plane → CSCL spatial index → street segment + si
 
 ## 2. Architecture Diagram
 
-```
-  [Standalone library]              [Home Assistant integration]
-          |                                     |
-     pipeline.py                     coordinator.py (event-driven)
-          |                                     |
-    resolve_asp()                   device_tracker state change
-          |                                     |
-  --------+--------                   ----------+----------
-  |       |       |                   |         |         |
-Stage 1  Stage 2  Stage 3         Stage 1   Stage 2   Stage 3
-resolver  signs  schedule         resolver   signs    schedule
-                                             |
-                                  +----------+----------+
-                                  |          |          |
-                             sensor.py  binary_sensor  switch.py
-                             next_move  asp_active_now  debug_mode
-                             schedule
-                             summary
-```
-
 Both deployment modes share the same three-stage pipeline. In standalone use, `pipeline.py`
 exposes a single `resolve_asp()` async function. In the HA integration, the coordinator
 drives the same stages inline and distributes results to entity callbacks.
+
+### Top-level architecture
+
+```mermaid
+flowchart LR
+    subgraph Standalone["Standalone Library"]
+        SLEntry["pipeline.py :: resolve_asp(lat, lon)"]
+    end
+
+    subgraph HA["Home Assistant Integration"]
+        HAEntry["coordinator.py (event-driven)"]
+        DT["device_tracker state change"] --> HAEntry
+    end
+
+    subgraph Pipeline["Shared Three-Stage Pipeline"]
+        direction TB
+        S1["Stage 1 — Resolver"] --> S2["Stage 2 — Signs"] --> S3["Stage 3 — Schedule"]
+    end
+
+    SLEntry --> Pipeline
+    HAEntry --> Pipeline
+
+    Pipeline --> Result["ASPResult / ASPDebugResult"]
+    HAEntry --> Entities["HA entities (sensor, binary_sensor, switch, diagnostics)"]
+```
+
+### Three-stage pipeline data flow
+
+```mermaid
+flowchart TD
+    GPS["GPS coordinates (lat / lon)"] --> S1
+
+    subgraph S1["Stage 1 — Resolver"]
+        direction TB
+        S1a["WGS84 → NY State Plane projection (feet)"] --> S1b["R-tree spatial index lookup"] --> S1c["Side determination (cross-product)"]
+    end
+
+    S1 --> RR["ResolutionResult\n(on_street, from_street, to_street, side, confidence)"]
+    RR --> S2
+
+    subgraph S2["Stage 2 — Signs"]
+        direction TB
+        S2a["SODA API query — 4-level fallback"] --> S2b["L1 exact → L2 swapped → L3 on-street-only → L4 BFS graph"]
+    end
+
+    S2 --> SRR["SignRetrievalResult\n(SignRecord list | NoASPSigns | NoMatchFound)"]
+    SRR --> S3
+
+    subgraph S3["Stage 3 — Schedule"]
+        direction TB
+        S3a["Regex parse sign text → TimeWindow"] --> S3b["Merge overlapping windows"] --> S3c["Compute next move"]
+    end
+
+    S3 --> SCH["ScheduleResult\n(ScheduleFound | ASPActiveNow | NoASPSchedule | NoMatchSchedule | AllUnparseable)"]
+    SCH --> S4{"Optional Stage 4:\nSuspension overlay\n(holiday calendar + NYC311)"}
+    S4 --> FINAL["Final ASPResult / ASPDebugResult"]
+```
 
 ---
 
@@ -219,32 +256,30 @@ Modules:
 
 ## 5. Home Assistant Integration (`custom_components/asp_parking/`)
 
-```
-  device_tracker state change
-           |
-           v
-  ASPParkingCoordinator
-    |
-    +-- Debouncer (GPS_DEBOUNCE_COOLDOWN = 5s, coalesces rapid GPS events)
-    |
-    +-- Movement threshold check (default 50m; skips pipeline if below threshold)
-    |
-    +-- Optional: parking area check (parking_lat/lon/radius; skips if car has not left)
-    |
-    +-- Stage 1: resolve() → ResolutionResult
-    +-- Stage 2: retrieve_signs() → SignRetrievalResult
-    +-- Stage 3: compute_schedule() → ScheduleResult
-    |
-    +-- Suspension overlay (holiday calendar + NYC311 / ha-nyc311 bridge)
-    |
-    +-- Notify entities via async_add_update_callback() callbacks
-           |
-     ------+----------+-------
-     |                |      |
-  sensor.py   binary_sensor  switch.py
-  next_move   asp_active_now debug_mode
-  schedule    (+ 9 diag
-  summary      sensors)
+### Coordinator event flow
+
+```mermaid
+flowchart TD
+    DT["device_tracker state change event"] --> DB["Debouncer\n(5s cooldown, coalesces rapid GPS events)"]
+    DB --> MT{"Movement threshold check\n(default 50m)"}
+    MT -->|below threshold| SKIP1["Skip pipeline"]
+    MT -->|moved| PA{"Optional: parking area check\n(parking_lat / lon / radius)"}
+    PA -->|inside parking area| SKIP2["Skip pipeline"]
+    PA -->|left area / not configured| PIPE
+
+    Timer["Periodic forced refresh timer\n(default 8h)"] --> PIPE
+
+    subgraph PIPE["Pipeline"]
+        direction TB
+        P1["Stage 1: resolve() → ResolutionResult"] --> P2["Stage 2: retrieve_signs() → SignRetrievalResult"] --> P3["Stage 3: compute_schedule() → ScheduleResult"]
+    end
+
+    PIPE --> SUSP["Suspension overlay\n(holiday calendar + NYC311 / ha-nyc311 bridge)"]
+    SUSP --> CB["async_add_update_callback()"]
+    CB --> SENSOR["sensor.py\n(next_move, schedule_summary, + diagnostics)"]
+    CB --> BSENSOR["binary_sensor.py\n(asp_active_now)"]
+    CB --> SWITCH["switch.py\n(debug_mode)"]
+    CB --> DIAG["diagnostics.py"]
 ```
 
 **Key design:** The coordinator is event-driven, not polled. It does not subclass
@@ -257,7 +292,6 @@ beyond the configured movement threshold, plus a periodic forced refresh.
 | Entity | Platform | Description |
 |---|---|---|
 | `sensor.asp_next_move` | `sensor` | Datetime of the next upcoming ASP cleaning window |
-| `sensor.asp_schedule_summary` | `sensor` | Human-readable schedule string (e.g., `"Mon 8–9:30 AM"`) |
 | `binary_sensor.asp_active_now` | `binary_sensor` | `true` when currently inside a cleaning window |
 | `switch.asp_debug_mode` | `switch` | Toggles coordinator debug mode in-memory (resets to off on restart) |
 | `sensor.asp_confidence_score` | `sensor` (diagnostic) | Resolution confidence score 0.0–1.0 |
@@ -281,6 +315,22 @@ NYC311 API every 60 minutes. The coordinator also auto-detects the
 `binary_sensor.nyc311_parking_exception_today` entity from the companion `ha-nyc311`
 integration; when present, it subscribes to its state changes for real-time suspension
 updates and bypasses direct 311 API polling.
+
+```mermaid
+flowchart LR
+    subgraph Sources["Suspension sources"]
+        direction TB
+        HC["HolidayCalendar\nNYC DOT ICS calendar → date-to-reason mapping\n(fallback: hardcoded 2026 dates)"]
+        N311["NYC311Client\nGetCalendar API polling every 60min\n(requires api_key)"]
+        BRIDGE["OR: ha-nyc311 bridge\nbinary_sensor.nyc311_parking_exception_today\n(auto-detected)"]
+    end
+
+    HC --> MERGE["merge.py :: apply_suspension()"]
+    N311 --> MERGE
+    BRIDGE --> MERGE
+
+    MERGE --> OUT["ScheduleResult annotated with\nsuspended, suspension_reason, resolution_reason"]
+```
 
 **HACS distribution:** `custom_components/asp_parking/gps2asp/` is a vendored copy of
 the `src/gps2asp/` library. The integration does not rely on the library being installed

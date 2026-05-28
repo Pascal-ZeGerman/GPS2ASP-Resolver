@@ -29,11 +29,15 @@ CI runs against Python `3.14` (`.github/workflows/pytest.yml`); any `3.11+` rele
 
 ### Home Assistant — via HACS (recommended)
 
-1. Open HACS in your Home Assistant sidebar.
-2. Click **Integrations**, then click the three-dot menu (top-right) and choose **Custom repositories**.
-3. Enter `https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver` and select **Integration**, then click **Add**.
-4. Search for **ASP Parking** and click **Download**.
-5. Restart Home Assistant.
+The fastest path is the one-click My Home Assistant button (the same one in the project [README](../README.md)):
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Pascal-ZeGerman&repository=GPS2ASP-Resolver&category=integration)
+
+1. Click the button above — it opens this repository directly inside HACS.
+2. Click **Download**.
+3. Restart Home Assistant.
+
+Prefer to add it by hand? Open HACS, click the three-dot menu (top-right) and choose **Custom repositories**, paste `https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver`, select **Integration**, click **Add**, then search for **ASP Parking** and click **Download**. Restart Home Assistant when finished.
 
 The integration bundles a vendored copy of the `gps2asp` library — no separate Python package install is needed.
 
@@ -82,20 +86,22 @@ After installation, configure the integration from the HA UI — no YAML require
    | Refresh interval | 8 h | Periodic forced refresh even without GPS movement |
    | Stale timeout | 8 h | How long to keep the last known schedule after the tracker goes unavailable |
 
-5. **Step 3:** Optionally enter an **NYC311 API key** for real-time suspension alerts. <!-- VERIFY: obtain key from https://api-portal.nyc.gov/ -->
+5. **Step 3:** Optionally enter an **NYC311 API key** for real-time weather and emergency suspension alerts. <!-- VERIFY: obtain key from https://api-portal.nyc.gov/ -->
 6. Click **Submit**. Sensors appear immediately under the new device.
 
-On first HA setup, if no local spatial index exists, the integration downloads `index.zip` from the GitHub releases page automatically. No manual build step is required.
+On first HA setup, if no local spatial index exists, the integration downloads `index.zip` from the GitHub releases page automatically (the `index-v1` release tag). No manual build step is required.
+
+After setup you can configure additional options — a home **parking area** (lat/lon/radius), a **push notification service**, and **CalDAV calendar sync** — via **Settings → Devices & Services → ASP Parking → Configure**.
 
 ### Python library — build the spatial index
 
-The spatial index must be built before the resolver can run. This step downloads ~160 K street segments from NYC Open Data and takes approximately 3–5 minutes.
+The spatial index must be built before the resolver can run. This step downloads the NYC Street Centerline (CSCL) dataset (~122 K segments) from NYC Open Data and takes approximately 3–5 minutes.
 
 ```bash
 .venv/bin/python scripts/build_index.py
 ```
 
-The index is written to `src/gps2asp/data/index/`. To use a custom output location, set `GPS2ASP_INDEX_DIR` before running the script.
+The index is written to `src/gps2asp/data/index/`. To write to a custom location, pass `--output-dir /path/to/index` or set the `GPS2ASP_INDEX_DIR` environment variable before running the script.
 
 ### Python library — run the pipeline demo
 
@@ -105,7 +111,7 @@ Once the index is built, run the bundled example to confirm everything works:
 .venv/bin/python examples/run_pipeline.py
 ```
 
-This resolves a hardcoded Brooklyn location (Prospect Place between Vanderbilt Ave and Carlton Ave) using the live SODA API. Pass custom coordinates as arguments:
+This resolves a hardcoded Brooklyn location (Prospect Place between Vanderbilt Ave and Carlton Ave — `40.677629, -73.968527`) using the live SODA API, printing both normal-mode and debug-mode results. Pass custom coordinates as arguments:
 
 ```bash
 .venv/bin/python examples/run_pipeline.py 40.7580 -73.9855
@@ -127,7 +133,7 @@ This resolves a hardcoded Brooklyn location (Prospect Place between Vanderbilt A
 
 **`IndexNotFoundError` on first run**
 
-The spatial index has not been built yet. Run `build_index.py` before calling any resolver function. The build requires the `[build]` extras (`geopandas`, `requests`):
+The spatial index has not been built yet. The error message is `Spatial index files not found in '<dir>'. Run the build script to create the index first.` Run `build_index.py` before calling any resolver function. The build requires the `[build]` extras (`geopandas`, `requests`):
 
 ```bash
 .venv/bin/python -m pip install -e ".[build]"
@@ -142,6 +148,10 @@ The package has not been installed in editable mode. Run:
 .venv/bin/python -m pip install -e ".[dev]"
 ```
 
+**`OutsideNYCError` when resolving coordinates**
+
+The latitude/longitude you passed falls outside NYC's bounding box (`lat 40.49–40.92, lon -74.27 to -73.68`). The resolver and integration only cover the five NYC boroughs — confirm the coordinates point to a location inside the city.
+
 **SODA API rate-limit errors during index build**
 
 The NYC Open Data anonymous pool can throttle requests during peak hours. Set an app token to use a dedicated rate-limit pool: <!-- VERIFY: obtain token from https://opendata.cityofnewyork.us/overview/ -->
@@ -153,7 +163,7 @@ export NYC_OPEN_DATA_APP_TOKEN=your_token_here
 
 **HA sensor shows "No street match" after setup**
 
-The GPS fix may be imprecise or the tracker has not yet reported coordinates. Wait for the tracker to update, or check that the device tracker entity has `gps_accuracy` below ~50 m. Indoor or parking-garage fixes are common causes.
+This surfaces a `NoSegmentFoundError` — no street segment was found within the snap distance (~164 ft / 50 m) of the reported GPS fix. The fix may be imprecise or the tracker has not yet reported coordinates. Wait for the tracker to update, or check that the device tracker entity has `gps_accuracy` below ~50 m. Indoor or parking-garage fixes are common causes.
 
 **`pytest-homeassistant-custom-component` install fails**
 
