@@ -1,5 +1,5 @@
 <!-- generated-by: gsd-doc-writer -->
-[![GitHub release](https://img.shields.io/github/v/release/Pascal-ZeGerman/GPS2ASP-Resolver)](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/releases) [![GitHub issues](https://img.shields.io/github/issues/Pascal-ZeGerman/GPS2ASP-Resolver)](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/issues)
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration) [![GitHub release](https://img.shields.io/github/v/release/Pascal-ZeGerman/GPS2ASP-Resolver)](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/releases) [![GitHub issues](https://img.shields.io/github/issues/Pascal-ZeGerman/GPS2ASP-Resolver)](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/issues)
 
 # ASP Parking — NYC Alternate Side Parking for Home Assistant
 
@@ -7,37 +7,19 @@ Never miss an alternate side parking window again. **ASP Parking** watches your 
 
 Supports all five NYC boroughs. Data is fetched live from NYC Open Data.
 
-## What You Get
-
-Three main entities are created for each tracked device:
-
-| Entity | Type | What it shows |
-|--------|------|---------------|
-| Next move time | Sensor | The datetime when alternate side parking begins on your block |
-| ASP active now | Binary sensor | ON while street cleaning is currently in progress |
-| Debug mode | Switch (diagnostic) | Toggle debug/simulation mode from the dashboard |
-
-The next move time sensor also carries rich attributes including `schedule_summary` (e.g., `"Mon 8–9:30 AM, Thu 11:30 AM–1 PM"`), `cleaning_days`, `side_of_street`, `urgency`, and suspension state.
-
-Ten additional **diagnostic sensors** are created automatically: car name, VIN, latitude, longitude, resolved street, resolution status, confidence score, SODA level, last resolved timestamp, and last error. These are hidden from the default dashboard but available for advanced automations and troubleshooting.
-
-## Requirements
-
-- Home Assistant 2024.1 or later
-- A device tracker entity with GPS coordinates (e.g. the HA Companion app, OwnTracks, iCloud, or the Google Maps integration)
-- Your vehicle must be parked in New York City
-
-No Python knowledge or terminal access required.
-
 ## Installation
 
 ### Via HACS (recommended)
 
-1. Open HACS in your Home Assistant sidebar.
-2. Click **Integrations**, then click the three-dot menu (top-right) and choose **Custom repositories**.
-3. Enter `https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver` and select **Integration**, then click **Add**.
-4. Search for **ASP Parking** and click **Download**.
-5. Restart Home Assistant.
+The fastest way to install. Click the button below, then **Download** and restart Home Assistant.
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Pascal-ZeGerman&repository=GPS2ASP-Resolver&category=integration)
+
+1. Click the button above — it opens this repository directly inside HACS.
+2. Click **Download**.
+3. Restart Home Assistant.
+
+Prefer to add it by hand? In HACS, open the three-dot menu (top-right) and choose **Custom repositories**, paste `https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver`, select **Integration**, click **Add**, then search for **ASP Parking** and click **Download**. Restart Home Assistant when finished.
 
 ### Manual installation
 
@@ -63,7 +45,35 @@ After installation, set up the integration from the HA UI — no YAML required.
 5. **Step 3:** Optionally enter an **NYC311 API key** to receive real-time weather and emergency suspension alerts.
 6. Click **Submit**. The sensors appear immediately under the new device.
 
-After setup you can also configure a **parking area** (lat/lon/radius) and a **push notification service** (e.g., `notify.mobile_app_my_phone` with a configurable lead time) via **Settings → Devices & Services → ASP Parking → Configure**.
+After setup you can also configure a **parking area** (lat/lon/radius) and a **push notification service** (e.g., `notify.mobile_app_my_phone` with a configurable lead time, default 120 minutes before the next move) via **Settings → Devices & Services → ASP Parking → Configure**.
+
+## Requirements
+
+- Home Assistant 2025.1.0 or later
+- A device tracker entity with GPS coordinates (e.g. the HA Companion app, OwnTracks, iCloud, or the Google Maps integration)
+- Your vehicle must be parked in New York City
+
+No Python knowledge or terminal access required.
+
+## What You Get
+
+Three main entities are created for each tracked device:
+
+| Entity | Type | What it shows |
+|--------|------|---------------|
+| Next move time | Sensor | The datetime when alternate side parking begins on your block |
+| ASP active now | Binary sensor | ON while street cleaning is currently in progress |
+| Debug mode | Switch (diagnostic) | Toggle debug/simulation mode from the dashboard |
+
+The next move time sensor also carries rich attributes including `schedule_summary` (e.g., `"Mon 8–9:30 AM, Thu 11:30 AM–1 PM"`), `cleaning_days`, `side_of_street`, `urgency`, and suspension state.
+
+Eleven additional **diagnostic sensors** are created automatically: car name, VIN, latitude, longitude, resolved street, resolution status, confidence score, SODA level, last resolved timestamp, last error, and index last rebuilt. These are hidden from the default dashboard but available for advanced automations and troubleshooting.
+
+## Dashboard
+
+Add the **Next move time** sensor to an Entities or Entity card for an at-a-glance reminder. The sensor's `urgency` attribute (`high` when the next window is today, otherwise `normal`) and the `next_move_is_today` / `next_move_is_tomorrow` boolean attributes are ideal for conditional card styling or for triggering notifications.
+
+<!-- VERIFY: dashboard screenshots / example Lovelace card images -->
 
 ## CalDAV Calendar Sync
 
