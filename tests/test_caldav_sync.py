@@ -507,7 +507,12 @@ async def test_write_or_update_event_first_write_no_stored_uid():
 
 
 async def test_write_or_update_event_deletes_old_then_creates_new():
-    """D-07: stored_uid != new_uid → delete old, THEN create new (order matters)."""
+    """D-07: stored_uid != new_uid → delete old via direct HTTP DELETE, THEN create new.
+
+    CALDAV-09 fix: _delete_uid_quiet now uses cal.client.delete(url) directly instead
+    of cal.event_by_uid() (which sent a REPORT that some servers reject with 412).
+    Order still matters: DELETE must be issued before add_event.
+    """
     cs = _require_caldav_sync()
 
     entry_id = "entry_abc"
@@ -520,21 +525,34 @@ async def test_write_or_update_event_deletes_old_then_creates_new():
     new_uid = cs.derive_uid(entry_id, window.start_datetime)
     assert stored_uid != new_uid
 
+    # Expected URL that _build_event_url produces for the stale UID.
+    # '@' is percent-encoded to '%40'; the calendar URL has a trailing slash added.
+    expected_delete_url = (
+        "https://srv/cal/work/"
+        + "stale_uid_from_last_week%40asp-parking.local"
+        + ".ics"
+    )
+
     call_order: list[str] = []
 
-    async def _record_event_by_uid(uid):
-        call_order.append(f"event_by_uid:{uid}")
-        old_event = AsyncMock()
-        old_event.delete = AsyncMock(
-            side_effect=lambda: call_order.append(f"delete:{uid}")
-        )
-        return old_event
+    # Mock a 204 No Content response for the DELETE call.
+    delete_response = MagicMock()
+    delete_response.status = 204
+
+    async def _record_client_delete(url):
+        call_order.append(f"delete:{url}")
+        return delete_response
 
     async def _record_add_event(*args, **kwargs):
         call_order.append("add_event")
 
     cal = AsyncMock()
-    cal.event_by_uid = AsyncMock(side_effect=_record_event_by_uid)
+    # cal.url must be a real string so _build_event_url can construct the event URL.
+    cal.url = "https://srv/cal/work/"
+    # cal.client.delete records calls; asyncio.iscoroutinefunction returns True for
+    # AsyncMock, so the native caldav-3.x async path in _delete_uid_quiet is taken.
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=_record_client_delete)
     cal.add_event = AsyncMock(side_effect=_record_add_event)
     principal = SimpleNamespace(
         calendar=MagicMock(return_value=cal),
@@ -566,18 +584,23 @@ async def test_write_or_update_event_deletes_old_then_creates_new():
         )
 
     assert result_uid == new_uid
-    # Ordering check: the stored UID must be looked up (delete path) BEFORE add_event
+
+    # Ordering check: direct HTTP DELETE must precede add_event.
     delete_idx = next(
-        (i for i, ev in enumerate(call_order) if ev.startswith("event_by_uid")), -1
+        (i for i, ev in enumerate(call_order) if ev.startswith("delete:")), -1
     )
     add_idx = next((i for i, ev in enumerate(call_order) if ev == "add_event"), -1)
-    assert delete_idx >= 0 and add_idx >= 0, f"Both calls expected; got {call_order}"
-    assert delete_idx < add_idx, (
-        f"event_by_uid (delete path) must precede add_event; order: {call_order}"
+    assert delete_idx >= 0 and add_idx >= 0, (
+        f"Both delete and add_event calls expected; got {call_order}"
     )
-    # And the deleted UID was the stale one
-    assert any(ev == f"event_by_uid:{stored_uid}" for ev in call_order), (
-        f"Stale UID must be the lookup target; calls: {call_order}"
+    assert delete_idx < add_idx, f"DELETE must precede add_event; order: {call_order}"
+    # And the deleted URL targets the stale UID.
+    assert any(ev == f"delete:{expected_delete_url}" for ev in call_order), (
+        f"DELETE must target the stale-UID URL {expected_delete_url!r}; calls: {call_order}"
+    )
+    # event_by_uid must NOT be called — REPORT-based lookup is replaced by direct DELETE.
+    assert cal.event_by_uid.await_count == 0, (
+        "event_by_uid must NOT be called (CALDAV-09: direct DELETE replaces REPORT lookup)"
     )
 
 
@@ -587,12 +610,19 @@ async def test_write_or_update_event_deletes_old_then_creates_new():
 
 
 async def test_delete_event_treats_notfound_as_success():
-    """Pitfall in deletes / RESEARCH _delete_uid_quiet: NotFoundError is a no-op, not a failure."""
+    """_delete_uid_quiet: NotFoundError from client.delete (direct HTTP DELETE) is a no-op.
+
+    CALDAV-09: the direct-DELETE path raises NotFoundError when the server returns
+    404.  The outer except block must catch it and return silently.
+    """
     cs = _require_caldav_sync()
     from caldav.lib import error as caldav_error
 
     cal = AsyncMock()
-    cal.event_by_uid = AsyncMock(side_effect=caldav_error.NotFoundError("gone"))
+    cal.url = "https://srv/cal/work/"
+    # Simulate: server returns 404 — caldav raises NotFoundError on client.delete.
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=caldav_error.NotFoundError("gone"))
     principal = SimpleNamespace(
         calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
@@ -760,7 +790,7 @@ async def test_delete_event_treats_dav_error_404_as_success():
     """_delete_uid_quiet treats a generic DAVError with status==404 as 'not found'.
 
     Some CalDAV servers return a plain DAVError (not the NotFoundError subclass)
-    for a 404 status code. Both must be silenced.
+    for a 404 status code on the direct HTTP DELETE.  Both must be silenced.
     """
     cs = _require_caldav_sync()
     from caldav.lib import error as caldav_error
@@ -769,7 +799,10 @@ async def test_delete_event_treats_dav_error_404_as_success():
     dav_err.status = 404
 
     cal = AsyncMock()
-    cal.event_by_uid = AsyncMock(side_effect=dav_err)
+    cal.url = "https://srv/cal/work/"
+    # Simulate: server returns generic DAVError with 404 status on direct DELETE.
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=dav_err)
     principal = SimpleNamespace(
         calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
@@ -791,6 +824,88 @@ async def test_delete_event_treats_dav_error_404_as_success():
             calendar_url="https://srv/cal/work/",
             uid="abc@asp-parking.local",
         )
+
+
+# ---------------------------------------------------------------------------
+# _build_event_url — URL construction unit tests (CALDAV-09)
+# ---------------------------------------------------------------------------
+
+
+def test_build_event_url_at_sign_encoding():
+    """_build_event_url percent-encodes '@' as '%40' (standard RFC 3986 encoding)."""
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    url = _build_event_url("https://srv/cal/work/", "abc123@asp-parking.local")
+    assert url == "https://srv/cal/work/abc123%40asp-parking.local.ics"
+
+
+def test_build_event_url_trailing_slash_normalization():
+    """_build_event_url adds exactly one trailing slash regardless of input."""
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    url_with = _build_event_url("https://srv/cal/work/", "uid@asp-parking.local")
+    url_without = _build_event_url("https://srv/cal/work", "uid@asp-parking.local")
+    assert url_with == url_without
+    # Verify no double-slash was produced between the calendar path and UID
+    assert "//uid" not in url_with
+
+
+def test_build_event_url_slash_in_uid_double_encodes():
+    """_build_event_url matches caldav's _quote_uid: literal '/' in UID becomes '%252F'.
+
+    uid.replace('/', '%2F') → _url_quote('%2F') → '%252F' (the '%' is encoded).
+    This mirrors caldav's own _quote_uid behaviour in calendarobjectresource.py.
+    """
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    url = _build_event_url("https://srv/cal/", "uid/with/slash@x.local")
+    assert "%252F" in url, f"Expected double-encoded slash in URL; got {url!r}"
+    assert url.endswith(".ics")
+
+
+def test_build_event_url_none_raises():
+    """_build_event_url raises ValueError when calendar_url is None."""
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    with pytest.raises(ValueError, match="calendar_url is None"):
+        _build_event_url(None, "abc@asp-parking.local")
+
+
+async def test_delete_event_client_delete_notfound_treated_as_success():
+    """_delete_uid_quiet: NotFoundError from client.delete on the direct-DELETE path
+    is treated as 'already gone' — must not propagate to the caller."""
+    cs = _require_caldav_sync()
+    from caldav.lib import error as caldav_error
+
+    cal = AsyncMock()
+    cal.url = "https://srv/cal/work/"
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=caldav_error.NotFoundError("not found"))
+    principal = SimpleNamespace(
+        calendar=MagicMock(return_value=cal),
+        calendars=AsyncMock(return_value=[]),
+    )
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        # Must NOT raise — NotFoundError from the direct DELETE means "already gone"
+        await cs.delete_event(
+            url="https://srv/dav/",
+            username="u",
+            password="p",
+            calendar_url="https://srv/cal/work/",
+            uid="uid@asp-parking.local",
+        )
+    # Verify the native path was taken (event_by_uid must NOT have been called)
+    assert cal.event_by_uid.await_count == 0, (
+        "event_by_uid must not be called; direct DELETE path should handle NotFoundError"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1126,7 +1241,13 @@ def test_derive_uid_naive_datetime_no_raise():
 
 
 async def test_delete_uid_quiet_non_404_dav_error_reraises():
-    """Edge 8: _delete_uid_quiet with DAVError status=403 → exception is re-raised (not swallowed)."""
+    """Edge 8 (CALDAV-09): _delete_uid_quiet with DAVError status=403 on direct
+    HTTP DELETE → exception is re-raised to the caller.
+
+    Re-raising preserves the coordinator's retry/notification path:
+    write_or_update_event logs-and-continues; _async_caldav_delete_current fires a
+    persistent HA notification so the user knows the stale event was not removed.
+    """
     cs = _require_caldav_sync()
     from caldav.lib import error as caldav_error
 
@@ -1134,7 +1255,9 @@ async def test_delete_uid_quiet_non_404_dav_error_reraises():
     exc.status = 403
 
     cal = AsyncMock()
-    cal.event_by_uid = AsyncMock(side_effect=exc)
+    cal.url = "https://srv/cal/work/"
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=exc)
     principal = SimpleNamespace(
         calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
