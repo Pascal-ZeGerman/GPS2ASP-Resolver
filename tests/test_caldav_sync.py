@@ -612,12 +612,19 @@ async def test_write_or_update_event_deletes_old_then_creates_new():
 
 
 async def test_delete_event_treats_notfound_as_success():
-    """Pitfall in deletes / RESEARCH _delete_uid_quiet: NotFoundError is a no-op, not a failure."""
+    """_delete_uid_quiet: NotFoundError from client.delete (direct HTTP DELETE) is a no-op.
+
+    CALDAV-09: the direct-DELETE path raises NotFoundError when the server returns
+    404.  The outer except block must catch it and return silently.
+    """
     cs = _require_caldav_sync()
     from caldav.lib import error as caldav_error
 
     cal = AsyncMock()
-    cal.event_by_uid = AsyncMock(side_effect=caldav_error.NotFoundError("gone"))
+    cal.url = "https://srv/cal/work/"
+    # Simulate: server returns 404 — caldav raises NotFoundError on client.delete.
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=caldav_error.NotFoundError("gone"))
     principal = SimpleNamespace(
         calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
@@ -776,7 +783,7 @@ async def test_delete_event_treats_dav_error_404_as_success():
     """_delete_uid_quiet treats a generic DAVError with status==404 as 'not found'.
 
     Some CalDAV servers return a plain DAVError (not the NotFoundError subclass)
-    for a 404 status code. Both must be silenced.
+    for a 404 status code on the direct HTTP DELETE.  Both must be silenced.
     """
     cs = _require_caldav_sync()
     from caldav.lib import error as caldav_error
@@ -785,7 +792,10 @@ async def test_delete_event_treats_dav_error_404_as_success():
     dav_err.status = 404
 
     cal = AsyncMock()
-    cal.event_by_uid = AsyncMock(side_effect=dav_err)
+    cal.url = "https://srv/cal/work/"
+    # Simulate: server returns generic DAVError with 404 status on direct DELETE.
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=dav_err)
     principal = SimpleNamespace(
         calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
@@ -807,6 +817,88 @@ async def test_delete_event_treats_dav_error_404_as_success():
             calendar_url="https://srv/cal/work/",
             uid="abc@asp-parking.local",
         )
+
+
+# ---------------------------------------------------------------------------
+# _build_event_url — URL construction unit tests (CALDAV-09)
+# ---------------------------------------------------------------------------
+
+
+def test_build_event_url_at_sign_encoding():
+    """_build_event_url percent-encodes '@' as '%40' (standard RFC 3986 encoding)."""
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    url = _build_event_url("https://srv/cal/work/", "abc123@asp-parking.local")
+    assert url == "https://srv/cal/work/abc123%40asp-parking.local.ics"
+
+
+def test_build_event_url_trailing_slash_normalization():
+    """_build_event_url adds exactly one trailing slash regardless of input."""
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    url_with = _build_event_url("https://srv/cal/work/", "uid@asp-parking.local")
+    url_without = _build_event_url("https://srv/cal/work", "uid@asp-parking.local")
+    assert url_with == url_without
+    # Verify no double-slash was produced between the calendar path and UID
+    assert "//uid" not in url_with
+
+
+def test_build_event_url_slash_in_uid_double_encodes():
+    """_build_event_url matches caldav's _quote_uid: literal '/' in UID becomes '%252F'.
+
+    uid.replace('/', '%2F') → _url_quote('%2F') → '%252F' (the '%' is encoded).
+    This mirrors caldav's own _quote_uid behaviour in calendarobjectresource.py.
+    """
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    url = _build_event_url("https://srv/cal/", "uid/with/slash@x.local")
+    assert "%252F" in url, f"Expected double-encoded slash in URL; got {url!r}"
+    assert url.endswith(".ics")
+
+
+def test_build_event_url_none_raises():
+    """_build_event_url raises ValueError when calendar_url is None."""
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    with pytest.raises(ValueError, match="calendar_url is None"):
+        _build_event_url(None, "abc@asp-parking.local")
+
+
+async def test_delete_event_client_delete_notfound_treated_as_success():
+    """_delete_uid_quiet: NotFoundError from client.delete on the direct-DELETE path
+    is treated as 'already gone' — must not propagate to the caller."""
+    cs = _require_caldav_sync()
+    from caldav.lib import error as caldav_error
+
+    cal = AsyncMock()
+    cal.url = "https://srv/cal/work/"
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=caldav_error.NotFoundError("not found"))
+    principal = SimpleNamespace(
+        calendar=MagicMock(return_value=cal),
+        calendars=AsyncMock(return_value=[]),
+    )
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        # Must NOT raise — NotFoundError from the direct DELETE means "already gone"
+        await cs.delete_event(
+            url="https://srv/dav/",
+            username="u",
+            password="p",
+            calendar_url="https://srv/cal/work/",
+            uid="uid@asp-parking.local",
+        )
+    # Verify the native path was taken (event_by_uid must NOT have been called)
+    assert cal.event_by_uid.await_count == 0, (
+        "event_by_uid must not be called; direct DELETE path should handle NotFoundError"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1014,16 +1106,14 @@ def test_derive_uid_naive_datetime_no_raise():
     )
 
 
-async def test_delete_uid_quiet_non_404_dav_error_logs_warning(caplog):
-    """Edge 8 (updated CALDAV-09): _delete_uid_quiet with DAVError status=403 on direct
-    HTTP DELETE → warning logged, no exception raised (best-effort delete).
+async def test_delete_uid_quiet_non_404_dav_error_reraises():
+    """Edge 8 (CALDAV-09): _delete_uid_quiet with DAVError status=403 on direct
+    HTTP DELETE → exception is re-raised to the caller.
 
-    Old behaviour (pre-CALDAV-09): event_by_uid raised → re-raised to caller.
-    New behaviour: direct client.delete raises non-404 DAVError → swallowed with
-    a WARNING log so the coordinator can continue and create the new event.
+    Re-raising preserves the coordinator's retry/notification path:
+    write_or_update_event logs-and-continues; _async_caldav_delete_current fires a
+    persistent HA notification so the user knows the stale event was not removed.
     """
-    import logging
-
     cs = _require_caldav_sync()
     from caldav.lib import error as caldav_error
 
@@ -1031,9 +1121,7 @@ async def test_delete_uid_quiet_non_404_dav_error_logs_warning(caplog):
     exc.status = 403
 
     cal = AsyncMock()
-    # cal.url must be a real string so _build_event_url can construct the event URL.
     cal.url = "https://srv/cal/work/"
-    # client.delete raises a non-404 DAVError — should be swallowed, not re-raised.
     cal.client = AsyncMock()
     cal.client.delete = AsyncMock(side_effect=exc)
     principal = SimpleNamespace(
@@ -1049,8 +1137,7 @@ async def test_delete_uid_quiet_non_404_dav_error_logs_warning(caplog):
         "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
         return_value=fake_client,
     ):
-        with caplog.at_level(logging.WARNING, logger="custom_components.asp_parking.caldav_sync"):
-            # Must NOT raise — non-404 DAVError from direct DELETE is best-effort.
+        with pytest.raises(caldav_error.DAVError):
             await cs.delete_event(
                 url="https://srv/dav/",
                 username="u",
@@ -1058,15 +1145,6 @@ async def test_delete_uid_quiet_non_404_dav_error_logs_warning(caplog):
                 calendar_url="https://srv/cal/work/",
                 uid="abc@asp-parking.local",
             )
-
-    # A WARNING must have been logged describing the failed delete.
-    warning_records = [
-        r for r in caplog.records
-        if r.levelno == logging.WARNING and "_delete_uid_quiet" in r.message
-    ]
-    assert warning_records, (
-        f"Expected a WARNING from _delete_uid_quiet; got records: {caplog.records}"
-    )
 
 
 def test_sanitise_password_with_regex_metacharacters():

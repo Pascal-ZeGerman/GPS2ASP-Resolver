@@ -379,23 +379,39 @@ async def _get_calendar(client: Any, calendar_url: str) -> Any:
 def _build_event_url(calendar_url: Any, uid: str) -> str:
     """Construct the CalDAV event URL from a calendar URL and event UID.
 
-    Mirrors caldav's internal ``_generate_url`` logic: replaces literal
-    slashes in the UID with ``%2F``, then percent-encodes the result and
-    appends ``.ics``.  Used by :func:`_delete_uid_quiet` to perform a
-    direct HTTP DELETE without a prior REPORT-based UID lookup — avoiding
-    the ``ReportError 412 Precondition Failed`` that some CalDAV servers
+    Mirrors caldav's internal ``_quote_uid`` encoding logic
+    (``calendarobjectresource.py``): replaces literal slashes in the UID
+    with ``%2F``, then percent-encodes the result and appends ``.ics``.
+    Used by :func:`_delete_uid_quiet` to perform a direct HTTP DELETE
+    without a prior REPORT-based UID lookup — avoiding the
+    ``ReportError 412 Precondition Failed`` that some CalDAV servers
     (Radicale, certain Nextcloud builds) return when the calendar-query
     REPORT method is not fully supported (CALDAV-09 fix).
 
     Args:
         calendar_url: The caldav Calendar's ``.url`` attribute (any type
-            that ``str()`` can convert to an absolute URL string).
+            that ``str()`` can convert to an absolute URL string).  Must
+            not be ``None``.
         uid: The deterministic event UID from :func:`derive_uid`.
 
     Returns:
         Absolute URL string for the ``.ics`` resource.
+
+    Raises:
+        ValueError: If ``calendar_url`` is ``None`` or converts to a blank
+            or ``"None"`` string.
     """
-    cal_url = str(calendar_url).rstrip("/") + "/"
+    if calendar_url is None:
+        raise ValueError(
+            "Cannot build event URL: calendar_url is None — "
+            "the CalDAV calendar object has no URL attribute."
+        )
+    cal_url_str = str(calendar_url)
+    if not cal_url_str or cal_url_str.lower() == "none":
+        raise ValueError(
+            f"Cannot build event URL: calendar_url resolved to invalid string {cal_url_str!r}"
+        )
+    cal_url = cal_url_str.rstrip("/") + "/"
     encoded = _url_quote(uid.replace("/", "%2F"))
     return cal_url + encoded + ".ics"
 
@@ -405,7 +421,10 @@ async def _delete_uid_quiet(cal: Any, uid: str) -> None:
 
     Constructs the event URL deterministically from the calendar URL and
     UID, then issues a direct HTTP DELETE.  Treats HTTP 404/NotFoundError
-    as success ("already gone" is a valid terminal state).
+    as success ("already gone" is a valid terminal state).  All other
+    errors are re-raised so callers can surface them appropriately
+    (log-and-continue for :func:`write_or_update_event`;
+    persistent notification for ``_async_caldav_delete_current``).
 
     **Why no event_by_uid / REPORT?**  caldav 3.x ``event_by_uid`` sends
     a calendar-query REPORT that some CalDAV servers (Radicale, certain
@@ -433,7 +452,6 @@ async def _delete_uid_quiet(cal: Any, uid: str) -> None:
         if client is not None and asyncio.iscoroutinefunction(
             getattr(client, "delete", None)
         ):
-            # caldav 3.x native async path — direct HTTP DELETE, no REPORT needed.
             response = await client.delete(event_url)
             status = getattr(response, "status", None)
             if status is not None and not str(status).startswith(("2", "404")):
@@ -451,7 +469,14 @@ async def _delete_uid_quiet(cal: Any, uid: str) -> None:
             )
             if sync_client is not None:
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, sync_client.delete, event_url)
+                response = await loop.run_in_executor(None, sync_client.delete, event_url)
+                status = getattr(response, "status", None)
+                if status is not None and not str(status).startswith(("2", "404")):
+                    logger.warning(
+                        "CalDAV: _delete_uid_quiet (compat) unexpected DELETE status %s for %s",
+                        status,
+                        event_url,
+                    )
             else:
                 # Last-resort fallback: REPORT-based event_by_uid.
                 # Only reached if the calendar object has neither .client nor ._cal.client
@@ -468,22 +493,15 @@ async def _delete_uid_quiet(cal: Any, uid: str) -> None:
         # of the specific NotFoundError subclass.  Treat as "already gone".
         # Status may be an int (404) or a string ("404 Not Found").
         # Also check the url field: ReportError encodes the HTTP status in .url
-        # (e.g. url="404 Not Found\n\n") when the server 404s a REPORT request.
+        # (e.g. url="404 Not Found - <body>") when the server 404s a REPORT request.
         status = getattr(exc, "status", None)
         url_field = getattr(exc, "url", "") or ""
         if (
-            isinstance(exc, caldav_error.NotFoundError)
-            or (status is not None and str(status).startswith("404"))
+            (status is not None and str(status).startswith("404"))
             or url_field[:3] == "404"
         ):
             return
-        logger.warning(
-            "CalDAV: _delete_uid_quiet could not delete %s (status=%s); "
-            "treating as best-effort and continuing",
-            event_url,
-            status,
-            exc_info=True,
-        )
+        raise
 
 
 def _sanitise(message: str, password: str, username: str = "") -> str:
