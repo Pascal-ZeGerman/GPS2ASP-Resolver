@@ -178,18 +178,28 @@ async def resolve_segment(
         perp_distance = compute_perpendicular_distance(x, y, best.geometry)
         dist_to_endpoints = compute_distance_to_endpoints(x, y, best.geometry)
 
-        # Step 4: Determine side of street
-        side = determine_side(x, y, best.geometry, best.nominaldir)
-
-        # Step 5: Compute effective width (post-fallback) and confidence
-        # Resolve width once here; pass as effective_width_ft to avoid a second call inside compute_confidence
-        effective_width = resolve_effective_width(best.streetwidth, best.rw_type)
+        # Step 4: Compute effective width (post-fallback) and confidence FIRST.
+        # BUG-R-003: side determination is meaningless at zero confidence
+        # (near-centerline or near-intersection) and the cross-product would
+        # yield an arbitrary value. Defer determine_side until after the
+        # confidence gate so we don't compute (and log) a misleading side.
+        effective_width = resolve_effective_width(
+            best.streetwidth, best.rw_type, segment_id=best.segment_id
+        )
         confidence = compute_confidence(
             perp_distance_ft=perp_distance,
             effective_width_ft=effective_width,
             distance_to_nearest_intersection_ft=dist_to_endpoints,
             parking_lane_fraction=parking_lane_fraction,
         )
+
+        # Step 5: Determine side of street only when confidence will be
+        # accepted; otherwise leave side=None in the debug record (BUG-R-003).
+        side: str | None
+        if is_confident(confidence, confidence_threshold):
+            side = determine_side(x, y, best.geometry, best.nominaldir)
+        else:
+            side = None
 
         # Update debug info with results
         debug_info = ResolutionDebugInfo(
@@ -228,8 +238,14 @@ async def resolve_segment(
                 confidence=confidence,
             )
 
-        # Determine has_asp based on side. Both left/right are flagged
-        # conservatively (if any ASP sign exists on the segment, both are True).
+        # BUG-R-002: has_asp reflects either side (conservative OR).
+        # The spatial index stores identical values for has_asp_left and
+        # has_asp_right because _check_has_asp() sets both to the same
+        # boolean; a compass→left/right mapping would require knowing the
+        # segment bearing and is not reliable without per-side index data.
+        assert (
+            side is not None
+        )  # guaranteed: AmbiguousResolutionError raised above when not is_confident
         has_asp = best.has_asp_left or best.has_asp_right
 
         return ResolutionResult(
@@ -267,10 +283,27 @@ async def resolve_segment(
 def _classify_ambiguity(perp_distance: float, dist_to_endpoints: float) -> str:
     """Classify the type of ambiguity for debug logging.
 
-    The 10ft check here is a rough heuristic for log classification only —
-    it is NOT the confidence algorithm threshold (which is width-relative).
-    Width-relative classification would require passing effective_width; a
-    static 10ft approximation is sufficient for debug log labels.
+    BUG-R-001: The 10ft check here is a rough width-relative approximation,
+    used purely for log classification — it is NOT the confidence algorithm
+    threshold. The real threshold lives in compute_confidence() and is
+    width-relative: ``effective_width * parking_lane_fraction / 2``. For a
+    typical NYC 30ft residential street with parking_lane_fraction=0.33,
+    that evaluates to ~4.95ft, while a 60ft avenue produces ~9.9ft — both
+    approximated here by the static 10ft constant for log labelling.
+    Width-relative classification at this call-site would require passing
+    effective_width through the debug pipeline; the static approximation
+    keeps the log-label boundary stable without coupling _classify_ambiguity
+    to the confidence-scoring API.
+
+    IN-01: the static 10ft threshold here is for **log classification only**;
+    it does not match the width-relative algorithm threshold and may
+    produce labels that diverge by up to ~1 ft at the boundary. For
+    example, a 9.9ft perpendicular distance on a wide 60ft avenue is
+    *not ambiguous* to the algorithm (algorithm threshold ~9.9ft) but
+    is still classified ``ambiguous_low_confidence`` by this function
+    because 9.9 > 10.0 is false. This off-by-one discrepancy is
+    acceptable for log-labelling purposes — the algorithm's decision is
+    authoritative, and the log label is a human-readable hint only.
 
     Args:
         perp_distance: Perpendicular distance to centerline in feet.

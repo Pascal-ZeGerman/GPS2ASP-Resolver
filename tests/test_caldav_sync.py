@@ -507,7 +507,12 @@ async def test_write_or_update_event_first_write_no_stored_uid():
 
 
 async def test_write_or_update_event_deletes_old_then_creates_new():
-    """D-07: stored_uid != new_uid → delete old, THEN create new (order matters)."""
+    """D-07: stored_uid != new_uid → delete old via direct HTTP DELETE, THEN create new.
+
+    CALDAV-09 fix: _delete_uid_quiet now uses cal.client.delete(url) directly instead
+    of cal.event_by_uid() (which sent a REPORT that some servers reject with 412).
+    Order still matters: DELETE must be issued before add_event.
+    """
     cs = _require_caldav_sync()
 
     entry_id = "entry_abc"
@@ -520,21 +525,34 @@ async def test_write_or_update_event_deletes_old_then_creates_new():
     new_uid = cs.derive_uid(entry_id, window.start_datetime)
     assert stored_uid != new_uid
 
+    # Expected URL that _build_event_url produces for the stale UID.
+    # '@' is percent-encoded to '%40'; the calendar URL has a trailing slash added.
+    expected_delete_url = (
+        "https://srv/cal/work/"
+        + "stale_uid_from_last_week%40asp-parking.local"
+        + ".ics"
+    )
+
     call_order: list[str] = []
 
-    async def _record_event_by_uid(uid):
-        call_order.append(f"event_by_uid:{uid}")
-        old_event = AsyncMock()
-        old_event.delete = AsyncMock(
-            side_effect=lambda: call_order.append(f"delete:{uid}")
-        )
-        return old_event
+    # Mock a 204 No Content response for the DELETE call.
+    delete_response = MagicMock()
+    delete_response.status = 204
+
+    async def _record_client_delete(url):
+        call_order.append(f"delete:{url}")
+        return delete_response
 
     async def _record_add_event(*args, **kwargs):
         call_order.append("add_event")
 
     cal = AsyncMock()
-    cal.event_by_uid = AsyncMock(side_effect=_record_event_by_uid)
+    # cal.url must be a real string so _build_event_url can construct the event URL.
+    cal.url = "https://srv/cal/work/"
+    # cal.client.delete records calls; asyncio.iscoroutinefunction returns True for
+    # AsyncMock, so the native caldav-3.x async path in _delete_uid_quiet is taken.
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=_record_client_delete)
     cal.add_event = AsyncMock(side_effect=_record_add_event)
     principal = SimpleNamespace(
         calendar=MagicMock(return_value=cal),
@@ -566,18 +584,23 @@ async def test_write_or_update_event_deletes_old_then_creates_new():
         )
 
     assert result_uid == new_uid
-    # Ordering check: the stored UID must be looked up (delete path) BEFORE add_event
+
+    # Ordering check: direct HTTP DELETE must precede add_event.
     delete_idx = next(
-        (i for i, ev in enumerate(call_order) if ev.startswith("event_by_uid")), -1
+        (i for i, ev in enumerate(call_order) if ev.startswith("delete:")), -1
     )
     add_idx = next((i for i, ev in enumerate(call_order) if ev == "add_event"), -1)
-    assert delete_idx >= 0 and add_idx >= 0, f"Both calls expected; got {call_order}"
-    assert delete_idx < add_idx, (
-        f"event_by_uid (delete path) must precede add_event; order: {call_order}"
+    assert delete_idx >= 0 and add_idx >= 0, (
+        f"Both delete and add_event calls expected; got {call_order}"
     )
-    # And the deleted UID was the stale one
-    assert any(ev == f"event_by_uid:{stored_uid}" for ev in call_order), (
-        f"Stale UID must be the lookup target; calls: {call_order}"
+    assert delete_idx < add_idx, f"DELETE must precede add_event; order: {call_order}"
+    # And the deleted URL targets the stale UID.
+    assert any(ev == f"delete:{expected_delete_url}" for ev in call_order), (
+        f"DELETE must target the stale-UID URL {expected_delete_url!r}; calls: {call_order}"
+    )
+    # event_by_uid must NOT be called — REPORT-based lookup is replaced by direct DELETE.
+    assert cal.event_by_uid.await_count == 0, (
+        "event_by_uid must NOT be called (CALDAV-09: direct DELETE replaces REPORT lookup)"
     )
 
 
@@ -587,12 +610,19 @@ async def test_write_or_update_event_deletes_old_then_creates_new():
 
 
 async def test_delete_event_treats_notfound_as_success():
-    """Pitfall in deletes / RESEARCH _delete_uid_quiet: NotFoundError is a no-op, not a failure."""
+    """_delete_uid_quiet: NotFoundError from client.delete (direct HTTP DELETE) is a no-op.
+
+    CALDAV-09: the direct-DELETE path raises NotFoundError when the server returns
+    404.  The outer except block must catch it and return silently.
+    """
     cs = _require_caldav_sync()
     from caldav.lib import error as caldav_error
 
     cal = AsyncMock()
-    cal.event_by_uid = AsyncMock(side_effect=caldav_error.NotFoundError("gone"))
+    cal.url = "https://srv/cal/work/"
+    # Simulate: server returns 404 — caldav raises NotFoundError on client.delete.
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=caldav_error.NotFoundError("gone"))
     principal = SimpleNamespace(
         calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
@@ -706,11 +736,20 @@ def test_caldav_config_from_options_happy_path():
     assert cfg.title_template == "Parking: {street}"
 
 
-def test_caldav_config_from_options_missing_url_raises_key_error():
-    """from_options raises KeyError when CONF_CALDAV_URL is absent."""
+def test_caldav_config_from_options_missing_url_raises_value_error():
+    """from_options raises ValueError when CONF_CALDAV_URL is absent.
+
+    BUG-C-003 (Phase 35.1 Plan 06): the original Phase 34 implementation
+    used a bare `options[CONF_CALDAV_URL]` subscript that raised KeyError,
+    which surfaced to the coordinator's broad `except Exception` as a
+    generic "CalDAV sync failed" notification. The fix routes the
+    missing-URL case through __post_init__'s explicit
+    `CalDAVConfig.url must not be empty` ValueError so the user sees a
+    clear, actionable failure.
+    """
     from custom_components.asp_parking.caldav_sync import CalDAVConfig
 
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="url must not be empty"):
         CalDAVConfig.from_options({})
 
 
@@ -751,7 +790,7 @@ async def test_delete_event_treats_dav_error_404_as_success():
     """_delete_uid_quiet treats a generic DAVError with status==404 as 'not found'.
 
     Some CalDAV servers return a plain DAVError (not the NotFoundError subclass)
-    for a 404 status code. Both must be silenced.
+    for a 404 status code on the direct HTTP DELETE.  Both must be silenced.
     """
     cs = _require_caldav_sync()
     from caldav.lib import error as caldav_error
@@ -760,7 +799,10 @@ async def test_delete_event_treats_dav_error_404_as_success():
     dav_err.status = 404
 
     cal = AsyncMock()
-    cal.event_by_uid = AsyncMock(side_effect=dav_err)
+    cal.url = "https://srv/cal/work/"
+    # Simulate: server returns generic DAVError with 404 status on direct DELETE.
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=dav_err)
     principal = SimpleNamespace(
         calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
@@ -782,6 +824,88 @@ async def test_delete_event_treats_dav_error_404_as_success():
             calendar_url="https://srv/cal/work/",
             uid="abc@asp-parking.local",
         )
+
+
+# ---------------------------------------------------------------------------
+# _build_event_url — URL construction unit tests (CALDAV-09)
+# ---------------------------------------------------------------------------
+
+
+def test_build_event_url_at_sign_encoding():
+    """_build_event_url percent-encodes '@' as '%40' (standard RFC 3986 encoding)."""
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    url = _build_event_url("https://srv/cal/work/", "abc123@asp-parking.local")
+    assert url == "https://srv/cal/work/abc123%40asp-parking.local.ics"
+
+
+def test_build_event_url_trailing_slash_normalization():
+    """_build_event_url adds exactly one trailing slash regardless of input."""
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    url_with = _build_event_url("https://srv/cal/work/", "uid@asp-parking.local")
+    url_without = _build_event_url("https://srv/cal/work", "uid@asp-parking.local")
+    assert url_with == url_without
+    # Verify no double-slash was produced between the calendar path and UID
+    assert "//uid" not in url_with
+
+
+def test_build_event_url_slash_in_uid_double_encodes():
+    """_build_event_url matches caldav's _quote_uid: literal '/' in UID becomes '%252F'.
+
+    uid.replace('/', '%2F') → _url_quote('%2F') → '%252F' (the '%' is encoded).
+    This mirrors caldav's own _quote_uid behaviour in calendarobjectresource.py.
+    """
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    url = _build_event_url("https://srv/cal/", "uid/with/slash@x.local")
+    assert "%252F" in url, f"Expected double-encoded slash in URL; got {url!r}"
+    assert url.endswith(".ics")
+
+
+def test_build_event_url_none_raises():
+    """_build_event_url raises ValueError when calendar_url is None."""
+    from custom_components.asp_parking.caldav_sync import _build_event_url
+
+    with pytest.raises(ValueError, match="calendar_url is None"):
+        _build_event_url(None, "abc@asp-parking.local")
+
+
+async def test_delete_event_client_delete_notfound_treated_as_success():
+    """_delete_uid_quiet: NotFoundError from client.delete on the direct-DELETE path
+    is treated as 'already gone' — must not propagate to the caller."""
+    cs = _require_caldav_sync()
+    from caldav.lib import error as caldav_error
+
+    cal = AsyncMock()
+    cal.url = "https://srv/cal/work/"
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=caldav_error.NotFoundError("not found"))
+    principal = SimpleNamespace(
+        calendar=MagicMock(return_value=cal),
+        calendars=AsyncMock(return_value=[]),
+    )
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        # Must NOT raise — NotFoundError from the direct DELETE means "already gone"
+        await cs.delete_event(
+            url="https://srv/dav/",
+            username="u",
+            password="p",
+            calendar_url="https://srv/cal/work/",
+            uid="uid@asp-parking.local",
+        )
+    # Verify the native path was taken (event_by_uid must NOT have been called)
+    assert cal.event_by_uid.await_count == 0, (
+        "event_by_uid must not be called; direct DELETE path should handle NotFoundError"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -874,9 +998,9 @@ async def test_list_calendars_get_display_name_raises_generic_exception():
 
 
 async def test_write_or_update_event_add_event_raises_propagates():
-    """Edge 4: delete succeeds (stored_uid differs) but add_event raises → CalDAVAuthError propagates.
+    """Edge 4: delete succeeds (stored_uid differs) but add_event raises → CalDAVWriteError propagates.
 
-    add_event failures are wrapped in CalDAVAuthError to ensure credentials
+    add_event failures are wrapped in CalDAVWriteError to ensure credentials
     are sanitised from any error message echoed back by the server.
     """
     cs = _require_caldav_sync()
@@ -921,7 +1045,7 @@ async def test_write_or_update_event_add_event_raises_propagates():
         "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
         return_value=fake_client,
     ):
-        with pytest.raises(cs.CalDAVAuthError) as exc_info:
+        with pytest.raises(cs.CalDAVWriteError) as exc_info:
             await cs.write_or_update_event(
                 config=config,
                 entry_id=entry_id,
@@ -931,9 +1055,136 @@ async def test_write_or_update_event_add_event_raises_propagates():
 
     msg = str(exc_info.value)
     assert "quota exceeded" in msg, (
-        f"Error detail missing from CalDAVAuthError: {msg!r}"
+        f"Error detail missing from CalDAVWriteError: {msg!r}"
     )
     assert "s3cr3t" not in msg, f"Password must be sanitised from error: {msg!r}"
+
+
+@pytest.mark.asyncio
+async def test_write_or_update_event_dav_error_raises_write_error():
+    """CalDAVWriteError DAVError path: caldav_error.DAVError from add_event → CalDAVWriteError.
+
+    Distinct from the generic Exception path — the message prefix must be
+    'Failed to write event to calendar', not 'Unexpected error writing'.
+    """
+    from caldav.lib import error as caldav_error
+
+    cs = _require_caldav_sync()
+
+    entry_id = "entry_dav"
+    start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
+    window = _make_cleaning_window(start=start, end=start.replace(hour=9, minute=30))
+    schedule = _make_schedule_found(start=start)
+    object.__setattr__(schedule, "next_window", window)
+
+    cal = AsyncMock()
+    cal.event_by_uid = AsyncMock(side_effect=caldav_error.NotFoundError())
+    cal.add_event = AsyncMock(side_effect=caldav_error.DAVError("server 507"))
+
+    principal = SimpleNamespace(
+        calendar=MagicMock(return_value=cal),
+        calendars=AsyncMock(return_value=[]),
+    )
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    config = cs.CalDAVConfig(
+        url="https://srv/dav/",
+        username="alice",
+        password="s3cr3t",
+        calendar_url="https://srv/cal/work/",
+        title_template="ASP: {street}",
+        safety_window_minutes=15,
+    )
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        with pytest.raises(cs.CalDAVWriteError) as exc_info:
+            await cs.write_or_update_event(
+                config=config,
+                entry_id=entry_id,
+                schedule=schedule,
+                stored_uid=None,
+            )
+
+    msg = str(exc_info.value)
+    assert "Failed to write event to calendar" in msg, (
+        f"Expected 'Failed to write event to calendar' prefix; got: {msg!r}"
+    )
+    assert "s3cr3t" not in msg, f"Password must be sanitised from error: {msg!r}"
+
+
+@pytest.mark.asyncio
+async def test_validate_connection_cancelled_error_propagates():
+    """CancelledError from get_principal must not be swallowed as CalDAVAuthError."""
+    import asyncio
+
+    cs = _require_caldav_sync()
+
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(side_effect=asyncio.CancelledError())
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await cs.validate_connection(
+                url="https://srv/dav/", username="u", password="p"
+            )
+
+
+@pytest.mark.asyncio
+async def test_list_calendars_cancelled_error_propagates():
+    """CancelledError at the outer level must not be swallowed as CalDAVAuthError."""
+    import asyncio
+
+    cs = _require_caldav_sync()
+
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(side_effect=asyncio.CancelledError())
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await cs.list_calendars(url="https://srv/dav/", username="u", password="p")
+
+
+@pytest.mark.asyncio
+async def test_list_calendars_get_display_name_cancelled_propagates():
+    """CancelledError from get_display_name must not fall into the URL-fallback path."""
+    import asyncio
+
+    cs = _require_caldav_sync()
+
+    cal = AsyncMock()
+    cal.url = "https://srv/cal/work/"
+    cal.get_display_name = AsyncMock(side_effect=asyncio.CancelledError())
+
+    principal = AsyncMock()
+    principal.calendars = AsyncMock(return_value=[cal])
+
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+    fake_client.__aexit__.return_value = None
+    fake_client.get_principal = AsyncMock(return_value=principal)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=fake_client,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await cs.list_calendars(url="https://srv/dav/", username="u", password="p")
 
 
 def test_build_vevent_ical_naive_datetime_no_tzid():
@@ -990,7 +1241,13 @@ def test_derive_uid_naive_datetime_no_raise():
 
 
 async def test_delete_uid_quiet_non_404_dav_error_reraises():
-    """Edge 8: _delete_uid_quiet with DAVError status=403 → exception is re-raised (not swallowed)."""
+    """Edge 8 (CALDAV-09): _delete_uid_quiet with DAVError status=403 on direct
+    HTTP DELETE → exception is re-raised to the caller.
+
+    Re-raising preserves the coordinator's retry/notification path:
+    write_or_update_event logs-and-continues; _async_caldav_delete_current fires a
+    persistent HA notification so the user knows the stale event was not removed.
+    """
     cs = _require_caldav_sync()
     from caldav.lib import error as caldav_error
 
@@ -998,7 +1255,9 @@ async def test_delete_uid_quiet_non_404_dav_error_reraises():
     exc.status = 403
 
     cal = AsyncMock()
-    cal.event_by_uid = AsyncMock(side_effect=exc)
+    cal.url = "https://srv/cal/work/"
+    cal.client = AsyncMock()
+    cal.client.delete = AsyncMock(side_effect=exc)
     principal = SimpleNamespace(
         calendar=MagicMock(return_value=cal),
         calendars=AsyncMock(return_value=[]),
@@ -1057,11 +1316,17 @@ def test_caldav_config_post_init_large_safety_window_no_raise():
     assert cfg.safety_window_minutes == 9999
 
 
-def test_caldav_config_from_options_missing_url_key_error():
-    """Edge 11: CalDAVConfig.from_options({}) → KeyError (bare subscript on missing CONF_CALDAV_URL)."""
+def test_caldav_config_from_options_missing_url_value_error():
+    """Edge 11: CalDAVConfig.from_options({}) → ValueError (BUG-C-003 fix).
+
+    Phase 34 used a bare `options[CONF_CALDAV_URL]` subscript that raised
+    KeyError; Phase 35.1 Plan 06 replaced it with `options.get(..., "")`
+    so the missing-URL case flows through __post_init__'s explicit
+    `CalDAVConfig.url must not be empty` ValueError.
+    """
     from custom_components.asp_parking.caldav_sync import CalDAVConfig
 
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="url must not be empty"):
         CalDAVConfig.from_options({})
 
 
@@ -1190,17 +1455,340 @@ def test_compat_principal_calendar_forwards_cal_url_kwarg():
 
 
 async def test_compat_calendar_event_by_uid_wraps_result():
-    """_CompatCalendar.event_by_uid() wraps the sync return value in _CompatEvent."""
+    """_CompatCalendar.event_by_uid() wraps the sync return value in _CompatEvent.
+
+    BUG-C-006: the shim bypasses caldav 2.1.0's event_by_uid()/object_by_uid() chain
+    (which triggers a TypeError via the buggy backward-compat search() handler) and
+    calls search(uid=uid, comp_class=caldav.Event) directly instead.
+    """
+    import caldav
     from custom_components.asp_parking.caldav_sync import _CompatCalendar, _CompatEvent
 
+    uid = "abc@asp-parking.local"
     sync_evt = MagicMock()
+    sync_evt.id = uid  # exact-UID post-filter requires .id == uid
     sync_cal = MagicMock()
-    sync_cal.event_by_uid = MagicMock(return_value=sync_evt)
+    sync_cal.search = MagicMock(return_value=[sync_evt])
     sync_cal.url = "https://srv/cal/"
 
     compat_cal = _CompatCalendar(sync_cal)
-    result = await compat_cal.event_by_uid("abc@asp-parking.local")
+    result = await compat_cal.event_by_uid(uid)
 
-    sync_cal.event_by_uid.assert_called_once_with("abc@asp-parking.local")
+    sync_cal.search.assert_called_once_with(uid=uid, comp_class=caldav.Event)
     assert isinstance(result, _CompatEvent)
     assert result._evt is sync_evt
+
+
+async def test_compat_principal_invocation_pattern():
+    """BUG-C-005 (Phase 35.1 Plan 06): _CompatAsyncDAVClient.get_principal
+    must invoke the sync client's *callable* principal method (triggering a
+    PROPFIND) — not access a non-callable property that would silently
+    return the base DAV URL on Nextcloud.
+
+    The test wraps the shim's _client with a MagicMock whose `principal`
+    attribute is a callable that returns a sentinel. The test asserts:
+      1. The sentinel principal object is returned through _CompatPrincipal
+         (proving the executor actually invoked `principal()`).
+      2. `self._client.principal` was called exactly once (proving the
+         executor dispatch was a method invocation, not a property read).
+
+    Empirical context: at Plan 06 close time the installed caldav library
+    exposes `DAVClient.principal` as a plain function (verified via
+    `type(caldav.DAVClient.__dict__['principal']) is types.FunctionType`),
+    so the existing shim code is correct.  This test exists as a regression
+    guard against a future caldav release that re-exposes `principal` as
+    a property and silently regresses the Nextcloud base-URL bug.
+    """
+    from custom_components.asp_parking.caldav_sync import (
+        _CompatAsyncDAVClient,
+        _CompatPrincipal,
+    )
+
+    sentinel_principal = MagicMock(name="sentinel_principal_object")
+    mock_sync_client = MagicMock()
+    # principal must be a CALLABLE, not a property/value, for the executor
+    # invocation pattern to fire PROPFIND.
+    mock_sync_client.principal = MagicMock(return_value=sentinel_principal)
+
+    shim = _CompatAsyncDAVClient(url="https://srv/", username="u", password="p")
+    shim._client = mock_sync_client
+
+    result = await shim.get_principal()
+
+    assert isinstance(result, _CompatPrincipal), (
+        "get_principal must wrap the sync principal in _CompatPrincipal"
+    )
+    assert result._p is sentinel_principal, (
+        "The executor must have invoked self._client.principal() and the "
+        "returned object must round-trip through _CompatPrincipal"
+    )
+    assert mock_sync_client.principal.call_count == 1, (
+        "BUG-C-005 guard: self._client.principal must be CALLED exactly "
+        "once. If a future caldav release re-exposes principal as a "
+        "property, this assertion fails (the executor would simply read "
+        "the attribute) and the shim must be updated to use "
+        "`lambda: self._client.principal()`."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shim activation — module-level try/except ImportError path
+#
+# This section tests the code path that runs in production when
+# HA has caldav==2.1.0 installed (which has no caldav.aio submodule).
+# The module-level block:
+#
+#   try:
+#       import caldav.aio
+#   except ImportError:
+#       caldav.aio = SimpleNamespace(AsyncDAVClient=_CompatAsyncDAVClient)
+#
+# is never exercised in the dev environment (caldav 3.x is installed and
+# exposes a real caldav.aio). These tests simulate the 2.x environment by
+# temporarily hiding caldav.aio and re-importing caldav_sync.
+# ---------------------------------------------------------------------------
+
+
+def test_shim_activated_when_caldav_aio_absent():
+    """Module-level shim installs _CompatAsyncDAVClient into caldav.aio on ImportError.
+
+    Simulates caldav 2.1.0 (no caldav.aio) by removing caldav.aio from
+    sys.modules and re-importing caldav_sync. Verifies that after the fresh
+    import caldav.aio.AsyncDAVClient is the compat shim, not the real 3.x class.
+    """
+    import sys
+    import caldav
+
+    mod_key = "custom_components.asp_parking.caldav_sync"
+    saved_mod = sys.modules.get(mod_key)
+    saved_caldav_aio_mod = sys.modules.get("caldav.aio")
+    saved_caldav_aio_attr = getattr(caldav, "aio", None)
+
+    # Save the package-level attribute BEFORE the test mutates it.
+    # `from package import submodule` sets package.__dict__["submodule"] as a
+    # side-effect. Without restoring this, later tests that do `from . import
+    # caldav_sync` inside async functions get the fresh module object (not the
+    # one that patch() targets), causing cross-test pollution.
+    import custom_components.asp_parking as _pkg
+
+    saved_pkg_attr = _pkg.__dict__.get("caldav_sync")
+
+    try:
+        # Force `import caldav.aio` to raise ImportError — simulates caldav 2.x.
+        # sys.modules entry of None causes ImportError; deleting the attribute
+        # ensures getattr(caldav, 'aio', ...) also misses before the shim sets it.
+        sys.modules["caldav.aio"] = None  # type: ignore[assignment]
+        if "aio" in caldav.__dict__:
+            del caldav.__dict__["aio"]
+
+        # Remove caldav_sync from both sys.modules and the package's attribute dict
+        # so Python re-executes the module file on the next import.
+        sys.modules.pop(mod_key, None)
+        _pkg.__dict__.pop("caldav_sync", None)
+
+        from custom_components.asp_parking import caldav_sync as fresh  # noqa: F401
+
+        assert hasattr(caldav, "aio"), (
+            "caldav.aio must exist after fresh import (set by shim)"
+        )
+        installed = caldav.aio.AsyncDAVClient
+        # Re-importing the module creates a fresh class object, so `is` comparison
+        # across module instances fails. Check qualified name + module instead.
+        assert installed.__name__ == "_CompatAsyncDAVClient", (
+            f"Expected _CompatAsyncDAVClient; got {installed.__name__!r}"
+        )
+        assert "caldav_sync" in installed.__module__, (
+            f"Expected class from caldav_sync module; got module={installed.__module__!r}"
+        )
+    finally:
+        # Restore sys.modules and caldav.aio attribute
+        if saved_caldav_aio_mod is not None:
+            sys.modules["caldav.aio"] = saved_caldav_aio_mod
+        elif "caldav.aio" in sys.modules:
+            del sys.modules["caldav.aio"]
+
+        if saved_caldav_aio_attr is not None:
+            caldav.aio = saved_caldav_aio_attr
+        elif hasattr(caldav, "aio"):
+            delattr(caldav, "aio")
+
+        # Restore original cached module in sys.modules
+        if saved_mod is not None:
+            sys.modules[mod_key] = saved_mod
+        else:
+            sys.modules.pop(mod_key, None)
+
+        # Restore package __dict__ entry — prevents cross-test pollution where
+        # `from . import caldav_sync` inside async functions resolves to the
+        # fresh module instead of the one targeted by patch().
+        if saved_pkg_attr is not None:
+            _pkg.__dict__["caldav_sync"] = saved_pkg_attr
+        else:
+            _pkg.__dict__.pop("caldav_sync", None)
+
+
+# ---------------------------------------------------------------------------
+# _CompatCalendar — uncovered methods and error paths
+# ---------------------------------------------------------------------------
+
+
+async def test_compat_calendar_get_display_name_dispatches_via_executor():
+    """_CompatCalendar.get_display_name() returns the sync calendar's display name via executor."""
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar
+
+    sync_cal = MagicMock()
+    sync_cal.get_display_name = MagicMock(return_value="My Calendar")
+    sync_cal.url = "https://srv/cal/"
+
+    compat_cal = _CompatCalendar(sync_cal)
+    name = await compat_cal.get_display_name()
+
+    assert name == "My Calendar"
+    sync_cal.get_display_name.assert_called_once()
+
+
+async def test_compat_calendar_add_event_dispatches_via_executor():
+    """_CompatCalendar.add_event() passes args and kwargs through to the sync calendar."""
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar
+
+    fake_result = object()
+    sync_cal = MagicMock()
+    sync_cal.add_event = MagicMock(return_value=fake_result)
+    sync_cal.url = "https://srv/cal/"
+
+    compat_cal = _CompatCalendar(sync_cal)
+    result = await compat_cal.add_event(ical="BEGIN:VCALENDAR\nEND:VCALENDAR\n")
+
+    assert result is fake_result
+    sync_cal.add_event.assert_called_once_with(ical="BEGIN:VCALENDAR\nEND:VCALENDAR\n")
+
+
+async def test_compat_calendar_event_by_uid_raises_not_found_when_search_returns_empty():
+    """_CompatCalendar.event_by_uid() raises NotFoundError when search() returns no results.
+
+    BUG-C-006 fix: the shim calls search(uid=uid, comp_class=caldav.Event) directly.
+    When the server returns nothing, we raise NotFoundError ourselves.
+    """
+    import caldav
+    from caldav.lib import error as caldav_error
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar
+
+    uid = "missing@asp-parking.local"
+    sync_cal = MagicMock()
+    sync_cal.search = MagicMock(return_value=[])  # server found nothing
+    sync_cal.url = "https://srv/cal/"
+
+    compat_cal = _CompatCalendar(sync_cal)
+
+    with pytest.raises(caldav_error.NotFoundError):
+        await compat_cal.event_by_uid(uid)
+
+    sync_cal.search.assert_called_once_with(uid=uid, comp_class=caldav.Event)
+
+
+async def test_compat_calendar_event_by_uid_raises_not_found_when_no_uid_matches():
+    """_CompatCalendar.event_by_uid() raises NotFoundError when results exist but none match uid.
+
+    Some servers return events for broader search criteria; the shim filters
+    by e.id == uid and raises NotFoundError if the filter yields nothing.
+    """
+    from caldav.lib import error as caldav_error
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar
+
+    uid = "target@asp-parking.local"
+    wrong_evt = MagicMock()
+    wrong_evt.id = "different@asp-parking.local"  # id does not match
+
+    sync_cal = MagicMock()
+    sync_cal.search = MagicMock(return_value=[wrong_evt])
+    sync_cal.url = "https://srv/cal/"
+
+    compat_cal = _CompatCalendar(sync_cal)
+
+    with pytest.raises(caldav_error.NotFoundError):
+        await compat_cal.event_by_uid(uid)
+
+
+def test_compat_calendar_url_property_delegates_to_sync_cal():
+    """_CompatCalendar.url is a pass-through property to the underlying sync calendar URL."""
+    from custom_components.asp_parking.caldav_sync import _CompatCalendar
+
+    sync_cal = MagicMock()
+    sync_cal.url = "https://srv/cal/personal/"
+
+    compat_cal = _CompatCalendar(sync_cal)
+
+    assert compat_cal.url == "https://srv/cal/personal/"
+
+
+# ---------------------------------------------------------------------------
+# _CompatPrincipal.calendars() — wraps sync list in _CompatCalendar
+# ---------------------------------------------------------------------------
+
+
+async def test_compat_principal_calendars_wraps_each_in_compat_calendar():
+    """_CompatPrincipal.calendars() returns a list of _CompatCalendar instances.
+
+    The sync principal's calendars() is called via run_in_executor and each
+    result is wrapped so callers can use await cal.get_display_name() etc.
+    """
+    from custom_components.asp_parking.caldav_sync import (
+        _CompatCalendar,
+        _CompatPrincipal,
+    )
+
+    sync_cal_a = MagicMock()
+    sync_cal_a.url = "https://srv/cal/a/"
+    sync_cal_b = MagicMock()
+    sync_cal_b.url = "https://srv/cal/b/"
+
+    sync_principal = MagicMock()
+    sync_principal.calendars = MagicMock(return_value=[sync_cal_a, sync_cal_b])
+
+    compat_principal = _CompatPrincipal(sync_principal)
+    result = await compat_principal.calendars()
+
+    assert len(result) == 2
+    assert all(isinstance(c, _CompatCalendar) for c in result)
+    assert result[0]._cal is sync_cal_a
+    assert result[1]._cal is sync_cal_b
+    sync_principal.calendars.assert_called_once()
+
+
+async def test_compat_principal_calendars_returns_empty_list_when_no_calendars():
+    """_CompatPrincipal.calendars() returns [] when the sync principal has no calendars."""
+    from custom_components.asp_parking.caldav_sync import _CompatPrincipal
+
+    sync_principal = MagicMock()
+    sync_principal.calendars = MagicMock(return_value=[])
+
+    compat_principal = _CompatPrincipal(sync_principal)
+    result = await compat_principal.calendars()
+
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# _CompatAsyncDAVClient — missing DAVClient error path
+# ---------------------------------------------------------------------------
+
+
+async def test_compat_async_dav_client_aenter_raises_runtime_error_when_dav_client_missing():
+    """_CompatAsyncDAVClient.__aenter__ raises RuntimeError when caldav.DAVClient is absent.
+
+    Defensive guard for a caldav package that removed DAVClient entirely.
+    """
+    import caldav
+    from custom_components.asp_parking.caldav_sync import _CompatAsyncDAVClient
+
+    # caldav.DAVClient is resolved via caldav's module-level __getattr__, so it is
+    # not present in caldav.__dict__. Shadow it by setting the name to None in the
+    # dict directly — that takes precedence over __getattr__ and causes getattr()
+    # to return None, triggering the RuntimeError guard in __aenter__.
+    caldav.DAVClient = None  # type: ignore[assignment]
+    try:
+        client = _CompatAsyncDAVClient(url="https://srv/", username="u", password="p")
+        with pytest.raises(RuntimeError, match="caldav.DAVClient not found"):
+            await client.__aenter__()
+    finally:
+        del caldav.DAVClient  # restore __getattr__ resolution

@@ -649,6 +649,102 @@ def test_extract_zip_duplicate_entries_last_writer_wins(tmp_path: Path) -> None:
     assert (dest / "segments.json").read_bytes() == b"second-content"
 
 
+# ---------------------------------------------------------------------------
+# Phase 38 Plan 01 D-04/D-05: build_info.json source-field patch coverage
+# ---------------------------------------------------------------------------
+
+
+def _build_zip_bytes(entries: dict[str, bytes]) -> bytes:
+    """Return in-memory zip containing ``entries`` (filename → bytes)."""
+    import io
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in entries.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def test_download_and_extract_patches_source_github_release(tmp_path: Path) -> None:
+    """D-04: extracted build_info.json must be patched with source=github_release.
+
+    After ``_sync_download_and_extract`` returns, the on-disk ``build_info.json``
+    inside ``<index_dir>_tmp`` must contain ``source = "github_release"`` even
+    when the release archive did not include that field. The existing
+    ``build_timestamp`` MUST be preserved.
+    """
+    from unittest.mock import MagicMock, patch
+
+    zip_bytes = _build_zip_bytes(
+        {
+            "build_info.json": json.dumps(
+                {"build_timestamp": "2026-05-01T00:00:00Z"}
+            ).encode("utf-8")
+        }
+    )
+
+    mock_resp = MagicMock()
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.iter_bytes.return_value = iter([zip_bytes])
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.stream.return_value = mock_resp
+
+    index_dir = tmp_path / "idx"
+    with patch(
+        "custom_components.asp_parking.index_io.httpx.Client",
+        return_value=mock_client,
+    ):
+        _sync_download_and_extract(index_dir, "https://example.com/index.zip")
+
+    bi_path = tmp_path / "idx_tmp" / "build_info.json"
+    assert bi_path.exists(), "build_info.json must exist after extract"
+    data = json.loads(bi_path.read_text())
+    assert isinstance(data, dict)
+    assert data.get("source") == "github_release"
+    assert data.get("build_timestamp") == "2026-05-01T00:00:00Z"
+
+
+def test_download_and_extract_silent_skip_when_build_info_missing(
+    tmp_path: Path,
+) -> None:
+    """D-05: an extracted zip without build_info.json must NOT raise.
+
+    The patch step inside ``_sync_download_and_extract`` reads
+    ``build_info.json`` opportunistically; if it does not exist after the
+    extract, the call still completes successfully and no
+    ``build_info.json`` file is created.
+    """
+    from unittest.mock import MagicMock, patch
+
+    zip_bytes = _build_zip_bytes({"segments.idx": b"placeholder"})
+
+    mock_resp = MagicMock()
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.iter_bytes.return_value = iter([zip_bytes])
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.stream.return_value = mock_resp
+
+    index_dir = tmp_path / "idx"
+    with patch(
+        "custom_components.asp_parking.index_io.httpx.Client",
+        return_value=mock_client,
+    ):
+        _sync_download_and_extract(index_dir, "https://example.com/index.zip")
+
+    # Silent skip — no build_info.json fabricated when extract did not provide one.
+    assert not (tmp_path / "idx_tmp" / "build_info.json").exists()
+
+
 def test_extract_zip_windows_backslash_traversal_is_safe_on_linux(
     tmp_path: Path,
 ) -> None:

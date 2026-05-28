@@ -63,6 +63,35 @@ INDEX_DOWNLOAD_URL = (
     "/releases/download/index-v1/index.zip"
 )
 
+# Phase 38: dual-path rebuild + stale detection
+# IDX-06 / Plan 38-01: from-source CSCL rebuild constants
+#
+# GITHUB_INDEX_RELEASE_TAG = "index-v1" — deviation acknowledgement: ROADMAP/SPEC
+# reference the "latest release" GitHub endpoint, but a research probe confirmed
+# that endpoint returns v3.0.0 with ZERO assets while `index.zip` lives on tag
+# `index-v1`.  Plan 02 consumes this tag via
+# `GET /repos/.../releases/tags/{GITHUB_INDEX_RELEASE_TAG}`.
+GITHUB_RELEASES_API_BASE = (
+    "https://api.github.com/repos/Pascal-ZeGerman/GPS2ASP-Resolver"
+)
+GITHUB_INDEX_RELEASE_TAG = "index-v1"
+CSCL_GEOJSON_URL = "https://data.cityofnewyork.us/resource/inkn-q76z.geojson"
+SODA_PARKING_SIGNS_URL = "https://data.cityofnewyork.us/resource/nfid-uabd.json"
+
+# Stale detection thresholds (Plans 02/03)
+STALE_INDEX_DAYS = 60
+REMOTE_FRESH_DAYS = 30
+BUTTON_DOUBLE_PRESS_WINDOW_HOURS = 24
+STALE_CHECK_INTERVAL_HOURS = 24
+
+# CSCL pagination / DoS guard
+MAX_CSCL_PAGES = 30
+CSCL_BATCH_SIZE = 10000
+SIGNS_BATCH_SIZE = 50000
+
+# Vehicular street filter (CSCL RW_TYPE codes)
+VEHICULAR_RW_TYPES = frozenset({1, 2, 3, 4, 5})
+
 # CalDAV calendar sync (Phase 34) — CALDAV-01..08
 CONF_CALDAV_URL = "caldav_url"
 DEFAULT_CALDAV_URL = None

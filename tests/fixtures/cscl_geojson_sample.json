@@ -1,0 +1,127 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "PHYSICALID": "10001",
+        "FULL_STREET_NAME": "VANDERBILT AVENUE",
+        "RW_TYPE": "1",
+        "TRAFDIR": "T",
+        "NOMINALDIR": "NB",
+        "STREETWIDTH": "40",
+        "BOROUGHCODE": "3"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-73.9696, 40.6775],
+          [-73.9696, 40.6790]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "PHYSICALID": "10002",
+        "FULL_STREET_NAME": "PROSPECT PLACE",
+        "RW_TYPE": "1",
+        "TRAFDIR": "T",
+        "NOMINALDIR": "EB",
+        "STREETWIDTH": "30",
+        "BOROUGHCODE": "3"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-73.9700, 40.6775],
+          [-73.9696, 40.6775]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "PHYSICALID": "10003",
+        "FULL_STREET_NAME": "PROSPECT PLACE",
+        "RW_TYPE": "3",
+        "TRAFDIR": "T",
+        "NOMINALDIR": "EB",
+        "STREETWIDTH": "30",
+        "BOROUGHCODE": "3"
+      },
+      "geometry": {
+        "type": "MultiLineString",
+        "coordinates": [
+          [
+            [-73.9696, 40.6775],
+            [-73.9692, 40.6775]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "PHYSICALID": "10004",
+        "FULL_STREET_NAME": "BROADWAY",
+        "RW_TYPE": "2",
+        "TRAFDIR": "T",
+        "NOMINALDIR": "EB",
+        "STREETWIDTH": "60",
+        "BOROUGHCODE": "1"
+      },
+      "geometry": {
+        "type": "MultiLineString",
+        "coordinates": [
+          [
+            [-73.9870, 40.7580],
+            [-73.9865, 40.7585]
+          ],
+          [
+            [-73.9865, 40.7585],
+            [-73.9860, 40.7590]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "PHYSICALID": "10005",
+        "FULL_STREET_NAME": "FDR DRIVE",
+        "RW_TYPE": "9",
+        "TRAFDIR": "T",
+        "NOMINALDIR": "NB",
+        "STREETWIDTH": "50",
+        "BOROUGHCODE": "1"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-73.9710, 40.7300],
+          [-73.9705, 40.7310]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "PHYSICALID": "10006",
+        "FULL_STREET_NAME": "WALKING TRAIL",
+        "RW_TYPE": "1",
+        "TRAFDIR": "NV",
+        "NOMINALDIR": "NB",
+        "STREETWIDTH": "10",
+        "BOROUGHCODE": "1"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-73.9720, 40.7400],
+          [-73.9715, 40.7410]
+        ]
+      }
+    }
+  ]
+}

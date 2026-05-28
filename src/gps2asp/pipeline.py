@@ -6,6 +6,7 @@ entry point that wires the four pipeline stages together.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal, overload
 
 from .api_models import ASPDebugResult, ASPResult
@@ -23,6 +24,7 @@ async def resolve_asp(
     lon: float,
     debug: Literal[False] = ...,
     suspension_status: SuspensionInfo | None = ...,
+    suspended_dates: frozenset[date] | None = ...,
 ) -> ASPResult: ...  # lgtm[py/ineffectual-statement]
 
 
@@ -32,6 +34,7 @@ async def resolve_asp(
     lon: float,
     debug: Literal[True],
     suspension_status: SuspensionInfo | None = ...,
+    suspended_dates: frozenset[date] | None = ...,
 ) -> ASPDebugResult: ...  # lgtm[py/ineffectual-statement]
 
 
@@ -40,6 +43,7 @@ async def resolve_asp(
     lon: float,
     debug: bool = False,
     suspension_status: SuspensionInfo | None = None,
+    suspended_dates: frozenset[date] | None = None,
 ) -> ASPResult | ASPDebugResult:
     """Resolve GPS coordinates to an ASP schedule.
 
@@ -48,6 +52,18 @@ async def resolve_asp(
     AmbiguousResolutionError is caught and surfaced as structured fields on the result
     rather than propagating. All other errors (OutsideNYCError, NoSegmentFoundError,
     network failures) propagate to the caller.
+
+    Note:
+        Exception handling is intentionally asymmetric: AmbiguousResolutionError
+        is captured into the result structure (the caller receives a None
+        schedule + resolution_error string), while OutsideNYCError,
+        NoSegmentFoundError, and SODAAPIError propagate to the caller. This
+        split allows the HA coordinator to distinguish user-visible confidence
+        failures (in-band, surfaced as a sensor attribute) from infrastructural
+        failures (out-of-band, surfaced as exceptions and logged). Library
+        callers that prefer uniform handling can wrap the call in their own
+        try/except — but the asymmetry is the documented contract and must
+        not be "normalised" by capturing all exceptions into ASPResult.
 
     Args:
         lat: Latitude in WGS84.
@@ -94,7 +110,7 @@ async def resolve_asp(
     )
 
     # Stage 3: signs -> schedule
-    schedule = compute_schedule(sign_result)
+    schedule = compute_schedule(sign_result, suspended_dates=suspended_dates)
 
     # Stage 4: apply suspension annotation (optional, post-pipeline)
     if suspension_status is not None:

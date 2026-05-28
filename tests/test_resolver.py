@@ -14,10 +14,11 @@ import logging
 from pathlib import Path
 
 import pytest
+from shapely.geometry import LineString
 
 from gps2asp.resolver import resolve, convert, resolve_segment
 from gps2asp.resolver.exceptions import AmbiguousResolutionError
-from gps2asp.resolver.models import ResolutionResult
+from gps2asp.resolver.models import ResolutionResult, SegmentCandidate
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -210,3 +211,177 @@ class TestResolveProspectHeights:
                 )
         except AmbiguousResolutionError:  # lgtm[py/empty-except]
             pass
+
+
+# =====================================================================
+# BUG-R-002/003/006/001 regression tests (Phase 35.1-02, RED -> GREEN)
+# =====================================================================
+
+
+class _FakeIndex:
+    """Minimal SpatialIndex stand-in with a fixed nearest()-result list."""
+
+    def __init__(self, candidates):
+        self._candidates = candidates
+
+    def nearest(self, x, y, *args, **kwargs):  # noqa: ARG002 - signature parity
+        return list(self._candidates)
+
+
+def _patch_index(monkeypatch, candidates):
+    """Patch SpatialIndex.get to return a _FakeIndex with the given candidates."""
+    fake = _FakeIndex(candidates)
+
+    async def _fake_get(cls, index_dir=None):  # noqa: ARG001
+        return fake
+
+    from gps2asp.resolver import spatial_index as si_mod
+
+    monkeypatch.setattr(si_mod.SpatialIndex, "get", classmethod(_fake_get))
+    return fake
+
+
+def _make_candidate(
+    *,
+    geometry: LineString,
+    streetwidth: float = 30.0,
+    has_asp_left: bool = False,
+    has_asp_right: bool = False,
+    rw_type: int = 1,
+    segment_id: int = 42,
+    nominaldir: str = "",
+) -> SegmentCandidate:
+    """Construct a SegmentCandidate for resolver-under-test scenarios."""
+    return SegmentCandidate(
+        segment_id=segment_id,
+        geometry=geometry,
+        full_street_name="TEST STREET",
+        from_street="FROM ST",
+        to_street="TO ST",
+        trafdir="TW",
+        nominaldir=nominaldir,
+        rw_type=rw_type,
+        streetwidth=streetwidth,
+        borocode="3",
+        has_asp_left=has_asp_left,
+        has_asp_right=has_asp_right,
+        distance_ft=10.0,
+    )
+
+
+class TestHasAspSideAware:
+    """BUG-R-002: has_asp uses conservative OR across both sides.
+
+    The spatial index stores identical values for has_asp_left and has_asp_right
+    (both set by _check_has_asp which cannot distinguish sides). A compass-to-
+    left/right mapping would require knowing the segment bearing and would be
+    incorrect without per-side index data. The OR is the safe, correct default.
+    """
+
+    async def test_has_asp_or_across_both_sides(self, monkeypatch):
+        """has_asp is True if either side has ASP, regardless of resolved side.
+
+        N-running segment (0,0)->(0,100); query at (10, 50) yields side='E'.
+        has_asp_left=True reflects that ASP exists on the block (the index
+        stores the same value for both sides). Conservative OR returns True.
+        """
+        seg = LineString([(0, 0), (0, 100)])
+        candidate = _make_candidate(
+            geometry=seg,
+            has_asp_left=True,
+            has_asp_right=True,
+            streetwidth=4.0,  # half-width 2ft, parking zone < 0.66ft, 10ft clears
+        )
+        _patch_index(monkeypatch, [candidate])
+
+        result = await resolve_segment(10.0, 50.0)
+
+        assert result.side_of_street == "E", "Sanity: side must be E"
+        assert result.has_asp is True, (
+            "BUG-R-002: has_asp must be True when either side has ASP "
+            "(conservative OR — index stores identical left/right values)"
+        )
+
+
+class TestClassifyAmbiguityDocs:
+    """BUG-R-001: _classify_ambiguity threshold-rationale documentation guard."""
+
+    def test_classify_ambiguity_documents_threshold_basis(self):
+        """The 10ft heuristic docstring must cite BUG-R-001 and the width-relative basis."""
+        from gps2asp.resolver import _classify_ambiguity
+
+        doc = _classify_ambiguity.__doc__ or ""
+        assert "10ft" in doc, "docstring should mention the 10ft heuristic constant"
+        assert "BUG-R-001" in doc, (
+            "docstring should cite BUG-R-001 to anchor the width-relative rationale"
+        )
+        assert "width-relative" in doc.lower(), (
+            "docstring should explain that the real threshold is width-relative"
+        )
+
+
+class TestDetermineSideSkippedAtZeroConfidence:
+    """BUG-R-003: determine_side must not be called when confidence will be 0."""
+
+    async def test_determine_side_not_called_at_zero_confidence(self, monkeypatch):
+        """Near-centerline point (perp_distance < parking_lane_fraction*width/2) must
+        skip determine_side; the AmbiguousResolutionError debug_info should have
+        side=None (or empty string) to indicate the side computation was bypassed.
+        """
+        # Long E-running segment so dist_to_endpoints is large (not the ambiguity cause).
+        seg = LineString([(0, 0), (1000, 0)])
+        candidate = _make_candidate(
+            geometry=seg,
+            streetwidth=60.0,  # half-width 30ft, parking_lane_fraction*30 = 9.9ft inner zone
+        )
+        _patch_index(monkeypatch, [candidate])
+
+        # Counter wrapping determine_side
+        import gps2asp.resolver as resolver_pkg
+        from gps2asp.resolver import side_resolver as sr_mod
+
+        call_count = {"n": 0}
+        real_determine_side = sr_mod.determine_side
+
+        def counting_determine_side(*args, **kwargs):
+            call_count["n"] += 1
+            return real_determine_side(*args, **kwargs)
+
+        # Patch BOTH the side_resolver module AND the binding imported into
+        # resolver/__init__.py (it does `from .side_resolver import determine_side`).
+        monkeypatch.setattr(sr_mod, "determine_side", counting_determine_side)
+        monkeypatch.setattr(resolver_pkg, "determine_side", counting_determine_side)
+
+        # Query at midpoint (500, 1.0) -- perp_distance = 1.0ft, near centerline.
+        # parking_lane_fraction * width / 2 = 0.33 * 60 / 2 = 9.9ft -> confidence=0.
+        with pytest.raises(AmbiguousResolutionError):
+            await resolve_segment(500.0, 1.0)
+
+        assert call_count["n"] == 0, (
+            f"BUG-R-003: determine_side must be skipped when confidence will be 0, "
+            f"but it was called {call_count['n']} time(s)"
+        )
+
+
+class TestMissingRwTypeLogIncludesSegmentId:
+    """BUG-R-006: missing-streetwidth fallback log must include segment_id."""
+
+    def test_missing_rw_type_log_includes_segment_id(self, caplog):
+        """resolve_effective_width fallback log must surface segment_id."""
+        from gps2asp.resolver.confidence import resolve_effective_width
+
+        with caplog.at_level(logging.DEBUG, logger="gps2asp.resolver.confidence"):
+            # rw_type=99 is not in _NYC_DEFAULT_WIDTHS -> fallback path taken
+            resolve_effective_width(0.0, 99, segment_id=123456)
+
+        fallback_records = [
+            r for r in caplog.records if "streetwidth missing" in r.message
+        ]
+        assert len(fallback_records) > 0, "Expected a streetwidth-missing fallback log"
+        msg = fallback_records[0].getMessage()
+        assert "segment_id" in msg, (
+            f"BUG-R-006: fallback log must include 'segment_id'; got: {msg!r}"
+        )
+        assert "123456" in msg, (
+            f"BUG-R-006: fallback log must include the actual segment_id value; got: {msg!r}"
+        )

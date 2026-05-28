@@ -7,6 +7,8 @@ introduced in Phase 26 for parking-area pre-seeding.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from gps2asp.resolver import convert
@@ -127,3 +129,64 @@ def test_query_radius_raises_runtime_error_when_not_loaded():
 
     with pytest.raises(RuntimeError, match="SpatialIndex not loaded"):
         idx.query_radius(0.0, 0.0, 100.0)
+
+
+# =====================================================================
+# BUG-R-005 / BUG-R-008 regression tests (Phase 35.1-02, RED -> GREEN)
+# =====================================================================
+
+
+def test_nearest_default_oversample_is_25():
+    """BUG-R-005: SpatialIndex.nearest default n MUST be 25 (was 5).
+
+    rtree.nearest((x,y,x,y), n) returns bbox-nearest candidates, NOT
+    geometry-nearest. Long diagonal segments (e.g. Broadway) have large
+    bounding boxes that include the query point's bbox at small n, while
+    the actually-nearest short orthogonal segment is missed. Oversample
+    to 25 so the post-sort by geometry distance can return the true nearest.
+    """
+    sig = inspect.signature(SpatialIndex.nearest)
+    n_default = sig.parameters["n"].default
+    assert n_default == 25, (
+        f"BUG-R-005: SpatialIndex.nearest default n must be 25 (got {n_default})"
+    )
+
+
+@pytest.mark.integration
+class TestGetIndexDirGuard:
+    """BUG-R-008: SpatialIndex.get() must reject mismatched index_dir."""
+
+    async def test_get_rejects_mismatched_index_dir(
+        self,
+        spatial_index_dir,
+        tmp_path,
+    ):
+        """Second get() with a different index_dir must raise ValueError.
+
+        Pre-fix: the singleton silently returned the cached instance,
+        ignoring the new index_dir -- a programming-error class that
+        masked stale-index bugs after a rebuild.
+        """
+        # First call: load from the real index dir
+        idx1 = await SpatialIndex.get(index_dir=spatial_index_dir)
+        assert idx1 is not None
+
+        # Second call with the SAME path returns the cached singleton (no raise)
+        idx2 = await SpatialIndex.get(index_dir=spatial_index_dir)
+        assert idx2 is idx1, "Same index_dir must return the cached singleton"
+
+        # Second call with index_dir=None returns the cached singleton (no raise)
+        idx3 = await SpatialIndex.get(index_dir=None)
+        assert idx3 is idx1, "index_dir=None must reuse the cached singleton"
+
+        # Second call with a DIFFERENT path MUST raise ValueError
+        different_path = str(tmp_path / "other_index")
+        with pytest.raises(ValueError, match="already loaded"):
+            await SpatialIndex.get(index_dir=different_path)
+
+        # After reset(), a fresh path is accepted again -- but we have no
+        # real index at `different_path`, so we only assert reset clears the
+        # guard. Use the original path again to confirm reload works.
+        SpatialIndex.reset()
+        idx4 = await SpatialIndex.get(index_dir=spatial_index_dir)
+        assert idx4 is not idx1, "After reset, a new instance must be loaded"

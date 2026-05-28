@@ -18,7 +18,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, VERSION
 from .coordinator import ASPParkingCoordinator
 
 
@@ -71,7 +71,7 @@ class ASPDebugModeSwitch(SwitchEntity):
             name="ASP Parking Monitor",
             manufacturer="GPS2ASP",
             model="ASP Schedule Resolver",
-            sw_version="0.1.0",
+            sw_version=VERSION,
         )
 
     @property

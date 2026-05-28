@@ -433,3 +433,71 @@ class TestParseSign:
         assert result is not None
         assert len(result) == 1
         assert result[0].day == ASPDay.SATURDAY
+
+
+# ---------------------------------------------------------------------------
+# Phase 35.1 BUG-T-004: Cross-midnight parser regression tests
+#
+# These tests guard the cross-midnight window admission contract documented
+# in RESEARCH.md Pitfall 3. Pre-fix, parse_sign() returned None for any sign
+# whose end time was MIDNIGHT (00:00) because end_time <= start_time was True
+# for any non-midnight start. Night Regulation signs like
+# "MONDAY 11PM-MIDNIGHT" were therefore wholly unparseable in production.
+#
+# Fix scheme (Pitfall 3 option a): truncate the end at time(23, 59, 59) so
+# the window lives entirely within a single day, leaving downstream callers
+# (merge, summary, find_active_window, find_next_window) unchanged.
+# ---------------------------------------------------------------------------
+
+
+class TestCrossMidnightWindow:
+    """BUG-T-004 regression: parse_sign accepts cross-midnight windows."""
+
+    def test_parse_cross_midnight_11pm_to_midnight(self) -> None:
+        """11PM-MIDNIGHT must produce a single Monday 23:00-23:59:59 window."""
+        sign = (
+            "NIGHT REGULATION (MOON & STARS SYMBOLS) "
+            "NO PARKING (SANITATION BROOM SYMBOL) "
+            "MONDAY 11PM-MIDNIGHT <->"
+        )
+        result = parse_sign(sign)
+        assert result is not None, (
+            "Cross-midnight Night Regulation sign must parse (BUG-T-004)"
+        )
+        assert len(result) == 1
+        assert result[0].day == ASPDay.MONDAY
+        assert result[0].start_time == time(23, 0)
+        assert result[0].end_time == time(23, 59, 59)
+
+    def test_parse_cross_midnight_with_minutes(self) -> None:
+        """10:30PM-MIDNIGHT must produce a Tuesday 22:30-23:59:59 window."""
+        sign = "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY 10:30PM-MIDNIGHT <->"
+        result = parse_sign(sign)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].day == ASPDay.TUESDAY
+        assert result[0].start_time == time(22, 30)
+        assert result[0].end_time == time(23, 59, 59)
+
+    def test_parse_midnight_to_3am_still_works(self) -> None:
+        """Existing MIDNIGHT-3AM pattern remains a normal same-day window (regression guard)."""
+        result = parse_sign(
+            "NO PARKING (SANITATION BROOM SYMBOL) MOON & STARS (SYMBOLS) "
+            "MONDAY MIDNIGHT-3AM <->"
+        )
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].start_time == time(0, 0)
+        assert result[0].end_time == time(3, 0)
+
+    def test_parse_reverse_non_midnight_window_still_rejected(self) -> None:
+        """Degenerate non-midnight reversal like 9AM-8AM is still rejected."""
+        result = parse_sign("NO PARKING (SANITATION BROOM SYMBOL) MONDAY 9AM-8AM <->")
+        assert result is None
+
+    def test_parse_midnight_to_midnight_is_rejected(self) -> None:
+        """MIDNIGHT-MIDNIGHT is zero-length and is still rejected."""
+        result = parse_sign(
+            "NO PARKING (SANITATION BROOM SYMBOL) MONDAY MIDNIGHT-MIDNIGHT <->"
+        )
+        assert result is None

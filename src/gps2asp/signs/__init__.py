@@ -86,11 +86,14 @@ def materialize_cached_records(
 
     Used by the HA coordinator's parking-area sign cache to deliver
     the same result shape as retrieve_signs() without making a network
-    call. Empty `records` => NoMatchFound; records present but all
-    sign_description fields are empty after stripping => NoASPSigns;
-    otherwise SignRetrievalSuccess. NOTE: This function does NOT filter
-    by SANITATION BROOM — callers must ensure records are already
-    BROOM-filtered before passing them here.
+    call. Empty `records` => NoMatchFound; records present but after
+    deduplication and SANITATION BROOM filtering no signs remain =>
+    NoASPSigns; otherwise SignRetrievalSuccess.
+
+    NOTE: This function applies a defensive SANITATION BROOM filter (IN-03).
+    Callers should pass BROOM-filtered records from ``build_block_query`` for
+    efficiency; the in-function filter is a defence-in-depth guard against
+    future callers that bypass ``build_block_query``.
 
     Args:
         records: Raw SODA API record dicts as returned by SODAClient.fetch_signs.
@@ -107,6 +110,13 @@ def materialize_cached_records(
     if not records:
         return NoMatchFound()
     signs = _deduplicate(records)
+    # IN-03: defensive BROOM filter. Callers MUST pass BROOM-filtered records
+    # (the contract is documented above), but this guard catches any future
+    # caller that bypasses ``build_block_query`` -- a silent contamination
+    # bug would otherwise inject non-broom records (e.g. NO STANDING signs)
+    # into the schedule pipeline. Cheap and idempotent on already-filtered
+    # input.
+    signs = [sign for sign in signs if "SANITATION BROOM" in sign.sign_description]
     if not signs:
         return NoASPSigns()
     return SignRetrievalSuccess(
@@ -143,9 +153,20 @@ def _cross_streets_match(
     Returns:
         True if cross streets match in either direction.
     """
+    # BUG-S-003: Refuse to match when either side of the comparison has an empty
+    # cross-street name. name_variants("") returns [""], so without this guard
+    # an empty SODA field matches an empty caller arg (or vice versa) and
+    # silently admits an unrelated record into the filter results.
+    record_from_raw = record.get("from_street", "")
+    record_to_raw = record.get("to_street", "")
+    if not record_from_raw or not record_to_raw:
+        return False
+    if not from_street or not to_street:
+        return False
+
     # Normalize the raw SODA record fields (uppercase, strip, expand abbreviations)
-    record_from = _normalize_street(record.get("from_street", ""))
-    record_to = _normalize_street(record.get("to_street", ""))
+    record_from = _normalize_street(record_from_raw)
+    record_to = _normalize_street(record_to_raw)
 
     # Generate all known variants of the CSCL cross-street names for matching
     # (name_variants expands abbreviations like AVE→AVENUE, PL→PLACE, etc.)
@@ -256,6 +277,9 @@ async def retrieve_signs(
     to_variants = name_variants(to_street)
 
     any_soda_results = False
+    # BUG-S-001: capture L3's broad-query records keyed by on_var so that L4
+    # can reuse them instead of issuing an identical second HTTP request.
+    l3_broad_records_by_var: dict[str, list[dict]] = {}
 
     # ------------------------------------------------------------------
     # Level 1: Exact four-field match with SODA-normalized names (first variant)
@@ -337,6 +361,10 @@ async def retrieve_signs(
         records = await client.fetch_signs(query)
         logger.debug("Level 3: received %d raw records for broad query", len(records))
 
+        # BUG-S-001: Stash L3's broad records so L4 (if reached) can reuse them
+        # rather than issuing an identical second HTTP call on the same on_var.
+        l3_broad_records_by_var[on_var] = records
+
         if records:
             # Client-side cross-street filtering
             filtered = [
@@ -400,14 +428,27 @@ async def retrieve_signs(
                     on_var,
                     side_of_street,
                 )
-                query = client.build_on_street_query(on_var, side_of_street)
-                records = await client.fetch_signs(query)
-                logger.debug(
-                    "Level 4: received %d raw records for broad query", len(records)
-                )
+                # BUG-S-001: Reuse L3's broad-query records when available
+                # for this on_var, avoiding a duplicate HTTP round-trip
+                # (the query string would be identical to L3's).
+                cached = l3_broad_records_by_var.get(on_var)
+                if cached is not None:
+                    records = cached
+                    logger.debug(
+                        "Level 4: reused %d L3 broad records for on_var=%r "
+                        "(no duplicate SODA call)",
+                        len(records),
+                        on_var,
+                    )
+                else:
+                    query = client.build_on_street_query(on_var, side_of_street)
+                    records = await client.fetch_signs(query)
+                    logger.debug(
+                        "Level 4: received %d raw records for broad query",
+                        len(records),
+                    )
 
                 if records:
-                    any_soda_results = True
                     span_count = len(
                         {
                             (r.get("from_street", ""), r.get("to_street", ""))
@@ -423,6 +464,13 @@ async def retrieve_signs(
                         records, from_street, to_street, graph
                     )
                     if best_span is not None:
+                        # BUG-S-002: only mark "SODA confirmed this block" when
+                        # L4 actually found a covering span — broad-query
+                        # records on the same on_street/side do NOT mean our
+                        # specific block exists in SODA. With this gate, the
+                        # function correctly returns NoMatchFound (not
+                        # NoASPSigns) when every on_var has best_span == None.
+                        any_soda_results = True
                         span_from = best_span[0].get("from_street", "")
                         span_to = best_span[0].get("to_street", "")
                         logger.info(

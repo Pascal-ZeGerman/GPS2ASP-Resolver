@@ -123,7 +123,8 @@ class ScheduleFound:
     Attributes:
         status: Discriminator literal "schedule_found".
         next_window: The next upcoming ASP cleaning window, or None if no
-            upcoming window found within 7 days.
+            upcoming window found within the 8-calendar-day lookahead
+            (today + 7 future days). See find_next_window. (BUG-T-001.)
         weekly_schedule: Full parsed weekly schedule (all days/windows).
         on_street: Street name in CSCL format.
         from_street: Cross street at one end.
@@ -137,7 +138,8 @@ class ScheduleFound:
             None when not suspended.
         resolution_reason: Machine-readable suspension classification. One of:
             'suspended_holiday' (holiday suspension),
-            'suspended_emergency' (emergency/weather suspension).
+            'suspended_emergency' (emergency/weather suspension),
+            'suspended_unknown' (suspension source not recognised).
             None when not suspended / not yet annotated by apply_suspension().
     """
 
@@ -158,6 +160,7 @@ class ScheduleFound:
         Literal[
             "suspended_holiday",
             "suspended_emergency",
+            "suspended_unknown",
         ]
         | None
     ) = None
@@ -181,7 +184,8 @@ class ASPActiveNow:
             None when not suspended.
         resolution_reason: Machine-readable suspension classification. One of:
             'suspended_holiday' (holiday suspension),
-            'suspended_emergency' (emergency/weather suspension).
+            'suspended_emergency' (emergency/weather suspension),
+            'suspended_unknown' (suspension source not recognised).
             None when not suspended / not yet annotated by apply_suspension().
     """
 
@@ -200,6 +204,7 @@ class ASPActiveNow:
         Literal[
             "suspended_holiday",
             "suspended_emergency",
+            "suspended_unknown",
         ]
         | None
     ) = None

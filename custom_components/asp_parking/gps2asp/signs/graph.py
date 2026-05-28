@@ -71,18 +71,33 @@ class StreetGraph:
         zst_path = index_dir / "graph.json.zst"
         json_path = index_dir / "graph.json"
 
-        if zst_path.exists():
-            dctx = zstandard.ZstdDecompressor()
-            with zst_path.open("rb") as fh:
-                with dctx.stream_reader(fh) as reader:
-                    data = json.load(io.TextIOWrapper(reader, encoding="utf-8"))
-        elif json_path.exists():
-            with json_path.open("r", encoding="utf-8") as fh:
-                data = json.load(fh)
-        else:
-            logger.debug(
-                "No graph file found at %s -- Level 4 unavailable",
+        # BUG-S-004: Wrap decode in try/except so a corrupt graph.json(.zst)
+        # degrades to "Level 4 unavailable" (same contract as the file-missing
+        # path) instead of raising and being swallowed by the coordinator's
+        # broad `except Exception`. Catches both json.JSONDecodeError and
+        # zstandard.ZstdError; OSError is included for read-time disk errors.
+        try:
+            if zst_path.exists():
+                dctx = zstandard.ZstdDecompressor()
+                with zst_path.open("rb") as fh:
+                    with dctx.stream_reader(fh) as reader:
+                        data = json.load(io.TextIOWrapper(reader, encoding="utf-8"))
+            elif json_path.exists():
+                with json_path.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            else:
+                logger.debug(
+                    "No graph file found at %s -- Level 4 unavailable",
+                    index_dir,
+                )
+                return None
+        except (json.JSONDecodeError, zstandard.ZstdError, OSError) as exc:
+            logger.error(
+                "graph.json corrupt or unreadable at %s (%s: %s); "
+                "Level 4 disabled until next rebuild",
                 index_dir,
+                type(exc).__name__,
+                exc,
             )
             return None
 
@@ -152,9 +167,17 @@ class StreetGraph:
         for pid in start_pids:
             queue.append((pid, 0))
 
+        # WR-06: track whether the loop exits due to depth limit truncation
+        # vs queue drain. Both cases currently return ``float("inf")`` and
+        # the caller (`_find_best_covering_span`) silently logs `l4_no_span`
+        # -- with no diagnostic to distinguish "graph genuinely has no path"
+        # from "BFS truncated at _BFS_DEPTH_LIMIT". This kills L4 coverage
+        # silently on long avenues (Broadway: ~150 blocks).
+        hit_depth_limit = False
         while queue:
             pid, depth = queue.popleft()
             if depth >= _BFS_DEPTH_LIMIT:
+                hit_depth_limit = True
                 continue
 
             for neighbor_int in self.adjacency.get(pid, []):
@@ -166,6 +189,13 @@ class StreetGraph:
                     return depth + 1
                 queue.append((neighbor, depth + 1))
 
+        if hit_depth_limit:
+            logger.warning(
+                "BFS hit depth limit %d before exhausting queue; "
+                "Level 4 mid-span lookup may return NoMatchSchedule on long avenues "
+                "(consider raising _BFS_DEPTH_LIMIT)",
+                _BFS_DEPTH_LIMIT,
+            )
         return float("inf")
 
     def span_distance(

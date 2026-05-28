@@ -1,5 +1,6 @@
 """Tests for side-of-street determination."""
 
+import pytest
 from shapely.geometry import LineString
 
 from gps2asp.resolver.side_resolver import (
@@ -138,3 +139,25 @@ class TestDistanceToEndpoints:
         segment = LineString([(0, 0), (100, 0)])
         dist = compute_distance_to_endpoints(3, 4, segment)
         assert abs(dist - 5.0) < 0.001
+
+
+# =====================================================================
+# BUG-R-004 regression test (Phase 35.1-02, RED -> GREEN)
+# =====================================================================
+
+
+class TestZeroLengthSegment:
+    """BUG-R-004: zero-length segments must raise, not silently return 'S'."""
+
+    def test_zero_length_segment_raises_value_error(self):
+        """Degenerate zero-length LineString must raise ValueError, not return 'S'."""
+        seg = LineString([(100, 200), (100, 200)])
+
+        with pytest.raises(ValueError, match="zero-length"):
+            determine_side(100.0, 200.0, seg, "NS")
+
+    def test_normal_segment_still_returns_side(self):
+        """Sanity: the happy path must continue to work after the zero-length guard."""
+        seg = LineString([(100, 200), (200, 200)])
+        result = determine_side(150.0, 210.0, seg, "EW")
+        assert result in ("N", "S", "E", "W")

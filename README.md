@@ -65,6 +65,34 @@ After installation, set up the integration from the HA UI — no YAML required.
 
 After setup you can also configure a **parking area** (lat/lon/radius) and a **push notification service** (e.g., `notify.mobile_app_my_phone` with a configurable lead time) via **Settings → Devices & Services → ASP Parking → Configure**.
 
+## CalDAV Calendar Sync
+
+ASP Parking can write your next-move events to a CalDAV calendar so the event appears automatically in your calendar app whenever a new cleaning window is detected. Supported servers include Nextcloud, Fastmail, iCloud, and any other standards-compliant CalDAV server.
+
+**Setup:** Go to **Settings → Devices & Services → ASP Parking → Configure**, then open the **CalDAV** step. Enter your server URL, username, and password and click Submit. On the next screen, choose which calendar should receive events.
+
+### Event title template
+
+The title of each calendar event is generated from a template. The default template is `ASP: {street}`, which produces titles like `ASP: VANDERBILT AVENUE`. You can customise it using the following placeholders:
+
+| Placeholder | Inserts | Example value |
+|-------------|---------|---------------|
+| `{street}` | The street name where your car is parked | `VANDERBILT AVENUE` |
+| `{side}` | The side of the street (compass direction) | `N`, `S`, `E`, or `W` |
+| `{time}` | The full cleaning schedule for that block | `Mon 8–9:30 AM, Thu 11:30 AM–1 PM` |
+
+**Example templates:**
+
+| Template | Produces |
+|----------|----------|
+| `ASP: {street}` *(default)* | `ASP: VANDERBILT AVENUE` |
+| `Move car — {street} ({side} side)` | `Move car — VANDERBILT AVENUE (N side)` |
+| `ASP {street}: {time}` | `ASP VANDERBILT AVENUE: Mon 8–9:30 AM, Thu 11:30 AM–1 PM` |
+
+Plain text with no placeholders is also valid (e.g., just `Move car`). Unknown placeholders are preserved literally so a typo like `{streeet}` appears as-is rather than causing an error.
+
+**Safety window:** Position changes within the configured safety window (default: 15 minutes) before the next move time will not delete the calendar event — this prevents the reminder from disappearing just before you need to act.
+
 ## Suspension Awareness
 
 The integration is aware of citywide ASP suspension days. It checks the NYC DOT holiday calendar automatically on startup. If you provide an NYC311 API key, it also polls for real-time emergency suspensions (weather events, sanitation emergencies) every 60 minutes. When ASP is suspended, the next move sensor shows "Suspended" and the binary sensor turns off automatically.
