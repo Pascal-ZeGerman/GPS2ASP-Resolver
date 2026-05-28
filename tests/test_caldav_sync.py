@@ -593,9 +593,7 @@ async def test_write_or_update_event_deletes_old_then_creates_new():
     assert delete_idx >= 0 and add_idx >= 0, (
         f"Both delete and add_event calls expected; got {call_order}"
     )
-    assert delete_idx < add_idx, (
-        f"DELETE must precede add_event; order: {call_order}"
-    )
+    assert delete_idx < add_idx, f"DELETE must precede add_event; order: {call_order}"
     # And the deleted URL targets the stale UID.
     assert any(ev == f"delete:{expected_delete_url}" for ev in call_order), (
         f"DELETE must target the stale-UID URL {expected_delete_url!r}; calls: {call_order}"

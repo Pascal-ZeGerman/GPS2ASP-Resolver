@@ -544,7 +544,9 @@ async def _delete_uid_quiet(cal: Any, uid: str) -> None:
             )
             if sync_client is not None:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(None, sync_client.delete, event_url)
+                response = await loop.run_in_executor(
+                    None, sync_client.delete, event_url
+                )
                 status = getattr(response, "status", None)
                 if status is not None and not str(status).startswith(("2", "404")):
                     logger.warning(
@@ -571,10 +573,9 @@ async def _delete_uid_quiet(cal: Any, uid: str) -> None:
         # (e.g. url="404 Not Found - <body>") when the server 404s a REPORT request.
         status = getattr(exc, "status", None)
         url_field = getattr(exc, "url", "") or ""
-        if (
-            (status is not None and str(status).startswith("404"))
-            or url_field[:3] == "404"
-        ):
+        if (status is not None and str(status).startswith("404")) or url_field[
+            :3
+        ] == "404":
             return
         raise
 
