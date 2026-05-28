@@ -51,6 +51,13 @@ def _make_combined_stub(
     # Minimal data container with suspension_state attr.
     data = SimpleNamespace(suspension_state=suspension_state)
 
+    # Phase 38 (IDX-05) — async_request_rebuild now persists
+    # last_button_press to the index stale store on every button-triggered
+    # call and _async_do_rebuild calls self._async_decide_rebuild_path.
+    # The integration stub mirrors those attributes so cross-cutting tests
+    # do not regress.  Default decision is DOWNLOAD/remote_fresh.
+    from custom_components.asp_parking.coordinator import RebuildPath
+
     stub = SimpleNamespace(
         entry=entry,
         hass=hass,
@@ -62,6 +69,14 @@ def _make_combined_stub(
         _last_rebuilt=None,
         _sign_cache=sign_cache if sign_cache is not None else {},
         _async_notify_entities=MagicMock(),
+        # Phase 38 (IDX-05) attributes
+        _index_stale_store=None,
+        _last_button_press=None,
+        _last_stale_check=None,
+        _remote_age_cache=None,
+        _async_decide_rebuild_path=AsyncMock(
+            return_value=(RebuildPath.DOWNLOAD, "remote_fresh")
+        ),
         # CalDAV fields
         _caldav_uid=caldav_uid,
         _caldav_store=object() if caldav_store_present else None,  # truthy sentinel

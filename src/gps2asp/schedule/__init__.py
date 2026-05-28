@@ -18,7 +18,7 @@ Public API:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 
 from gps2asp.schedule.merge import merge_windows
 from gps2asp.schedule.models import (
@@ -70,6 +70,7 @@ __all__ = [
 def compute_schedule(
     sign_result: SignRetrievalResult,
     now: datetime | None = None,
+    suspended_dates: frozenset[date] | None = None,
 ) -> ScheduleResult:
     """Compute ASP schedule from sign retrieval results.
 
@@ -159,7 +160,7 @@ def compute_schedule(
         )
 
     # Find next upcoming window.
-    next_win = find_next_window(merged_schedule, now)
+    next_win = find_next_window(merged_schedule, now, suspended_dates)
 
     logger.info(
         "Schedule found on %s: next window %s",

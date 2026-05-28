@@ -45,6 +45,21 @@ from .coordinator import ASPParkingCoordinator
 from .util import now_ha_local
 
 
+# Phase 36 SENSOR-01: cardinal-direction → human-readable label mapping.
+# Mirrors the _BOROUGH_NAMES precedent in coordinator.py:117 (typed dict[str, str],
+# module level, hardcoded English). Used by ASPNextMoveTimeSensor and
+# ASPResolvedStreetSensor to surface a display-friendly 'side_label' attribute
+# alongside the raw 'side_of_street' single-letter code (which remains unchanged
+# for backward compatibility). Unrecognized values cause the side_label key to
+# be omitted entirely (not inserted as None) — per locked SPEC edge case.
+_SIDE_LABELS: dict[str, str] = {
+    "N": "North side",
+    "S": "South side",
+    "E": "East side",
+    "W": "West side",
+}
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -227,11 +242,11 @@ class ASPNextMoveTimeSensor(SensorEntity):
         data = self._coordinator.data
         attrs: dict[str, str | float | int | list | None] = {}
 
-        # Capture "today" once so that native_value (_format_move_time) and
-        # extra_state_attributes share the same date snapshot. Without this,
-        # a midnight boundary crossed between the two property reads produces a
-        # transient inconsistency (WR-03: urgency/"next_move_is_today" and the
-        # display string can disagree for one HA state cycle).
+        # Capture "today" once so that urgency and the boolean attributes
+        # (next_move_is_today, next_move_is_tomorrow) within extra_state_attributes
+        # share a single date snapshot (intra-property race fix).
+        # Note: native_value evaluates its own date independently via _format_move_time;
+        # a one-cycle display/attribute disagreement at exact midnight is accepted.
         today = now_ha_local().date()
 
         # Date-relationship booleans (D-06: always present, default False)
@@ -268,6 +283,12 @@ class ASPNextMoveTimeSensor(SensorEntity):
                     ].index(d),
                 )
                 attrs["cleaning_days"] = day_names
+            elif isinstance(schedule, ASPActiveNow):
+                # BUG-T-005 (Phase 35.1-05): minimum-viable; shows active cleaning day.
+                # When the schedule is ASPActiveNow we have only the active_window;
+                # surface its day so the UI never loses the cleaning_days chip on
+                # active-now mornings.
+                attrs["cleaning_days"] = [schedule.active_window.day.name.title()]
 
             # time_window_start/end: use next_window (the temporally-next window)
             # rather than windows[0] (the day-sorted first window), so these
@@ -303,6 +324,10 @@ class ASPNextMoveTimeSensor(SensorEntity):
             attrs["street_name"] = schedule.on_street
             attrs["cross_streets"] = f"{schedule.from_street} to {schedule.to_street}"
             attrs["side_of_street"] = schedule.side_of_street
+            # Phase 36 SENSOR-01: display-friendly cardinal label. Omitted when
+            # side_of_street is not one of N/S/E/W (per locked SPEC edge case).
+            if (side_label := _SIDE_LABELS.get(schedule.side_of_street)) is not None:
+                attrs["side_label"] = side_label
 
         # --- Window group ---
         if isinstance(schedule, ScheduleFound):
@@ -484,7 +509,7 @@ class ASPResolvedStreetSensor(_ASPDiagnosticSensor):
         schedule = self._coordinator.data.schedule_result
         if not isinstance(schedule, (ScheduleFound, ASPActiveNow)):
             return {}
-        return {
+        attrs: dict[str, str | float | int | None] = {
             "from_street": schedule.from_street,
             "to_street": schedule.to_street,
             "side_of_street": schedule.side_of_street,
@@ -494,6 +519,11 @@ class ASPResolvedStreetSensor(_ASPDiagnosticSensor):
             "street_width_ft": self._coordinator.data.street_width_ft,
             "segment_id": self._coordinator.data.segment_id,
         }
+        # Phase 36 SENSOR-01: display-friendly cardinal label. Omitted when
+        # side_of_street is not one of N/S/E/W (per locked SPEC edge case).
+        if (side_label := _SIDE_LABELS.get(schedule.side_of_street)) is not None:
+            attrs["side_label"] = side_label
+        return attrs
 
 
 class ASPResolutionStatusSensor(_ASPDiagnosticSensor):

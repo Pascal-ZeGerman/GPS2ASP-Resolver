@@ -12,7 +12,7 @@ Public API:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .models import ASPDay, CleaningWindow, WeeklySchedule
@@ -42,6 +42,15 @@ def find_active_window(
 ) -> CleaningWindow | None:
     """Check if the current time falls inside an active ASP window.
 
+    Two-layer suspension contract (BUG-T-003 / RESEARCH.md Open Question 2):
+    this function intentionally does NOT consult ``suspended_dates``.
+    Suspension annotation is applied as a post-processing merge by
+    :func:`gps2asp.suspension.merge.apply_suspension`, which flips
+    ``suspended=True`` and sets ``resolution_reason`` on the resulting
+    schedule. Keeping the suspension authority in the merge layer preserves
+    separation of concerns and lets the same window object be reused across
+    holiday / non-holiday contexts.
+
     Args:
         schedule: The weekly ASP schedule to check against.
         now: Current time (defaults to now in NYC timezone).
@@ -56,11 +65,9 @@ def find_active_window(
     else:
         now = _ensure_aware(now)
 
-    today_weekday = now.weekday()
-    try:
-        today_day = ASPDay(today_weekday)
-    except ValueError:
-        return None
+    # BUG-T-011: datetime.weekday() always returns 0-6 (Mon-Sun) and ASPDay
+    # spans 0-6 — ASPDay(weekday) cannot raise ValueError under any input.
+    today_day = ASPDay(now.weekday())
 
     current_time = now.time()
 
@@ -84,6 +91,7 @@ def find_active_window(
 def find_next_window(
     schedule: WeeklySchedule,
     now: datetime | None = None,
+    suspended_dates: frozenset[date] | None = None,
 ) -> CleaningWindow | None:
     """Find the next upcoming ASP cleaning window.
 
@@ -94,6 +102,8 @@ def find_next_window(
         schedule: The weekly ASP schedule to search.
         now: Current time (defaults to now in NYC timezone).
             If naive, NYC timezone is attached.
+        suspended_dates: Set of calendar dates on which ASP is suspended
+            (holidays). Candidate dates in this set are skipped.
 
     Returns:
         CleaningWindow for the next upcoming window, or None if no
@@ -104,16 +114,29 @@ def find_next_window(
     else:
         now = _ensure_aware(now)
 
+    # BUG-T-002: track whether the schedule had any candidate windows so we
+    # can emit a cause-specific warning when no match is found.
+    had_any_windows = False
+    had_any_unsuspended_candidate = False
+
     for day_offset in range(8):
         candidate_date = now.date() + timedelta(days=day_offset)
-        weekday = candidate_date.weekday()
+        is_suspended = bool(suspended_dates and candidate_date in suspended_dates)
 
-        try:
-            asp_day = ASPDay(weekday)
-        except ValueError:
+        # BUG-T-011: datetime.weekday() always returns 0-6 — ASPDay never
+        # raises ValueError. The previous try/except was unreachable.
+        asp_day = ASPDay(candidate_date.weekday())
+
+        day_windows = schedule.windows_for_day(asp_day)
+        if day_windows:
+            had_any_windows = True
+            if not is_suspended:
+                had_any_unsuspended_candidate = True
+
+        if is_suspended:
             continue
 
-        for window in schedule.windows_for_day(asp_day):
+        for window in day_windows:
             window_start = datetime.combine(
                 candidate_date, window.start_time, tzinfo=NYC_TZ
             )
@@ -137,5 +160,17 @@ def find_next_window(
                     source_signs=[window.source_sign],
                 )
 
-    logger.warning("No next window found within 8-calendar-day lookahead")
+    # BUG-T-002: emit a cause-specific warning so operators can distinguish
+    # an empty schedule from one whose every candidate date is suspended.
+    if not had_any_windows:
+        logger.warning(
+            "find_next_window: no windows in schedule; cannot find next move"
+        )
+    elif not had_any_unsuspended_candidate:
+        logger.warning(
+            "find_next_window: all candidate windows in 8-day lookahead "
+            "fell on suspended dates"
+        )
+    else:
+        logger.warning("No next window found within 8-calendar-day lookahead")
     return None

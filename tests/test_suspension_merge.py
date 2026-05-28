@@ -183,3 +183,60 @@ def test_apply_suspension_all_unparseable_passthrough() -> None:
     result = apply_suspension(schedule, info)
     assert isinstance(result, AllUnparseable)
     assert result is schedule
+
+
+# ---------------------------------------------------------------------------
+# Phase 35.1 BUG-T-006: apply_suspension logs ERROR on unknown source
+#
+# Pre-fix, apply_suspension defaulted unknown SuspensionInfo.source values
+# to "suspended_holiday" with only a DEBUG log. A future-introduced
+# "weather" or "construction" source would silently mis-classify as a
+# holiday. The fix elevates the log level to ERROR so the unknown-source
+# event is surfaced via HA diagnostics; the default-to-holiday behaviour
+# is intentionally preserved for backward compatibility per RESEARCH.md.
+# ---------------------------------------------------------------------------
+
+
+import logging  # noqa: E402
+
+
+def test_apply_suspension_unknown_source_logs_error(
+    schedule_found: ScheduleFound,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unknown source value logs ERROR; default-to-holiday classification preserved."""
+    info = SuspensionInfo(
+        is_suspended=True,
+        reason="Hypothetical weather closure",
+        source="future_unknown_source",  # type: ignore[arg-type]
+    )
+    with caplog.at_level(logging.ERROR, logger="gps2asp.suspension.merge"):
+        result = apply_suspension(schedule_found, info)
+
+    # Behaviour: still annotated, uses "suspended_unknown" so sensor label signals the issue.
+    assert isinstance(result, ScheduleFound)
+    assert result.suspended is True
+    assert result.resolution_reason == "suspended_unknown"
+
+    error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(error_records) == 1, (
+        f"Expected one ERROR log, got: {[r.getMessage() for r in caplog.records]}"
+    )
+    msg = error_records[0].getMessage()
+    assert "unknown source" in msg.lower(), msg
+    assert "future_unknown_source" in msg, msg
+
+
+def test_apply_suspension_known_holiday_source_does_not_error(
+    schedule_found: ScheduleFound,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Known source 'holiday' must NOT emit an ERROR log (regression guard)."""
+    info = SuspensionInfo(is_suspended=True, reason="MLK", source="holiday")
+    with caplog.at_level(logging.ERROR, logger="gps2asp.suspension.merge"):
+        apply_suspension(schedule_found, info)
+    error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert error_records == [], (
+        f"Expected zero ERROR logs for known source, got: "
+        f"{[r.getMessage() for r in error_records]}"
+    )

@@ -49,6 +49,13 @@ def determine_side(
 
     Returns:
         Compass direction side: "N", "S", "E", or "W".
+
+    Raises:
+        ValueError: If ``segment`` is a zero-length LineString (degenerate
+            geometry). Pre-fix code silently returned "S" because the cross
+            product collapsed to zero (BUG-R-004). Callers must filter
+            zero-length segments upstream or treat the raise as a hard
+            data-integrity signal.
     """
     _ = nominaldir  # not currently used; geometry cross-product is sole determinant
     point = Point(point_x, point_y)
@@ -61,6 +68,12 @@ def determine_side(
     # This handles curved segments correctly -- we use the local tangent direction,
     # not the endpoint-to-endpoint direction.
     length = segment.length
+    if length == 0.0:
+        raise ValueError(
+            f"determine_side received zero-length segment at point "
+            f"({point_x}, {point_y}); cannot determine side without "
+            f"direction vector (BUG-R-004)"
+        )
     eps = min(1.0, length * 0.01)  # 1% of length or 1 foot, whichever is smaller
     p1 = segment.interpolate(max(0.0, dist_along - eps))
     p2 = segment.interpolate(min(length, dist_along + eps))

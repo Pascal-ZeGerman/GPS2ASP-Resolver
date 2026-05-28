@@ -225,7 +225,16 @@ def parse_sign(sign_description: str) -> list[TimeWindow] | None:
         return None
 
     # Step 5: Validate same-day window (end > start).
-    if end_time <= start_time:
+    # BUG-T-004 / RESEARCH.md Pitfall 3: admit cross-midnight windows
+    # (e.g. "11PM-MIDNIGHT", "10:30PM-MIDNIGHT") by truncating the end at
+    # 23:59:59 on the same day. This keeps the TimeWindow within one calendar
+    # day so downstream callers (merge, summary, find_active_window,
+    # find_next_window) stay unchanged. MIDNIGHT-MIDNIGHT (zero-length) and
+    # any other non-midnight reversal (e.g. "9AM-8AM") are still rejected.
+    end_is_midnight = end_time == time(0, 0)
+    if end_is_midnight and start_time > time(0, 0):
+        end_time = time(23, 59, 59)
+    elif end_time <= start_time:
         logger.warning(
             "Invalid time window (end <= start) in sign: %r (start=%s, end=%s)",
             original,
