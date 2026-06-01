@@ -2013,3 +2013,102 @@ class TestNyc311Bridge:
         mock_holiday.is_suspended.assert_called_once()
         # And 311 API IS called (holiday returned not_suspended)
         mock_fetch.assert_awaited_once()
+
+    # ------------------------------------------------------------------
+    # 311 poll failure retention tests (issue: active suspension cleared on error)
+    # ------------------------------------------------------------------
+
+    async def test_update_suspension_poll_failure_retains_active_suspension(
+        self,
+    ) -> None:
+        """311 network error must NOT clear an already-active 311-sourced suspension."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        from datetime import date
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        active_suspension = SuspensionInfo(
+            is_suspended=True, reason="Emergency snow", source="ha_nyc311"
+        )
+
+        mock_fetch = AsyncMock(side_effect=Exception("Network error"))
+        mock_client = MagicMock()
+        mock_client.fetch_status = mock_fetch
+
+        mock_holiday = MagicMock()
+        mock_holiday.is_suspended = MagicMock(
+            return_value=SuspensionInfo(is_suspended=False, reason=None, source="none")
+        )
+
+        coord_data = ASPParkingData()
+        coord_data.suspension_state = active_suspension
+
+        coord = SimpleNamespace(
+            hass=SimpleNamespace(
+                states=SimpleNamespace(get=MagicMock(return_value=None))
+            ),
+            data=coord_data,
+            _nyc311_bridge_entity=None,
+            _nyc311_client=mock_client,
+            _holiday_calendar=mock_holiday,
+            _async_notify_entities=MagicMock(),
+            _get_now_nyc=MagicMock(
+                return_value=MagicMock(date=MagicMock(return_value=date.today()))
+            ),
+            _bridge_state_to_info=staticmethod(
+                ASPParkingCoordinator._bridge_state_to_info
+            ),
+            _async_apply_suspension_state=lambda new: setattr(
+                coord_data, "suspension_state", new
+            ),
+        )
+
+        await ASPParkingCoordinator._async_update_suspension(coord)
+
+        assert coord.data.suspension_state.is_suspended is True
+        assert coord.data.suspension_state.source == "ha_nyc311"
+        assert coord.data.suspension_state.reason == "Emergency snow"
+
+    async def test_update_suspension_poll_failure_fails_open_when_no_prior_suspension(
+        self,
+    ) -> None:
+        """311 network error with no prior suspension still fails open to not-suspended."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        from datetime import date
+        from custom_components.asp_parking.coordinator import ASPParkingCoordinator
+
+        mock_fetch = AsyncMock(side_effect=Exception("Network error"))
+        mock_client = MagicMock()
+        mock_client.fetch_status = mock_fetch
+
+        mock_holiday = MagicMock()
+        mock_holiday.is_suspended = MagicMock(
+            return_value=SuspensionInfo(is_suspended=False, reason=None, source="none")
+        )
+
+        coord_data = ASPParkingData()  # default: not suspended
+
+        coord = SimpleNamespace(
+            hass=SimpleNamespace(
+                states=SimpleNamespace(get=MagicMock(return_value=None))
+            ),
+            data=coord_data,
+            _nyc311_bridge_entity=None,
+            _nyc311_client=mock_client,
+            _holiday_calendar=mock_holiday,
+            _async_notify_entities=MagicMock(),
+            _get_now_nyc=MagicMock(
+                return_value=MagicMock(date=MagicMock(return_value=date.today()))
+            ),
+            _bridge_state_to_info=staticmethod(
+                ASPParkingCoordinator._bridge_state_to_info
+            ),
+            _async_apply_suspension_state=lambda new: setattr(
+                coord_data, "suspension_state", new
+            ),
+        )
+
+        await ASPParkingCoordinator._async_update_suspension(coord)
+
+        assert coord.data.suspension_state.is_suspended is False

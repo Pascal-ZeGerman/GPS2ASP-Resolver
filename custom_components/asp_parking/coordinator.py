@@ -2146,6 +2146,13 @@ class ASPParkingCoordinator:
         info = self._holiday_calendar.is_suspended(today)
 
         if not info.is_suspended and self._nyc311_client is not None:
+            # On failure retain the existing suspension rather than clearing it —
+            # a transient network error must not overwrite an active 311 suspension.
+            fallback_info = (
+                self.data.suspension_state
+                if self.data.suspension_state.is_suspended
+                else SuspensionInfo(is_suspended=False, reason=None, source="none")
+            )
             try:
                 info = await self._nyc311_client.fetch_status()
             except NYC311AuthError as auth_err:
@@ -2154,12 +2161,12 @@ class ASPParkingCoordinator:
                     auth_err,
                     exc_info=True,
                 )
-                info = SuspensionInfo(is_suspended=False, reason=None, source="none")
+                info = fallback_info
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "311 suspension poll failed, failing open", exc_info=True
                 )
-                info = SuspensionInfo(is_suspended=False, reason=None, source="none")
+                info = fallback_info
 
         self._async_apply_suspension_state(info)
         self._async_notify_entities()

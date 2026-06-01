@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -207,6 +208,24 @@ async def test_load_parse_error_uses_fallback(
 
     # A warning was logged mentioning the parse failure
     assert any("bad ics" in r.message for r in caplog.records)
+
+
+async def test_load_cancelled_during_fetch_sets_loaded_and_reraises() -> None:
+    """CancelledError from _fetch_ics must set _loaded=True with fallback, then re-raise.
+
+    Without this, the integration starts in a permanently degraded state where
+    every is_suspended() call silently returns False.
+    """
+    with patch(
+        "gps2asp.suspension._fetch_ics", side_effect=asyncio.CancelledError()
+    ):
+        cal = HolidayCalendar()
+        with pytest.raises(asyncio.CancelledError):
+            await cal.load(year=2026)
+
+    assert cal._loaded is True
+    assert len(cal._holidays) == 39  # FALLBACK_2026 populated
+    assert cal.is_suspended(date(2026, 1, 1)).is_suspended is True
 
 
 # 2. load() called twice replaces holidays (idempotent replacement, not accumulation)

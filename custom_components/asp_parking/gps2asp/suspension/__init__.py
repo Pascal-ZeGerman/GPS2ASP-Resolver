@@ -266,7 +266,15 @@ class HolidayCalendar:
         if year is None:
             year = datetime.now(ZoneInfo("America/New_York")).year
 
-        ics_bytes = await _fetch_ics(year)
+        try:
+            ics_bytes = await _fetch_ics(year)
+        except asyncio.CancelledError:
+            # Task cancelled during ICS fetch — load fallback so _loaded is always
+            # True and is_suspended() never silently returns a false negative.
+            self._holidays = _get_fallback(year)
+            self._loaded = True
+            raise
+
         if ics_bytes is not None:
             try:
                 self._holidays = _parse_ics(ics_bytes)
