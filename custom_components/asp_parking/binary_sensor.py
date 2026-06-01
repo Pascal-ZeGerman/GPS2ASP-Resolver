@@ -36,6 +36,7 @@ async def async_setup_entry(
         [
             ASPActiveNowBinarySensor(coordinator),
             ASPIndexRebuildingBinarySensor(coordinator),
+            ASPGpsPipelineHealthBinarySensor(coordinator),
         ]
     )
 
@@ -151,3 +152,69 @@ class ASPIndexRebuildingBinarySensor(BinarySensorEntity):
     def is_on(self) -> bool:
         """Return True while a spatial-index rebuild is in progress."""
         return self._coordinator._is_rebuilding
+
+
+class ASPGpsPipelineHealthBinarySensor(BinarySensorEntity):
+    """Diagnostic binary sensor: ON when GPS is recent and no pipeline error has occurred.
+
+    ON when ``last_gps_update`` is within ``stale_timeout`` hours AND
+    ``coordinator._last_pipeline_error`` is False.  Reflects the GPS watchdog
+    and pipeline error state LIVE.
+
+    OFF when:
+    - ``last_gps_update`` is None (no GPS fix yet)
+    - GPS age >= stale_timeout * 3600 seconds (GPS has gone silent)
+    - ``_last_pipeline_error`` is True (last pipeline run raised an exception)
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "gps_pipeline_healthy"
+    _attr_icon = "mdi:signal"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: ASPParkingCoordinator) -> None:
+        """Initialize the binary sensor.
+
+        Args:
+            coordinator: The ASP Parking coordinator instance.
+        """
+        self._coordinator = coordinator
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_gps_pipeline_healthy"
+
+    async def async_added_to_hass(self) -> None:
+        """Register update callback when entity is added to HA."""
+        self._coordinator.async_add_update_callback(self.async_write_ha_state)
+        self.async_on_remove(
+            lambda: self._coordinator.async_remove_update_callback(
+                self.async_write_ha_state
+            )
+        )
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info for grouping entities under the same device."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._coordinator.entry.entry_id)},
+            name="ASP Parking Monitor",
+            manufacturer="GPS2ASP",
+            model="ASP Schedule Resolver",
+            sw_version=VERSION,
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """Return True when GPS is recent and the last pipeline run succeeded."""
+        from homeassistant.util import dt as dt_util
+
+        last = self._coordinator.data.last_gps_update
+        if last is None:
+            return False
+        age = (dt_util.utcnow() - last).total_seconds()
+        if age >= self._coordinator.stale_timeout * 3600:
+            return False
+        return not self._coordinator._last_pipeline_error
+
+    @property
+    def extra_state_attributes(self) -> dict[str, bool]:
+        """Return diagnostic attributes including last pipeline error flag."""
+        return {"last_pipeline_error": self._coordinator._last_pipeline_error}

@@ -177,6 +177,9 @@
       },
       "index_rebuilding": {
         "name": "Index Rebuilding"
+      },
+      "gps_pipeline_healthy": {
+        "name": "GPS Pipeline Healthy"
       }
     },
     "switch": {
