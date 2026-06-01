@@ -283,6 +283,11 @@ class ASPParkingCoordinator:
         # Dedicated attribute — NOT appended to self._listeners.
         # async_stop() explicitly calls self._boundary_timer_cancel().
         self._boundary_timer_unsub: CALLBACK_TYPE | None = None
+        # GPS stale watchdog: fires persistent notification when GPS goes silent
+        # for longer than stale_timeout hours.  NOT appended to self._listeners;
+        # explicitly cancelled by async_stop() via _gps_watchdog_cancel().
+        self._gps_stale_unsub: CALLBACK_TYPE | None = None
+        self._last_pipeline_error: bool = False
 
         # Phase 33: index rebuild lifecycle (IDX-02..IDX-04).
         # Lock is constructed inside __init__ (NOT at class scope) so it binds
@@ -625,6 +630,7 @@ class ASPParkingCoordinator:
         self._entity_update_callbacks.clear()
         self._debouncer.async_cancel()
         self._boundary_timer_cancel()  # Phase 39 (D-03): explicit cancel, not via _listeners
+        self._gps_watchdog_cancel()  # GPS stale watchdog (like _boundary_timer_cancel)
         logger.info("ASP Parking coordinator stopped")
 
     # ------------------------------------------------------------------
@@ -1521,6 +1527,7 @@ class ASPParkingCoordinator:
         new_lon = new_state.attributes[ATTR_LONGITUDE]
 
         self.data.last_gps_update = dt_util.utcnow()
+        self._gps_watchdog_rearm()  # Cancel prior watchdog, dismiss stale notif, rearm
 
         # Check movement threshold against last resolved position
         if self.data.last_lat is not None and self.data.last_lon is not None:
@@ -1574,6 +1581,58 @@ class ASPParkingCoordinator:
             cancel = self._boundary_timer_unsub
             self._boundary_timer_unsub = None
             cancel()
+
+    # ------------------------------------------------------------------
+    # GPS stale watchdog (mirrors _boundary_timer_cancel pattern)
+    # ------------------------------------------------------------------
+
+    @callback
+    def _gps_watchdog_cancel(self) -> None:
+        """Cancel and clear the GPS stale watchdog handle (D-09 clear-first pattern).
+
+        Safe to call when ``_gps_stale_unsub`` is already None (no-op).
+        NOT appended to self._listeners; explicit cancel in async_stop().
+        """
+        if self._gps_stale_unsub is not None:
+            cancel = self._gps_stale_unsub
+            self._gps_stale_unsub = None
+            cancel()
+
+    @callback
+    def _gps_watchdog_rearm(self) -> None:
+        """Cancel prior GPS stale watchdog, dismiss stale notification, and arm a new timer.
+
+        Called on every GPS state-change event so the timer always reflects the
+        time of the last actual GPS update.  When the timer fires it posts the
+        ``asp_parking_gps_stale`` persistent notification and triggers an entity
+        state refresh via ``_async_notify_entities()``.
+        """
+        self._gps_watchdog_cancel()
+        from homeassistant.components.persistent_notification import (
+            async_dismiss as pn_dismiss,
+        )
+
+        pn_dismiss(self.hass, "asp_parking_gps_stale")
+
+        delay = float(self.stale_timeout * 3600)
+
+        @callback
+        def _on_gps_stale(_now: datetime) -> None:
+            from homeassistant.components.persistent_notification import (
+                async_create as pn_create,
+            )
+
+            pn_create(
+                self.hass,
+                f"No GPS update has been received for {self.stale_timeout} hour(s). "
+                "The GPS pipeline health sensor is now OFF. Check that your device "
+                "tracker is reporting location updates.",
+                title="ASP Parking: GPS Signal Lost",
+                notification_id="asp_parking_gps_stale",
+            )
+            self._async_notify_entities()
+
+        self._gps_stale_unsub = async_call_later(self.hass, delay, _on_gps_stale)
 
     @callback
     def _async_schedule_boundary_timer(self, schedule: ScheduleResult) -> None:
@@ -1773,6 +1832,7 @@ class ASPParkingCoordinator:
             # Clear error state on success
             self.data.last_error = None
             self.data.last_error_time = None
+            self._last_pipeline_error = False
 
             # --- Notification (Phase 24, D-12/D-14/D-15/D-16) ---
             await self._async_maybe_send_notification(schedule)
@@ -1843,6 +1903,7 @@ class ASPParkingCoordinator:
             # are intentionally loud -- do NOT silently retain stale state.
             self.data.last_error = str(err)
             self.data.last_error_time = dt_util.utcnow()
+            self._last_pipeline_error = True
             logger.error(
                 "Pipeline data-integrity error at (%.4f, %.4f): %s",
                 lat,
@@ -1867,6 +1928,7 @@ class ASPParkingCoordinator:
             # Fall back to last known state -- do NOT clear schedule or special_state
             self.data.last_error = str(err)
             self.data.last_error_time = dt_util.utcnow()
+            self._last_pipeline_error = True
             logger.warning(
                 "Pipeline error at (%.4f, %.4f): %s", lat, lon, err, exc_info=True
             )
