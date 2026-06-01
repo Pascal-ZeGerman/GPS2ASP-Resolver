@@ -62,7 +62,24 @@ logger = logging.getLogger(__name__)
 
 # Module constants — byte-equivalent to the originals in __init__.py lines 24-25.
 INDEX_DIR = Path(__file__).parent / "gps2asp" / "data" / "index"
-INDEX_FILES = ("segments.idx", "segments.dat", "segments.json", "graph.json")
+# Core spatial index files (always required, format is fixed).
+# The graph file is intentionally absent here: the from-source rebuild writes
+# graph.json.zst while the GitHub-release zip ships graph.json (uncompressed).
+# Use _index_has_graph_file() to check for either format.
+INDEX_FILES = ("segments.idx", "segments.dat", "segments.json")
+
+
+def _index_has_graph_file(index_dir: Path) -> bool:
+    """Return True if either graph.json.zst or graph.json exists in index_dir.
+
+    The from-source rebuild (_sync_build_from_source) writes graph.json.zst.
+    The GitHub release zip ships graph.json (uncompressed).  The graph.py
+    loader handles both formats natively (zst-first with json fallback).
+    This helper lets _async_ensure_index accept either without hardcoding one
+    extension, preventing a ConfigEntryNotReady boot-loop after any rebuild.
+    """
+    return (index_dir / "graph.json.zst").exists() or (index_dir / "graph.json").exists()
+
 
 # Module-level pyproj Transformer (thread-safe, created once per process — see
 # src/gps2asp/resolver/converter.py for the pattern). EPSG:4326 (WGS84) →

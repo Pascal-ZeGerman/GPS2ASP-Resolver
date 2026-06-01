@@ -33,6 +33,7 @@ import pytest
 from custom_components.asp_parking.index_io import (  # noqa: E402
     INDEX_DIR,
     INDEX_FILES,
+    _index_has_graph_file,
     _sync_atomic_swap,
     _sync_cleanup_stale,
     _sync_download_and_extract,
@@ -55,13 +56,29 @@ def test_index_dir_constant_points_to_vendored_data():
 
 
 def test_index_files_tuple():
-    """INDEX_FILES must enumerate the four artifacts the spatial index requires."""
+    """INDEX_FILES must enumerate the three non-graph artifacts the spatial index requires."""
     assert INDEX_FILES == (
         "segments.idx",
         "segments.dat",
         "segments.json",
-        "graph.json",
     )
+
+
+def test_index_has_graph_file_zst(tmp_path):
+    """_index_has_graph_file returns True when graph.json.zst is present."""
+    (tmp_path / "graph.json.zst").write_bytes(b"fake")
+    assert _index_has_graph_file(tmp_path) is True
+
+
+def test_index_has_graph_file_json(tmp_path):
+    """_index_has_graph_file returns True when graph.json is present."""
+    (tmp_path / "graph.json").write_text("{}")
+    assert _index_has_graph_file(tmp_path) is True
+
+
+def test_index_has_graph_file_absent(tmp_path):
+    """_index_has_graph_file returns False when neither graph file is present."""
+    assert _index_has_graph_file(tmp_path) is False
 
 
 # ---------------------------------------------------------------------------

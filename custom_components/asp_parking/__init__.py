@@ -27,6 +27,7 @@ from .coordinator import ASPParkingCoordinator
 from .index_io import (
     INDEX_DIR,
     INDEX_FILES,
+    _index_has_graph_file,
     _sync_atomic_swap,
     _sync_cleanup_stale,
     _sync_download_and_extract,
@@ -56,7 +57,7 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
     # Dismiss any stale error notification from a previous failed download attempt
     pn_dismiss(hass, "asp_parking_index_error")
 
-    if all((INDEX_DIR / f).exists() for f in INDEX_FILES):
+    if all((INDEX_DIR / f).exists() for f in INDEX_FILES) and _index_has_graph_file(INDEX_DIR):
         return
 
     task = hass.data.get(_DOWNLOAD_TASK_KEY)
