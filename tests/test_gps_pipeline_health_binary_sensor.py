@@ -101,32 +101,48 @@ def test_is_on_false_when_no_gps():
 
 def test_is_on_false_when_stale():
     """is_on must be False when GPS age >= stale_timeout * 3600 seconds."""
-    stale_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=25)
-    coord = _make_coordinator(last_gps_update=stale_ts, stale_timeout=24, _last_pipeline_error=False)
+    stale_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+        hours=25
+    )
+    coord = _make_coordinator(
+        last_gps_update=stale_ts, stale_timeout=24, _last_pipeline_error=False
+    )
     bs = ASPGpsPipelineHealthBinarySensor(coord)
     assert bs.is_on is False
 
 
 def test_is_on_true_when_recent_no_error():
     """is_on must be True when GPS is recent and _last_pipeline_error is False."""
-    recent_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)
-    coord = _make_coordinator(last_gps_update=recent_ts, stale_timeout=24, _last_pipeline_error=False)
+    recent_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+        minutes=5
+    )
+    coord = _make_coordinator(
+        last_gps_update=recent_ts, stale_timeout=24, _last_pipeline_error=False
+    )
     bs = ASPGpsPipelineHealthBinarySensor(coord)
     assert bs.is_on is True
 
 
 def test_is_on_false_when_pipeline_error():
     """is_on must be False when _last_pipeline_error is True, even with recent GPS."""
-    recent_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)
-    coord = _make_coordinator(last_gps_update=recent_ts, stale_timeout=24, _last_pipeline_error=True)
+    recent_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+        minutes=5
+    )
+    coord = _make_coordinator(
+        last_gps_update=recent_ts, stale_timeout=24, _last_pipeline_error=True
+    )
     bs = ASPGpsPipelineHealthBinarySensor(coord)
     assert bs.is_on is False
 
 
 def test_is_on_flips_live():
     """is_on is a LIVE property — mutating _last_pipeline_error on the stub is observable."""
-    recent_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)
-    coord = _make_coordinator(last_gps_update=recent_ts, stale_timeout=24, _last_pipeline_error=False)
+    recent_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+        minutes=5
+    )
+    coord = _make_coordinator(
+        last_gps_update=recent_ts, stale_timeout=24, _last_pipeline_error=False
+    )
     bs = ASPGpsPipelineHealthBinarySensor(coord)
     assert bs.is_on is True
 
@@ -144,7 +160,9 @@ def test_is_on_flips_live():
 
 def test_extra_state_attributes_exposes_pipeline_error():
     """extra_state_attributes must include 'last_pipeline_error' bool key."""
-    recent_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)
+    recent_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+        minutes=5
+    )
 
     coord_ok = _make_coordinator(last_gps_update=recent_ts, _last_pipeline_error=False)
     bs_ok = ASPGpsPipelineHealthBinarySensor(coord_ok)

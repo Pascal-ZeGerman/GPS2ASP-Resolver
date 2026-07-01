@@ -225,9 +225,7 @@ async def test_load_cancelled_during_fetch_sets_loaded_and_reraises() -> None:
     Without this, the integration starts in a permanently degraded state where
     every is_suspended() call silently returns False.
     """
-    with patch(
-        "gps2asp.suspension._fetch_ics", side_effect=asyncio.CancelledError()
-    ):
+    with patch("gps2asp.suspension._fetch_ics", side_effect=asyncio.CancelledError()):
         cal = HolidayCalendar()
         with pytest.raises(asyncio.CancelledError):
             await cal.load(year=2026)

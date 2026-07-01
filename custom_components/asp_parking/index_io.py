@@ -78,8 +78,9 @@ def _index_has_graph_file(index_dir: Path) -> bool:
     This helper lets _async_ensure_index accept either without hardcoding one
     extension, preventing a ConfigEntryNotReady boot-loop after any rebuild.
     """
-    return (index_dir / "graph.json.zst").exists() or (index_dir / "graph.json").exists()
-
+    return (index_dir / "graph.json.zst").exists() or (
+        index_dir / "graph.json"
+    ).exists()
 
 
 class IndexIntegrityError(Exception):
@@ -90,6 +91,7 @@ class IndexIntegrityError(Exception):
     corruption). Callers re-download the index when this is raised; see
     ``custom_components/asp_parking/__init__.py::_async_ensure_index``.
     """
+
 
 # Module-level pyproj Transformer (thread-safe, created once per process — see
 # src/gps2asp/resolver/converter.py for the pattern). EPSG:4326 (WGS84) →

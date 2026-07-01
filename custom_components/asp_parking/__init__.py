@@ -92,7 +92,9 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
             # if the rmtree below has not yet run.
             await hass.async_add_executor_job(_sync_cleanup_stale, INDEX_DIR)
             await hass.async_add_executor_job(
-                shutil.rmtree, INDEX_DIR, True  # ignore_errors=True
+                shutil.rmtree,
+                INDEX_DIR,
+                True,  # ignore_errors=True
             )
             # Intentional fall-through to the download path below.
         else:
