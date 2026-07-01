@@ -1238,8 +1238,10 @@ class TestSuspensionStartup:
         """HolidayCalendar.is_suspended() returns is_suspended=True for a known holiday.
 
         Uses the hardcoded 2026 fallback calendar (no network required).
-        April 8 2026 is 'Passover (7th Day)' per FALLBACK_2026.
-        This validates the logic that the coordinator uses to set suspension_state.
+        July 3 2026 is 'Independence Day' per FALLBACK_2026 (July 4 is a Saturday,
+        so the observed suspension is Friday July 3 — the friday-move-not-suspended
+        regression). This validates the logic the coordinator uses to set
+        suspension_state.
         """
         from datetime import date as _date
 
@@ -1254,13 +1256,13 @@ class TestSuspensionStartup:
         cal._holidays = dict(FALLBACK_2026)
         cal._loaded = True
 
-        # April 8 2026 is a known holiday in FALLBACK_2026
-        holiday_date = _date(2026, 4, 8)
+        # July 3 2026 is a known holiday (observed Independence Day) in FALLBACK_2026
+        holiday_date = _date(2026, 7, 3)
         info = cal.is_suspended(holiday_date)
 
         assert isinstance(info, _SuspensionInfo)
         assert info.is_suspended is True
-        assert info.reason == "Passover (7th Day)"
+        assert info.reason == "Independence Day"
         assert info.source == "holiday"
 
     def test_holiday_calendar_returns_not_suspended_for_normal_day(self) -> None:
@@ -1280,8 +1282,8 @@ class TestSuspensionStartup:
         cal._holidays = dict(FALLBACK_2026)
         cal._loaded = True
 
-        # A date with no holiday in 2026 fallback calendar
-        normal_date = _date(2026, 4, 9)  # day after Passover (7th Day)
+        # A date with no holiday in the 2026 fallback calendar
+        normal_date = _date(2026, 7, 10)  # ordinary Friday, no suspension
         info = cal.is_suspended(normal_date)
 
         assert info.is_suspended is False
