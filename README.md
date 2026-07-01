@@ -12,6 +12,7 @@ Supports all five NYC boroughs. Data is fetched live from NYC Open Data.
 
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Requirements](#requirements)
 - [What You Get](#what-you-get)
 - [Dashboard](#dashboard)
 - [CalDAV Calendar Sync](#caldav-calendar-sync)
