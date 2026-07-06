@@ -461,6 +461,12 @@ class ASPParkingCoordinator:
         )
         self._listeners.append(unsub_state)
 
+        # Arm the GPS stale watchdog immediately so a device_tracker that
+        # never fires a state-change event after this restart (already
+        # unavailable / broken source) still gets the "GPS Signal Lost"
+        # notification instead of the watchdog silently never arming.
+        self._gps_watchdog_rearm()
+
         # Periodic heartbeat: re-fetch ICS, re-check suspension, trigger pipeline
         unsub_interval = async_track_time_interval(
             self.hass,
@@ -2153,18 +2159,24 @@ class ASPParkingCoordinator:
                 if self.data.suspension_state.is_suspended
                 else SuspensionInfo(is_suspended=False, reason=None, source="none")
             )
+            fallback_mode = (
+                "failing closed, retaining active suspension"
+                if fallback_info.is_suspended
+                else "failing open"
+            )
             try:
                 info = await self._nyc311_client.fetch_status()
             except NYC311AuthError as auth_err:
                 logger.warning(
-                    "311 suspension poll: auth error (%s) — failing open, check API key",
+                    "311 suspension poll: auth error (%s) — %s, check API key",
                     auth_err,
+                    fallback_mode,
                     exc_info=True,
                 )
                 info = fallback_info
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "311 suspension poll failed, failing open", exc_info=True
+                    "311 suspension poll failed, %s", fallback_mode, exc_info=True
                 )
                 info = fallback_info
 

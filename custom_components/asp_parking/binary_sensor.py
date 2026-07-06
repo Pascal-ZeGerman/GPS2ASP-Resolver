@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .gps2asp.schedule.models import ASPActiveNow
 from .gps2asp.suspension import apply_suspension
@@ -204,8 +205,6 @@ class ASPGpsPipelineHealthBinarySensor(BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         """Return True when GPS is recent and the last pipeline run succeeded."""
-        from homeassistant.util import dt as dt_util
-
         last = self._coordinator.data.last_gps_update
         if last is None:
             return False
