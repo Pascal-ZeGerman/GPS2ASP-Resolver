@@ -1199,7 +1199,12 @@ class ASPParkingCoordinator:
                 name="asp_parking_caldav_delete_on_suspension",
             )
 
-    async def _async_caldav_write_or_update(self, schedule: ScheduleResult) -> None:
+    async def _async_caldav_write_or_update(
+        self,
+        schedule: ScheduleResult,
+        lat: float | None = None,
+        lon: float | None = None,
+    ) -> None:
         """Write or update the CalDAV VEVENT for the upcoming cleaning window.
 
         Wraps ``caldav_sync.write_or_update_event`` with:
@@ -1228,6 +1233,8 @@ class ASPParkingCoordinator:
                     entry_id=self.entry.entry_id,
                     schedule=schedule,
                     stored_uid=self._caldav_uid,
+                    lat=lat,
+                    lon=lon,
                 )
                 # Success: persist UID via load-merge-save so future store keys are preserved.
                 # Store persistence is in its own try/except so a disk/HA-storage
@@ -1386,10 +1393,17 @@ class ASPParkingCoordinator:
         # so this is equivalent to isinstance(schedule, ScheduleFound) in practice.
         next_window = getattr(schedule, "next_window", None)
         if next_window is not None:
+            # Snapshot the car's last-known GPS fix at spawn time (not inside
+            # the task) so a self.data replacement before the background task
+            # runs cannot race the coordinates we serialise into the VEVENT.
+            _lat = self.data.last_lat
+            _lon = self.data.last_lon
             # Write/update the VEVENT for the upcoming cleaning window
             self._caldav_write_task = self.entry.async_create_background_task(
                 self.hass,
-                ASPParkingCoordinator._async_caldav_write_or_update(self, schedule),
+                ASPParkingCoordinator._async_caldav_write_or_update(
+                    self, schedule, _lat, _lon
+                ),
                 name="asp_parking_caldav_write",
             )
         else:

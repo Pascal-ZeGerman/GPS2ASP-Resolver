@@ -762,6 +762,8 @@ async def write_or_update_event(
     entry_id: str,
     schedule: Any,
     stored_uid: str | None,
+    lat: float | None = None,
+    lon: float | None = None,
 ) -> str:
     """Idempotent write of the upcoming cleaning-window VEVENT.
 
@@ -807,11 +809,21 @@ async def write_or_update_event(
                     exc_info=True,
                 )
 
+        if lat is not None and lon is not None:
+            location_label = render_location_label(schedule, lat, lon)
+            location_title = render_location_title(schedule)
+        else:
+            location_label = None
+            location_title = None
         ical_text = build_vevent_ical(
             uid=new_uid,
             window=window,
             title=render_title(config.title_template, schedule),
             description=render_description(schedule),
+            lat=lat,
+            lon=lon,
+            location_label=location_label,
+            location_title=location_title,
         )
         try:
             await cal.add_event(ical=ical_text)
