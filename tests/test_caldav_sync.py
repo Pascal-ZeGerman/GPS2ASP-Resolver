@@ -1792,3 +1792,154 @@ async def test_compat_async_dav_client_aenter_raises_runtime_error_when_dav_clie
             await client.__aenter__()
     finally:
         del caldav.DAVClient  # restore __getattr__ resolution
+
+
+# ---------------------------------------------------------------------------
+# Parked-car location emission (CALDAV-LOC-01)
+# ---------------------------------------------------------------------------
+
+
+def test_render_location_label_and_title_exact_format():
+    """render_location_label / render_location_title match the locked format.
+
+    Label: "STREET (SIDE side) — lat,lon" (em-dash U+2014, coords comma-joined
+    with no space). Title: "STREET (SIDE side)" (street label only).
+    """
+    cs = _require_caldav_sync()
+    schedule = _make_schedule_found(on_street="VANDERBILT AVENUE", side="N")
+
+    assert (
+        cs.render_location_label(schedule, 40.6782, -73.9442)
+        == "VANDERBILT AVENUE (N side) — 40.6782,-73.9442"
+    )
+    assert cs.render_location_title(schedule) == "VANDERBILT AVENUE (N side)"
+
+
+def test_build_vevent_ical_emits_location_trio_when_coords_present():
+    """With coords, the VEVENT carries GEO + LOCATION + X-APPLE-STRUCTURED-LOCATION.
+
+    Re-parses the serialized ical (robust to line-folding and comma-escaping)
+    and inspects the single VEVENT.
+    """
+    from icalendar import Calendar as _ICal
+
+    cs = _require_caldav_sync()
+    schedule = _make_schedule_found(on_street="VANDERBILT AVENUE", side="N")
+    window = schedule.next_window
+    label = cs.render_location_label(schedule, 40.6782, -73.9442)
+    title = cs.render_location_title(schedule)
+
+    ical_text = cs.build_vevent_ical(
+        uid="u",
+        window=window,
+        title="ASP",
+        description="desc",
+        lat=40.6782,
+        lon=-73.9442,
+        location_label=label,
+        location_title=title,
+    )
+
+    ev = next(iter(_ICal.from_ical(ical_text).walk("VEVENT")))
+
+    geo_ical = ev.get("geo").to_ical()
+    if isinstance(geo_ical, bytes):
+        geo_ical = geo_ical.decode()
+    assert geo_ical == "40.6782;-73.9442"
+    assert str(ev.get("location")) == label
+
+    xa = ev.get("X-APPLE-STRUCTURED-LOCATION")
+    assert str(xa) == "geo:40.6782,-73.9442"
+    assert str(xa.params["X-TITLE"]) == "VANDERBILT AVENUE (N side)"
+    assert str(xa.params["X-ADDRESS"]) == "VANDERBILT AVENUE (N side)"
+    assert "X-APPLE-RADIUS" in xa.params
+
+
+def test_build_vevent_ical_no_location_when_coords_absent():
+    """Graceful degradation: no coords → none of the three location properties."""
+    cs = _require_caldav_sync()
+    schedule = _make_schedule_found(on_street="VANDERBILT AVENUE", side="N")
+    window = schedule.next_window
+
+    ical_text = cs.build_vevent_ical(
+        uid="u",
+        window=window,
+        title="ASP",
+        description="desc",
+    )
+    unfolded = ical_text.replace("\r\n", "\n").replace("\n ", "")
+
+    assert "GEO:" not in unfolded
+    assert "LOCATION:" not in unfolded
+    assert "X-APPLE" not in unfolded
+
+
+async def test_write_or_update_event_threads_coords_into_ical():
+    """End-to-end: lat/lon passed to write_or_update_event reach the serialized ical.
+
+    Mirrors test_write_or_update_event_first_write_no_stored_uid's mocking; also
+    asserts that omitting coords yields an ical with none of the location props.
+    """
+    cs = _require_caldav_sync()
+
+    start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
+    schedule = _make_schedule_found(start=start)
+
+    config = SimpleNamespace(
+        url="https://example.com/dav/",
+        username="user",
+        password="pw",
+        calendar_url="https://example.com/dav/cal/",
+        title_template="ASP: {street}",
+        safety_window_minutes=15,
+    )
+
+    def _build_mock_client():
+        mock_cal = AsyncMock()
+        mock_cal.add_event = AsyncMock()
+        mock_principal = AsyncMock()
+        mock_principal.calendar = MagicMock(return_value=mock_cal)
+        mock_client = AsyncMock()
+        mock_client.get_principal = AsyncMock(return_value=mock_principal)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        return mock_client, mock_cal
+
+    # With coords: the serialized ical carries the location trio.
+    mock_client, mock_cal = _build_mock_client()
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=mock_client,
+    ):
+        await cs.write_or_update_event(
+            config=config,
+            entry_id="entry_abc",
+            schedule=schedule,
+            stored_uid=None,
+            lat=40.6782,
+            lon=-73.9442,
+        )
+    ical_with = mock_cal.add_event.call_args.kwargs["ical"]
+    unfolded_with = ical_with.replace("\r\n", "\n").replace("\n ", "")
+    assert "GEO:40.6782;-73.9442" in unfolded_with
+    assert "X-APPLE-STRUCTURED-LOCATION" in unfolded_with
+
+    # Without coords: none of the location properties are emitted.
+    mock_client2, mock_cal2 = _build_mock_client()
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=mock_client2,
+    ):
+        await cs.write_or_update_event(
+            config=config,
+            entry_id="entry_abc",
+            schedule=schedule,
+            stored_uid=None,
+            lat=None,
+            lon=None,
+        )
+    ical_without = mock_cal2.add_event.call_args.kwargs["ical"]
+    unfolded_without = ical_without.replace("\r\n", "\n").replace("\n ", "")
+    assert "GEO:" not in unfolded_without
+    assert "LOCATION:" not in unfolded_without
+    assert "X-APPLE" not in unfolded_without
