@@ -47,6 +47,8 @@ from urllib.parse import quote as _url_quote
 import caldav  # top-level package — present on all caldav versions
 from caldav.lib import error as caldav_error
 from icalendar import Calendar, Event
+from icalendar.parser import Parameters
+from icalendar.prop import vUri
 
 from .gps2asp.schedule.models import ScheduleFound
 
@@ -225,6 +227,10 @@ except ImportError:
 # and for the test_build_vevent_preserves_tz acceptance criterion.
 PRODID = "-//ASP Parking//GPS2ASP//EN"
 
+# Apple geofence radius (metres) for X-APPLE-STRUCTURED-LOCATION. Bounds the
+# map-pin trigger radius; 50 m is tight enough for a single street position.
+APPLE_LOCATION_RADIUS_M = 50
+
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -364,6 +370,37 @@ def render_description(schedule: ScheduleFound) -> str:
     return f"{on_street} ({side_of_street} side)\n{summary}"
 
 
+def _fmt_coord(v: float) -> str:
+    """Format a coordinate with bounded precision and no trailing-zero noise.
+
+    Fixes float-repr jitter to a deterministic 6-decimal string, then strips
+    trailing zeros and any dangling decimal point: 40.6782 -> "40.6782",
+    40.0 -> "40".
+    """
+    return f"{v:.6f}".rstrip("0").rstrip(".")
+
+
+def render_location_title(schedule: ScheduleFound) -> str:
+    """Return the street label reused for X-TITLE / X-ADDRESS.
+
+    Format: ``"{on_street} ({side_of_street} side)"`` — same defensive
+    getattr pattern as :func:`render_description`.
+    """
+    on_street = getattr(schedule, "on_street", "") or ""
+    side_of_street = getattr(schedule, "side_of_street", "") or ""
+    return f"{on_street} ({side_of_street} side)"
+
+
+def render_location_label(schedule: ScheduleFound, lat: float, lon: float) -> str:
+    """Return the human-readable LOCATION text that Google/Android geocodes.
+
+    Format: ``"STREET (SIDE side) — lat,lon"`` — the separator is a space,
+    an em-dash (U+2014), and a space; coordinates are comma-separated with
+    no space.
+    """
+    return f"{render_location_title(schedule)} — {_fmt_coord(lat)},{_fmt_coord(lon)}"
+
+
 # ---------------------------------------------------------------------------
 # UID derivation — CALDAV-04 (deterministic, survives HA restarts)
 # ---------------------------------------------------------------------------
@@ -402,6 +439,10 @@ def build_vevent_ical(
     window: Any,
     title: str,
     description: str,
+    lat: float | None = None,
+    lon: float | None = None,
+    location_label: str | None = None,
+    location_title: str | None = None,
 ) -> str:
     """Return RFC 5545 iCalendar text for a single VEVENT.
 
@@ -426,6 +467,29 @@ def build_vevent_ical(
     ev.add("dtend", window.end_datetime)
     # RFC 5545 §3.8.7.2: DTSTAMP MUST be in UTC.
     ev.add("dtstamp", datetime.now(timezone.utc))
+    # Location is strictly additive: only emitted when a GPS fix is known.
+    # When either coordinate is None the branch is skipped entirely, keeping
+    # today's byte-for-byte output for the no-location case.
+    if lat is not None and lon is not None:
+        # RFC 5545 machine coordinates (semicolon-separated on the wire).
+        ev.add("geo", (lat, lon))
+        if location_label:
+            # Human-readable street+coords text; Google/Android geocodes this.
+            ev.add("location", location_label)
+        # Apple structured location. The params MUST live on val.params — with
+        # encode=0 a parameters= kwarg is silently dropped. vUri (not vText)
+        # keeps the geo: URI comma un-escaped.
+        val = vUri(f"geo:{_fmt_coord(lat)},{_fmt_coord(lon)}")
+        _addr = location_title or location_label or ""
+        val.params = Parameters(
+            {
+                "VALUE": "URI",
+                "X-ADDRESS": _addr,
+                "X-APPLE-RADIUS": str(APPLE_LOCATION_RADIUS_M),
+                "X-TITLE": _addr,
+            }
+        )
+        ev.add("X-APPLE-STRUCTURED-LOCATION", val, encode=0)
     cal.add_component(ev)
     return cal.to_ical().decode("utf-8")
 
