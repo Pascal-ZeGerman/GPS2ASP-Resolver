@@ -12,17 +12,13 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-          cache: "pip"
       - name: Install package + dev deps
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python3 -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e ".[dev]"
       - name: Verify imports
-        run: python -c "import gps2asp; import custom_components.asp_parking"
+        run: .venv/bin/python -c "import gps2asp; import custom_components.asp_parking"
 
   test:
     name: pytest
@@ -30,17 +26,13 @@ jobs:
     needs: dependencies
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-          cache: "pip"
       - name: Install package + dev deps
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python3 -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e ".[dev]"
       - name: Run pytest (skip network tests)
-        run: python -m pytest tests/ -v --tb=short -m "not integration"
+        run: .venv/bin/python -m pytest tests/ -v --tb=short -m "not integration"
 
   lint:
     name: ruff + mypy
@@ -48,20 +40,16 @@ jobs:
     needs: dependencies
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-          cache: "pip"
       - name: Install lint tools + dev deps
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]" ruff mypy
+          python3 -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e ".[dev]" ruff mypy
       - name: ruff check
-        run: ruff check .
+        run: .venv/bin/ruff check .
       - name: ruff format check
-        run: ruff format --check .
+        run: .venv/bin/ruff format --check .
       - name: mypy (src/gps2asp)
-        run: mypy src/gps2asp/
+        run: .venv/bin/mypy src/gps2asp/
       - name: mypy (custom_components/asp_parking)
-        run: mypy custom_components/asp_parking/
+        run: .venv/bin/mypy custom_components/asp_parking/
