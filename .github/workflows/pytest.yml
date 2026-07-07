@@ -12,6 +12,11 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
       - name: Install package + dev deps
         run: |
           python3 -m venv .venv
@@ -26,6 +31,11 @@ jobs:
     needs: dependencies
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
       - name: Install package + dev deps
         run: |
           python3 -m venv .venv
@@ -40,6 +50,11 @@ jobs:
     needs: dependencies
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
       - name: Install lint tools + dev deps
         run: |
           python3 -m venv .venv
