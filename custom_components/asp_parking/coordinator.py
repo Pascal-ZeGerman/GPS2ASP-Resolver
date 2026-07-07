@@ -1202,6 +1202,7 @@ class ASPParkingCoordinator:
     async def _async_caldav_write_or_update(
         self,
         schedule: ScheduleResult,
+        *,
         lat: float | None = None,
         lon: float | None = None,
     ) -> None:
@@ -1367,12 +1368,27 @@ class ASPParkingCoordinator:
                     )
                     self._caldav_delete_error_notified = True
 
-    async def _async_caldav_hook_after_resolve(self, schedule: ScheduleResult) -> None:
+    async def _async_caldav_hook_after_resolve(
+        self, schedule: ScheduleResult, lat: float | None, lon: float | None
+    ) -> None:
         """Decide whether to spawn a CalDAV write or delete after a successful resolve.
 
         Called synchronously from ``_async_resolve_pipeline`` after
         ``_async_maybe_send_notification``. Spawns a background task (Pitfall 10
         — never awaited inline; all CalDAV I/O is off the event loop).
+
+        Args:
+            schedule: The pipeline's resolved schedule result.
+            lat: The latitude computed by THIS pipeline invocation, passed
+                explicitly by the caller rather than read from
+                ``self.data.last_lat``. Because ``_async_resolve_pipeline`` has
+                no reentrancy guard, a concurrent second invocation (window-
+                boundary timer or force-resolve service) can overwrite
+                ``self.data.last_lat``/``last_lon`` between this hook's
+                caller writing them and this hook running. Passing the value
+                explicitly keeps the coordinates flowing from computation to
+                use without going through shared mutable state.
+            lon: Same rationale as ``lat``.
 
         Guards (D-02, Pitfall 4, CALDAV-04):
         - No CalDAV configured (_caldav_store is None) → no-op
@@ -1393,16 +1409,15 @@ class ASPParkingCoordinator:
         # so this is equivalent to isinstance(schedule, ScheduleFound) in practice.
         next_window = getattr(schedule, "next_window", None)
         if next_window is not None:
-            # Snapshot the car's last-known GPS fix at spawn time (not inside
-            # the task) so a self.data replacement before the background task
-            # runs cannot race the coordinates we serialise into the VEVENT.
-            _lat = self.data.last_lat
-            _lon = self.data.last_lon
-            # Write/update the VEVENT for the upcoming cleaning window
+            # Write/update the VEVENT for the upcoming cleaning window. lat/lon
+            # are the values passed in by the caller (the same values just
+            # assigned to self.data.last_lat/last_lon on this branch) — NOT
+            # re-read from self.data here, to avoid the concurrent-invocation
+            # race described above.
             self._caldav_write_task = self.entry.async_create_background_task(
                 self.hass,
                 ASPParkingCoordinator._async_caldav_write_or_update(
-                    self, schedule, _lat, _lon
+                    self, schedule, lat=lat, lon=lon
                 ),
                 name="asp_parking_caldav_write",
             )
@@ -1853,7 +1868,11 @@ class ASPParkingCoordinator:
 
             # --- CalDAV sync (Phase 34, CALDAV-04) --- Pitfall 10: hook is
             # async but spawns background task; never awaited inline.
-            await self._async_caldav_hook_after_resolve(schedule)
+            # lat/lon are passed explicitly (the same values just assigned to
+            # self.data.last_lat/last_lon above) so a concurrent re-entrant
+            # pipeline run cannot clobber the coordinates via self.data
+            # between this write and the hook reading them.
+            await self._async_caldav_hook_after_resolve(schedule, lat, lon)
 
             logger.info(
                 "Pipeline resolved: %s (%s side), %d signs, schedule=%s",

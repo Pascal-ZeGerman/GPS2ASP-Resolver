@@ -50,6 +50,7 @@ from icalendar import Calendar, Event
 from icalendar.parser import Parameters
 from icalendar.prop import vUri
 
+from .const import DEFAULT_CALDAV_APPLE_RADIUS_M
 from .gps2asp.schedule.models import ScheduleFound
 
 logger = logging.getLogger(__name__)
@@ -227,10 +228,6 @@ except ImportError:
 # and for the test_build_vevent_preserves_tz acceptance criterion.
 PRODID = "-//ASP Parking//GPS2ASP//EN"
 
-# Apple geofence radius (metres) for X-APPLE-STRUCTURED-LOCATION. Bounds the
-# map-pin trigger radius; 50 m is tight enough for a single street position.
-APPLE_LOCATION_RADIUS_M = 50
-
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -266,6 +263,7 @@ class CalDAVConfig:
     calendar_url: str
     title_template: str
     safety_window_minutes: int
+    apple_radius_m: int = DEFAULT_CALDAV_APPLE_RADIUS_M
 
     def __post_init__(self) -> None:
         """Validate fields at construction time (runs before the dataclass freeze)."""
@@ -289,6 +287,7 @@ class CalDAVConfig:
         # Local import to keep the module-load graph minimal and to avoid
         # any potential circular import with .const additions in Plan 03.
         from .const import (  # noqa: PLC0415 — intentional lazy import
+            CONF_CALDAV_APPLE_RADIUS_M,
             CONF_CALDAV_CALENDAR,
             CONF_CALDAV_EVENT_TITLE_TEMPLATE,
             CONF_CALDAV_PASSWORD,
@@ -319,6 +318,12 @@ class CalDAVConfig:
                 options.get(
                     CONF_CALDAV_SAFETY_WINDOW,
                     DEFAULT_CALDAV_SAFETY_WINDOW,
+                )
+            ),
+            apple_radius_m=int(
+                options.get(
+                    CONF_CALDAV_APPLE_RADIUS_M,
+                    DEFAULT_CALDAV_APPLE_RADIUS_M,
                 )
             ),
         )
@@ -443,6 +448,7 @@ def build_vevent_ical(
     lon: float | None = None,
     location_label: str | None = None,
     location_title: str | None = None,
+    radius_m: int = DEFAULT_CALDAV_APPLE_RADIUS_M,
 ) -> str:
     """Return RFC 5545 iCalendar text for a single VEVENT.
 
@@ -472,7 +478,11 @@ def build_vevent_ical(
     # today's byte-for-byte output for the no-location case.
     if lat is not None and lon is not None:
         # RFC 5545 machine coordinates (semicolon-separated on the wire).
-        ev.add("geo", (lat, lon))
+        # Rounded to 6 decimals so the vGeo value matches the LOCATION text
+        # and X-APPLE-STRUCTURED-LOCATION geo: URI, both of which round via
+        # _fmt_coord() — otherwise the three encodings show numerically
+        # inconsistent coordinates.
+        ev.add("geo", (round(lat, 6), round(lon, 6)))
         if location_label:
             # Human-readable street+coords text; Google/Android geocodes this.
             ev.add("location", location_label)
@@ -485,7 +495,7 @@ def build_vevent_ical(
             {
                 "VALUE": "URI",
                 "X-ADDRESS": _addr,
-                "X-APPLE-RADIUS": str(APPLE_LOCATION_RADIUS_M),
+                "X-APPLE-RADIUS": str(radius_m),
                 "X-TITLE": _addr,
             }
         )
@@ -783,6 +793,11 @@ async def write_or_update_event(
         schedule: a ScheduleFound-shaped object with ``next_window`` set.
         stored_uid: the UID we wrote on the previous cycle, loaded from
             :class:`homeassistant.helpers.storage.Store` by the caller.
+        lat: optional parked-car latitude. When both ``lat`` and ``lon`` are
+            provided, GEO/LOCATION/X-APPLE-STRUCTURED-LOCATION are embedded
+            in the VEVENT; when either is ``None`` no location is embedded,
+            matching pre-PR behaviour.
+        lon: optional parked-car longitude. See ``lat``.
 
     Returns:
         The new UID. The caller MUST persist this via the Store before
@@ -824,6 +839,7 @@ async def write_or_update_event(
             lon=lon,
             location_label=location_label,
             location_title=location_title,
+            radius_m=config.apple_radius_m,
         )
         try:
             await cal.add_event(ical=ical_text)

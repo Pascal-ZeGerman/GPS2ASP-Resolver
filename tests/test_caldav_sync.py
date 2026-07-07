@@ -484,6 +484,7 @@ async def test_write_or_update_event_first_write_no_stored_uid():
             calendar_url="https://example.com/dav/cal/",
             title_template="ASP: {street}",
             safety_window_minutes=15,
+            apple_radius_m=50,
         )
         returned_uid = await cs.write_or_update_event(
             config=config,
@@ -1892,6 +1893,7 @@ async def test_write_or_update_event_threads_coords_into_ical():
         calendar_url="https://example.com/dav/cal/",
         title_template="ASP: {street}",
         safety_window_minutes=15,
+        apple_radius_m=50,
     )
 
     def _build_mock_client():
