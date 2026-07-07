@@ -9,7 +9,7 @@ on:
 jobs:
   validate:
     name: Validate HACS repo structure
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: HACS validation

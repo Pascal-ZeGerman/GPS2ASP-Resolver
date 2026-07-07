@@ -11,7 +11,7 @@ on:
 jobs:
   analyze:
     name: Analyze (python)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       security-events: write
       actions: read
