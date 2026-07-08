@@ -317,9 +317,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Clear the setup-retry counter so a future reload starts fresh (avoids
     # a stale count from a previous failure cycle triggering Repair prematurely).
-    hass.data.pop(
-        _SETUP_RETRY_COUNT_KEY_TPL.format(entry_id=entry.entry_id), None
-    )
+    hass.data.pop(_SETUP_RETRY_COUNT_KEY_TPL.format(entry_id=entry.entry_id), None)
 
     # Unload entity platforms
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
