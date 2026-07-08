@@ -485,6 +485,7 @@ async def test_write_or_update_event_first_write_no_stored_uid():
             title_template="ASP: {street}",
             safety_window_minutes=15,
             apple_radius_m=50,
+            include_location=True,
         )
         returned_uid = await cs.write_or_update_event(
             config=config,
@@ -1894,6 +1895,7 @@ async def test_write_or_update_event_threads_coords_into_ical():
         title_template="ASP: {street}",
         safety_window_minutes=15,
         apple_radius_m=50,
+        include_location=True,
     )
 
     def _build_mock_client():
@@ -1945,3 +1947,51 @@ async def test_write_or_update_event_threads_coords_into_ical():
     assert "GEO:" not in unfolded_without
     assert "LOCATION:" not in unfolded_without
     assert "X-APPLE" not in unfolded_without
+
+
+async def test_write_or_update_event_include_location_false_omits_all_location_props():
+    """config.include_location=False is a privacy opt-out: even with lat/lon
+    supplied, GEO/LOCATION/X-APPLE-STRUCTURED-LOCATION must all be withheld.
+    """
+    cs = _require_caldav_sync()
+
+    start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
+    schedule = _make_schedule_found(start=start)
+
+    config = SimpleNamespace(
+        url="https://example.com/dav/",
+        username="user",
+        password="pw",
+        calendar_url="https://example.com/dav/cal/",
+        title_template="ASP: {street}",
+        safety_window_minutes=15,
+        apple_radius_m=50,
+        include_location=False,
+    )
+
+    mock_cal = AsyncMock()
+    mock_cal.add_event = AsyncMock()
+    mock_principal = AsyncMock()
+    mock_principal.calendar = MagicMock(return_value=mock_cal)
+    mock_client = AsyncMock()
+    mock_client.get_principal = AsyncMock(return_value=mock_principal)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=mock_client,
+    ):
+        await cs.write_or_update_event(
+            config=config,
+            entry_id="entry_abc",
+            schedule=schedule,
+            stored_uid=None,
+            lat=40.6782,
+            lon=-73.9442,
+        )
+    ical_text = mock_cal.add_event.call_args.kwargs["ical"]
+    unfolded = ical_text.replace("\r\n", "\n").replace("\n ", "")
+    assert "GEO:" not in unfolded
+    assert "LOCATION:" not in unfolded
+    assert "X-APPLE" not in unfolded

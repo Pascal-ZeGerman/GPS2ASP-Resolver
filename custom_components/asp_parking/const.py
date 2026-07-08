@@ -107,3 +107,5 @@ CONF_CALDAV_EVENT_TITLE_TEMPLATE = "caldav_event_title_template"
 DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE = "ASP: {street}"  # D-04
 CONF_CALDAV_APPLE_RADIUS_M = "caldav_apple_radius_m"
 DEFAULT_CALDAV_APPLE_RADIUS_M = 50  # metres; X-APPLE-RADIUS geofence trigger radius
+CONF_CALDAV_INCLUDE_LOCATION = "caldav_include_location"
+DEFAULT_CALDAV_INCLUDE_LOCATION = True  # embed parked-car GPS in calendar events
