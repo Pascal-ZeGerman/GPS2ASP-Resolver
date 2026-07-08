@@ -27,6 +27,10 @@ from homeassistant.core import (
     HomeAssistant,
     callback,
 )
+from homeassistant.components.persistent_notification import (
+    async_create as pn_create,
+    async_dismiss as pn_dismiss,
+)
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import (
     async_call_later,
@@ -1608,20 +1612,12 @@ class ASPParkingCoordinator:
         state refresh via ``_async_notify_entities()``.
         """
         self._gps_watchdog_cancel()
-        from homeassistant.components.persistent_notification import (
-            async_dismiss as pn_dismiss,
-        )
-
         pn_dismiss(self.hass, "asp_parking_gps_stale")
 
         delay = float(self.stale_timeout * 3600)
 
         @callback
         def _on_gps_stale(_now: datetime) -> None:
-            from homeassistant.components.persistent_notification import (
-                async_create as pn_create,
-            )
-
             pn_create(
                 self.hass,
                 f"No GPS update has been received for {self.stale_timeout} hour(s). "
@@ -2146,11 +2142,15 @@ class ASPParkingCoordinator:
         info = self._holiday_calendar.is_suspended(today)
 
         if not info.is_suspended and self._nyc311_client is not None:
-            # On failure retain the existing suspension rather than clearing it —
-            # a transient network error must not overwrite an active 311 suspension.
+            # On failure retain an active 311-sourced or emergency suspension —
+            # a transient network error must not overwrite it.  Holiday suspensions
+            # (source="holiday") are intentionally excluded: the holiday calendar
+            # already returned is_suspended=False for today, so carrying a prior
+            # holiday suspension forward would report "suspended" on an enforced day.
             fallback_info = (
                 self.data.suspension_state
                 if self.data.suspension_state.is_suspended
+                and self.data.suspension_state.source in ("ha_nyc311", "emergency")
                 else SuspensionInfo(is_suspended=False, reason=None, source="none")
             )
             try:
