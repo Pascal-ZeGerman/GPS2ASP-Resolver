@@ -177,6 +177,9 @@
       },
       "index_rebuilding": {
         "name": "Index Rebuilding"
+      },
+      "gps_pipeline_healthy": {
+        "name": "GPS Pipeline Healthy"
       }
     },
     "switch": {
@@ -194,6 +197,14 @@
     "gps2asp_import_error": {
       "title": "ASP Parking: vendored package is incomplete",
       "description": "The bundled gps2asp Python package is missing files. Reinstall ASP Parking from HACS to restore them, then reload the integration. After a successful reload, this notification clears automatically."
+    },
+    "setup_retry_limit": {
+      "title": "ASP Parking: index setup retrying repeatedly",
+      "description": "Setup has retried 5 or more times without succeeding — the NYC street index download is still failing. Check your internet connection and the Home Assistant logs for the underlying error (look for `asp_parking` entries near `ConfigEntryNotReady`). This notification clears automatically once setup completes."
+    },
+    "async_start_failure": {
+      "title": "ASP Parking: coordinator failed to start",
+      "description": "An unexpected exception was raised while starting the ASP Parking coordinator. The integration entry has been marked failed; see the Home Assistant logs for the full traceback. This notification clears automatically on the next successful start."
     }
   }
 }

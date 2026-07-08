@@ -8,6 +8,7 @@ and sets up an options update listener for reconfiguration.
 from __future__ import annotations
 
 import logging
+import shutil
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -27,15 +28,28 @@ from .coordinator import ASPParkingCoordinator
 from .index_io import (
     INDEX_DIR,
     INDEX_FILES,
+    IndexIntegrityError,
     _sync_atomic_swap,
     _sync_cleanup_stale,
     _sync_download_and_extract,
+    _sync_verify_index,
 )
 
 logger = logging.getLogger(__name__)
 
 _DOWNLOAD_TASK_KEY = f"{DOMAIN}_index_task"
 _IMPORT_ERROR_ISSUE_ID = "gps2asp_import_error"
+
+# Quick task 260601-aru — three new defence-in-depth layers around startup.
+# Per-entry retry counter for _async_ensure_index ConfigEntryNotReady cycles;
+# at >=5 consecutive retries we surface a user-visible Repair issue.
+_SETUP_RETRY_COUNT_KEY_TPL = f"{DOMAIN}_setup_retry_count_{{entry_id}}"
+_RETRY_LIMIT_ISSUE_ID = "asp_parking_setup_retry_limit"
+# Distinct issue_id (NOT shared with _IMPORT_ERROR_ISSUE_ID or
+# _RETRY_LIMIT_ISSUE_ID) so the Repair UI can route translations correctly
+# and so dismissal of one does not silence the others.
+_ASYNC_START_FAILURE_ISSUE_ID = "asp_parking_async_start_failure"
+
 # Per-entry cache of CalDAV options captured at setup time.  Keyed by
 # f"{DOMAIN}_caldav_opts_{entry.entry_id}" so multiple instances never clash.
 # Used by _async_options_updated to access the OLD credentials after HA has
@@ -57,7 +71,34 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
     pn_dismiss(hass, "asp_parking_index_error")
 
     if all((INDEX_DIR / f).exists() for f in INDEX_FILES):
-        return
+        # Layer 1 (quick task 260601-aru): existence is necessary but not
+        # sufficient — actually open the rtree and decompress 1 byte of the
+        # graph file to confirm the files are USABLE, not just present.
+        # On corruption (truncated download, partial extraction, disk decay):
+        # wipe the live index dir and fall through to the normal download
+        # path. We MUST NOT raise IndexIntegrityError here — the
+        # ConfigEntryNotReady raised below preserves HA's existing retry/
+        # backoff semantics that the rest of this module depends on.
+        try:
+            await hass.async_add_executor_job(_sync_verify_index, INDEX_DIR)
+        except IndexIntegrityError as err:
+            logger.warning(
+                "ASP Parking: on-disk index failed integrity check (%s); "
+                "re-downloading",
+                err,
+            )
+            # Force re-download by removing the live INDEX_DIR (and any stale
+            # _tmp/_bak siblings). cleanup_stale is idempotent and safe even
+            # if the rmtree below has not yet run.
+            await hass.async_add_executor_job(_sync_cleanup_stale, INDEX_DIR)
+            await hass.async_add_executor_job(
+                shutil.rmtree,
+                INDEX_DIR,
+                True,  # ignore_errors=True
+            )
+            # Intentional fall-through to the download path below.
+        else:
+            return
 
     task = hass.data.get(_DOWNLOAD_TASK_KEY)
 
@@ -157,10 +198,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """
     # D-07: auto-dismiss stale repair on every setup attempt (no-op if absent).
     # Runs first so a successful HACS reinstall clears the Repairs badge automatically.
+    # Quick task 260601-aru: also dismiss the two new Repair issues — they are
+    # auto-clearing by design (next successful setup resolves the symptom).
     ir.async_delete_issue(hass, DOMAIN, _IMPORT_ERROR_ISSUE_ID)
+    ir.async_delete_issue(hass, DOMAIN, _RETRY_LIMIT_ISSUE_ID)
+    ir.async_delete_issue(hass, DOMAIN, _ASYNC_START_FAILURE_ISSUE_ID)
 
-    # Ensure spatial index is present (downloads on first setup)
-    await _async_ensure_index(hass)
+    # Layer 2 (quick task 260601-aru): track _async_ensure_index retry count so
+    # we can surface a user-visible Repair once HA's backoff has consumed
+    # ~5 consecutive ConfigEntryNotReady cycles without progress (~5 minutes
+    # of "Downloading…" with no end in sight is the actionable threshold).
+    retry_key = _SETUP_RETRY_COUNT_KEY_TPL.format(entry_id=entry.entry_id)
+    try:
+        await _async_ensure_index(hass)
+    except ConfigEntryNotReady:
+        count = int(hass.data.get(retry_key, 0)) + 1
+        hass.data[retry_key] = count
+        if count >= 5:
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                _RETRY_LIMIT_ISSUE_ID,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="setup_retry_limit",
+            )
+        raise
+
+    # Index ensured successfully — clear the retry counter. The Repair issue
+    # itself was already dismissed at the top of this function.
+    hass.data.pop(retry_key, None)
 
     # D-06: guard the gps2asp-dependent coordinator instantiation. Late
     # vendored imports happen inside the coordinator's __init__ chain;
@@ -187,7 +254,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ) from err
 
     entry.runtime_data = coordinator
-    await coordinator.async_start()
+
+    # Layer 3 (quick task 260601-aru): wrap coordinator.async_start() so any
+    # unforeseen startup exception leaves a visible Repair entry. Bare
+    # ``raise`` preserves the original traceback for HA's logs.
+    try:
+        await coordinator.async_start()
+    except Exception as err:  # noqa: BLE001 — defence-in-depth: catch all startup failures
+        logger.error(
+            "ASP Parking: coordinator.async_start() raised %s: %s; "
+            "see HA logs for traceback",
+            type(err).__name__,
+            err,
+        )
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            _ASYNC_START_FAILURE_ISSUE_ID,
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="async_start_failure",
+        )
+        raise
 
     # Snapshot the CalDAV-relevant options so _async_options_updated can access
     # the OLD credentials after HA has already written new options to entry.options.
@@ -226,6 +314,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """
     # Stop the coordinator (cancels listeners, debouncer)
     await entry.runtime_data.async_stop()
+
+    # Clear the setup-retry counter so a future reload starts fresh (avoids
+    # a stale count from a previous failure cycle triggering Repair prematurely).
+    hass.data.pop(
+        _SETUP_RETRY_COUNT_KEY_TPL.format(entry_id=entry.entry_id), None
+    )
 
     # Unload entity platforms
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

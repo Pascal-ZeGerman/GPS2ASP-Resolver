@@ -45,10 +45,17 @@ ICS_URL_TEMPLATE = (
 MAX_RETRIES = 3
 BASE_DELAY = 1.0  # seconds
 
+# NOTE: nyc.gov's edge (Akamai bot protection) returns HTTP 403 for
+# non-browser User-Agent strings (e.g. a "compatible; ...GitHub..." bot UA or
+# the default curl/httpx UA). A standard browser UA is required or the ICS
+# fetch fails on every refresh and the integration silently falls back to the
+# hardcoded FALLBACK calendar. Verified 2026-07-01: same URL, same time — the
+# old bot UA -> 403, this browser UA -> 200. See debug/friday-move-not-suspended.
 _FETCH_HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (compatible; ASP-Parking-HA/1.0; "
-        "+https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver)"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept": "text/calendar,*/*",
 }
@@ -114,49 +121,52 @@ def _parse_ics(ics_bytes: bytes) -> dict[date, str]:
 
 
 # ---------------------------------------------------------------------------
-# Hardcoded 2026 fallback (39 events from confirmed NYC DOT ICS)
+# Hardcoded 2026 fallback (36 events from the authoritative NYC DOT ICS)
 # ---------------------------------------------------------------------------
 
+# Derived directly from the authoritative NYC DOT ICS
+# (https://www.nyc.gov/html/dot/downloads/misc/2026-alternate-side.ics) parsed
+# with _parse_ics on 2026-07-01, so fallback behavior mirrors the live feed.
+# Regenerate when the year rolls over or the ICS changes; do NOT hand-edit with
+# generic holiday lists (the previous hand-maintained dict omitted real ASP
+# suspensions such as 2026-07-03 and included dates that are not suspensions).
 FALLBACK_2026: dict[date, str] = {
-    date(2026, 1, 1): "New Year's Day",
+    date(2026, 1, 1): "New Year’s Day",
     date(2026, 1, 6): "Three Kings' Day",
-    date(2026, 1, 19): "Martin Luther King Jr.'s Birthday",
-    date(2026, 1, 26): "Islamic New Year",
-    date(2026, 1, 27): "International Holocaust Remembrance Day",
-    date(2026, 2, 12): "Lincoln's Birthday",
-    date(2026, 2, 16): "Washington's Birthday (Presidents' Day)",
-    date(2026, 3, 2): "Purim",
-    date(2026, 3, 25): "Solemnity of the Annunciation",
-    date(2026, 4, 2): "Passover (1st Day)",
-    date(2026, 4, 3): "Holy Thursday",
-    date(2026, 4, 4): "Good Friday",
-    date(2026, 4, 8): "Passover (7th Day)",
-    date(2026, 4, 14): "Asian Lunar New Year",
-    date(2026, 5, 14): "Ascension Thursday",
+    date(2026, 1, 19): "Martin Luther King Jr",
+    date(2026, 2, 12): "Lincoln’s Birthday",
+    date(2026, 2, 16): "Washington’s Birthday (Presidents Day)",
+    date(2026, 2, 17): "Lunar New Year",
+    date(2026, 2, 18): "Ash Wednesday",
+    date(2026, 3, 3): "Purim",
+    date(2026, 3, 20): "Idul-Fitr (Eid Al-Fitr)",
+    date(2026, 4, 2): "Holy Thursday",
+    date(2026, 4, 3): "Good Friday",
+    date(2026, 4, 8): "the seventh and eighth days of Passover",
+    date(2026, 4, 9): "Orthodox Holy Thursday",
+    date(2026, 4, 10): "Orthodox Good Friday",
+    date(2026, 5, 14): "Solemnity of the Ascension",
+    date(2026, 5, 22): "Shavuoth",
     date(2026, 5, 25): "Memorial Day",
-    date(2026, 5, 31): "Shavuot",
+    date(2026, 5, 27): "Idul-Adha (Eid Al-Adha)",
     date(2026, 6, 19): "Juneteenth",
-    date(2026, 7, 4): "Independence Day",
-    date(2026, 7, 7): "Eid al-Adha",
-    date(2026, 7, 8): "Eid al-Adha",
+    date(2026, 7, 3): "Independence Day",
+    date(2026, 7, 23): "Tisha B'Av",
     date(2026, 8, 15): "Feast of the Assumption",
     date(2026, 9, 7): "Labor Day",
     date(2026, 9, 12): "Rosh Hashanah",
-    date(2026, 9, 13): "Rosh Hashanah",
     date(2026, 9, 21): "Yom Kippur",
-    date(2026, 9, 26): "Sukkot",
-    date(2026, 9, 27): "Sukkot",
-    date(2026, 10, 2): "Shemini Atzeret",
-    date(2026, 10, 3): "Simchat Torah",
+    date(2026, 9, 26): "Succoth",
+    date(2026, 10, 3): "Shemini Atzereth",
+    date(2026, 10, 4): "Simchas Torah",
     date(2026, 10, 12): "Columbus Day",
-    date(2026, 10, 21): "Diwali",
+    date(2026, 11, 1): "All Saints' Day",
     date(2026, 11, 3): "Election Day",
+    date(2026, 11, 8): "Diwali",
     date(2026, 11, 11): "Veterans Day",
     date(2026, 11, 26): "Thanksgiving Day",
-    date(2026, 12, 8): "Feast of the Immaculate Conception",
-    date(2026, 12, 12): "Hanukkah",
+    date(2026, 12, 8): "Immaculate Conception",
     date(2026, 12, 25): "Christmas Day",
-    date(2026, 12, 26): "Kwanzaa",
 }
 
 
@@ -266,7 +276,15 @@ class HolidayCalendar:
         if year is None:
             year = datetime.now(ZoneInfo("America/New_York")).year
 
-        ics_bytes = await _fetch_ics(year)
+        try:
+            ics_bytes = await _fetch_ics(year)
+        except asyncio.CancelledError:
+            # Task cancelled during ICS fetch — load fallback so _loaded is always
+            # True and is_suspended() never silently returns a false negative.
+            self._holidays = _get_fallback(year)
+            self._loaded = True
+            raise
+
         if ics_bytes is not None:
             try:
                 self._holidays = _parse_ics(ics_bytes)

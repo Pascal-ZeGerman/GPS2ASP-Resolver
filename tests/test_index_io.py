@@ -33,11 +33,14 @@ import pytest
 from custom_components.asp_parking.index_io import (  # noqa: E402
     INDEX_DIR,
     INDEX_FILES,
+    IndexIntegrityError,
+    _index_has_graph_file,
     _sync_atomic_swap,
     _sync_cleanup_stale,
     _sync_download_and_extract,
     _sync_extract_zip,
     _sync_read_build_timestamp,
+    _sync_verify_index,
 )
 
 
@@ -55,13 +58,29 @@ def test_index_dir_constant_points_to_vendored_data():
 
 
 def test_index_files_tuple():
-    """INDEX_FILES must enumerate the four artifacts the spatial index requires."""
+    """INDEX_FILES must enumerate the three non-graph artifacts the spatial index requires."""
     assert INDEX_FILES == (
         "segments.idx",
         "segments.dat",
         "segments.json",
-        "graph.json",
     )
+
+
+def test_index_has_graph_file_zst(tmp_path):
+    """_index_has_graph_file returns True when graph.json.zst is present."""
+    (tmp_path / "graph.json.zst").write_bytes(b"fake")
+    assert _index_has_graph_file(tmp_path) is True
+
+
+def test_index_has_graph_file_json(tmp_path):
+    """_index_has_graph_file returns True when graph.json is present."""
+    (tmp_path / "graph.json").write_text("{}")
+    assert _index_has_graph_file(tmp_path) is True
+
+
+def test_index_has_graph_file_absent(tmp_path):
+    """_index_has_graph_file returns False when neither graph file is present."""
+    assert _index_has_graph_file(tmp_path) is False
 
 
 # ---------------------------------------------------------------------------
@@ -782,3 +801,99 @@ def test_extract_zip_windows_backslash_traversal_is_safe_on_linux(
     assert not (base / "escape.txt").exists(), (
         "File must not escape to parent directory"
     )
+
+
+# ---------------------------------------------------------------------------
+# _sync_verify_index — quick task 260601-aru Layer 1 (integrity check)
+# ---------------------------------------------------------------------------
+#
+# Three unit-level tests (no `hass`, no network) cover:
+#   - Happy path: a minimal valid rtree + graph.json.zst opens cleanly.
+#   - Corrupt rtree: writing 4-byte garbage to segments.dat raises
+#     IndexIntegrityError.
+#   - Corrupt graph.json.zst: garbage bytes raise IndexIntegrityError via
+#     zstandard.ZstdError.
+#
+# The helper opens the rtree by STEM (str(index_dir / "segments")) — never
+# with the ``.idx`` suffix — mirroring index_io.py:769.
+
+
+def _build_minimal_valid_index(index_dir: Path) -> None:
+    """Build a minimal valid rtree + graph.json.zst inside ``index_dir``.
+
+    Uses the production rtree open pattern (Property() + Index(stem)) so the
+    resulting on-disk files (.idx + .dat) are byte-compatible with what
+    _sync_verify_index will later try to re-open.
+    """
+    import zstandard
+    from rtree import index as rtree_index
+
+    index_dir.mkdir(parents=True, exist_ok=True)
+
+    p = rtree_index.Property()
+    p.overwrite = True
+    idx = rtree_index.Index(str(index_dir / "segments"), properties=p)
+    try:
+        # One real insertion so the rtree has non-empty pages.
+        idx.insert(1, (0.0, 0.0, 1.0, 1.0))
+    finally:
+        idx.close()
+
+    # segments.json — not strictly required by _sync_verify_index, but written
+    # so the on-disk state mirrors a real index.
+    (index_dir / "segments.json").write_text("{}")
+
+    # graph.json.zst — a valid zstd-compressed minimal JSON object.
+    cctx = zstandard.ZstdCompressor()
+    (index_dir / "graph.json.zst").write_bytes(cctx.compress(b"{}"))
+
+
+def test_verify_index_passes_on_valid_index(tmp_path: Path):
+    """A freshly built rtree + valid graph.json.zst passes integrity check."""
+    index_dir = tmp_path / "idx"
+    _build_minimal_valid_index(index_dir)
+
+    # Must not raise.
+    result = _sync_verify_index(index_dir)
+    assert result is None
+
+
+def test_verify_index_raises_on_corrupt_rtree(tmp_path: Path):
+    """4-byte garbage in segments.dat triggers IndexIntegrityError."""
+    index_dir = tmp_path / "idx"
+    _build_minimal_valid_index(index_dir)
+
+    # Truncate segments.dat to 4 bytes of garbage — rtree page reads will fail.
+    (index_dir / "segments.dat").write_bytes(b"\x00\x01\x02\x03")
+
+    with pytest.raises(IndexIntegrityError):
+        _sync_verify_index(index_dir)
+
+
+def test_verify_index_raises_on_corrupt_graph_zst(tmp_path: Path):
+    """Garbage bytes in graph.json.zst (rtree valid) raises IndexIntegrityError."""
+    index_dir = tmp_path / "idx"
+    _build_minimal_valid_index(index_dir)
+
+    # Overwrite graph.json.zst with non-zstd bytes. zstd magic is 0x28B52FFD;
+    # 16 bytes of 0xFF triggers ZstdError on stream_reader.read(1).
+    (index_dir / "graph.json.zst").write_bytes(b"\xff" * 16)
+
+    with pytest.raises(IndexIntegrityError):
+        _sync_verify_index(index_dir)
+
+
+def test_verify_index_passes_when_only_plain_graph_json(tmp_path: Path):
+    """If graph.json exists (uncompressed) and rtree is valid, integrity passes.
+
+    Mirrors the _sync_verify_index OSError-only check on the uncompressed
+    graph.json variant.
+    """
+    index_dir = tmp_path / "idx"
+    _build_minimal_valid_index(index_dir)
+    # Drop the zst variant and replace with a plain readable graph.json.
+    (index_dir / "graph.json.zst").unlink()
+    (index_dir / "graph.json").write_bytes(b'{"adjacency": {}}')
+
+    result = _sync_verify_index(index_dir)
+    assert result is None

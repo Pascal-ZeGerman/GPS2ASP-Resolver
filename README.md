@@ -1,4 +1,3 @@
-<!-- generated-by: gsd-doc-writer -->
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration) [![GitHub release](https://img.shields.io/github/v/release/Pascal-ZeGerman/GPS2ASP-Resolver)](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/releases) [![GitHub issues](https://img.shields.io/github/issues/Pascal-ZeGerman/GPS2ASP-Resolver)](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/issues)
 
 # ASP Parking — NYC Alternate Side Parking for Home Assistant
@@ -6,6 +5,24 @@
 Never miss an alternate side parking window again. **ASP Parking** watches your car's GPS position via any Home Assistant device tracker, looks up the parking-regulation signs for your exact block, and tells you the next time you need to move — as a sensor you can put on your dashboard, use in automations, or push as a notification.
 
 Supports all five NYC boroughs. Data is fetched live from NYC Open Data.
+
+---
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Requirements](#requirements)
+- [What You Get](#what-you-get)
+- [Dashboard](#dashboard)
+- [CalDAV Calendar Sync](#caldav-calendar-sync)
+- [Suspension Awareness](#suspension-awareness)
+- [Upgrade Notes](#upgrade-notes)
+- [Known Limitations](#known-limitations)
+- [FAQ](#faq)
+- [For Developers](#for-developers)
+
+---
 
 ## Installation
 
@@ -47,6 +64,8 @@ After installation, set up the integration from the HA UI — no YAML required.
 
 After setup you can also configure a **parking area** (lat/lon/radius) and a **push notification service** (e.g., `notify.mobile_app_my_phone` with a configurable lead time, default 120 minutes before the next move) via **Settings → Devices & Services → ASP Parking → Configure**.
 
+---
+
 ## Requirements
 
 - Home Assistant 2025.1.0 or later
@@ -54,6 +73,8 @@ After setup you can also configure a **parking area** (lat/lon/radius) and a **p
 - Your vehicle must be parked in New York City
 
 No Python knowledge or terminal access required.
+
+---
 
 ## What You Get
 
@@ -69,11 +90,13 @@ The next move time sensor also carries rich attributes including `schedule_summa
 
 Eleven additional **diagnostic sensors** are created automatically: car name, VIN, latitude, longitude, resolved street, resolution status, confidence score, SODA level, last resolved timestamp, last error, and index last rebuilt. These are hidden from the default dashboard but available for advanced automations and troubleshooting.
 
+---
+
 ## Dashboard
 
 Add the **Next move time** sensor to an Entities or Entity card for an at-a-glance reminder. The sensor's `urgency` attribute (`high` when the next window is today, otherwise `normal`) and the `next_move_is_today` / `next_move_is_tomorrow` boolean attributes are ideal for conditional card styling or for triggering notifications.
 
-<!-- VERIFY: dashboard screenshots / example Lovelace card images -->
+---
 
 ## CalDAV Calendar Sync
 
@@ -103,11 +126,15 @@ Plain text with no placeholders is also valid (e.g., just `Move car`). Unknown p
 
 **Safety window:** Position changes within the configured safety window (default: 15 minutes) before the next move time will not delete the calendar event — this prevents the reminder from disappearing just before you need to act.
 
+---
+
 ## Suspension Awareness
 
 The integration is aware of citywide ASP suspension days. It checks the NYC DOT holiday calendar automatically on startup. If you provide an NYC311 API key, it also polls for real-time emergency suspensions (weather events, sanitation emergencies) every 60 minutes. When ASP is suspended, the next move sensor shows "Suspended" and the binary sensor turns off automatically.
 
 If you have the companion [ha-nyc311](https://github.com/Pascal-ZeGerman/ha-nyc311) integration installed, ASP Parking can subscribe to its `binary_sensor.nyc311_parking_exception_today` entity for real-time suspension updates without requiring a separate API key.
+
+---
 
 ## Upgrade Notes
 
@@ -135,6 +162,8 @@ The "Today" gate now compares the move's local date against Home Assistant's con
   Both attributes are always present (`False` when no move datetime exists), so templates can read them safely without `| default(false)`.
 - For raw datetime access, the existing `next_window_start` attribute (ISO 8601 string) is preserved unchanged — it remains the stable programmatic-access surface for templates and automations that need the underlying timestamp rather than the rendered label.
 
+---
+
 ## Known Limitations
 
 **Coverage varies by borough.** ASP Parking matches your GPS location against NYC's official sign database. As of the current index build, approximate borough coverage is: Brooklyn ~47.9%, Manhattan ~29.5%, Bronx ~28.6%, Queens ~18.1%, Staten Island ~0%. The integration uses graph-based BFS matching to improve coverage for mid-block locations that fall in the middle of a sign record rather than at its boundary cross-streets.
@@ -142,6 +171,8 @@ The "Today" gate now compares the move's local date against Home Assistant's con
 **Staten Island** has very limited data in the city's sign database. Most Staten Island locations will show "no schedule found" through no fault of the integration.
 
 **Accuracy.** Results depend on your device tracker's GPS precision. Indoors or in parking garages, the GPS fix may point to the wrong block.
+
+---
 
 ## FAQ
 
@@ -159,6 +190,8 @@ No. The integration is built exclusively for NYC's street database and sign API.
 
 **Q: Where do I report bugs or request features?**
 Please open an issue on the [GitHub issue tracker](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/issues).
+
+---
 
 ## For Developers
 

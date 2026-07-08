@@ -62,7 +62,36 @@ logger = logging.getLogger(__name__)
 
 # Module constants — byte-equivalent to the originals in __init__.py lines 24-25.
 INDEX_DIR = Path(__file__).parent / "gps2asp" / "data" / "index"
-INDEX_FILES = ("segments.idx", "segments.dat", "segments.json", "graph.json")
+# Core spatial index files (always required, format is fixed).
+# The graph file is intentionally absent here: the from-source rebuild writes
+# graph.json.zst while the GitHub-release zip ships graph.json (uncompressed).
+# Use _index_has_graph_file() to check for either format.
+INDEX_FILES = ("segments.idx", "segments.dat", "segments.json")
+
+
+def _index_has_graph_file(index_dir: Path) -> bool:
+    """Return True if either graph.json.zst or graph.json exists in index_dir.
+
+    The from-source rebuild (_sync_build_from_source) writes graph.json.zst.
+    The GitHub release zip ships graph.json (uncompressed).  The graph.py
+    loader handles both formats natively (zst-first with json fallback).
+    This helper lets _async_ensure_index accept either without hardcoding one
+    extension, preventing a ConfigEntryNotReady boot-loop after any rebuild.
+    """
+    return (index_dir / "graph.json.zst").exists() or (
+        index_dir / "graph.json"
+    ).exists()
+
+
+class IndexIntegrityError(Exception):
+    """Raised by ``_sync_verify_index`` when on-disk index files are corrupt.
+
+    Files may pass an ``.exists()`` check yet still be truncated, garbage, or
+    otherwise unreadable (interrupted download, truncated zip extraction, disk
+    corruption). Callers re-download the index when this is raised; see
+    ``custom_components/asp_parking/__init__.py::_async_ensure_index``.
+    """
+
 
 # Module-level pyproj Transformer (thread-safe, created once per process — see
 # src/gps2asp/resolver/converter.py for the pattern). EPSG:4326 (WGS84) →
@@ -166,6 +195,93 @@ def _sync_cleanup_stale(index_dir: Path) -> None:
         # download_zip lives inside index_dir; if index_dir is missing the
         # unlink may raise on some platforms — swallow per "never raises".
         logger.debug("cleanup_stale: ignored OSError unlinking %s", download_zip)
+
+
+def _sync_verify_index(index_dir: Path) -> None:
+    """Integrity-check the on-disk index — re-open rtree + decompress 1 graph byte.
+
+    Files passing the ``Path.exists()`` check used by ``_async_ensure_index``
+    may still be truncated, corrupt, or otherwise unreadable (interrupted
+    download, partial extraction, disk corruption). This helper actually
+    OPENS the rtree and decompresses one byte of the graph file to confirm
+    they are usable BEFORE the coordinator depends on them.
+
+    Behavior:
+      * Opens the rtree by STEM ``str(index_dir / "segments")`` (the rtree
+        convention — NEVER pass ``segments.idx`` directly). Mirrors the
+        production pattern at ``_build_rtree_and_metadata`` (line 769).
+      * If ``graph.json.zst`` exists, opens it and decompresses 1 byte via
+        ``zstandard.ZstdDecompressor().stream_reader(...)``. Raises on
+        ``zstandard.ZstdError`` / ``OSError``.
+      * Otherwise, if plain ``graph.json`` exists, opens and reads 1 byte
+        (OSError-only check — no decompression).
+      * If neither graph file exists, the rtree check alone determines
+        success; this is intentional and matches ``StreetGraph.load`` which
+        treats missing graph files as "Level 4 unavailable" (not corrupt).
+
+    Raises ``IndexIntegrityError`` on any failure; never swallows it.
+    Returns ``None`` on success.
+    """
+    # --- rtree check ----------------------------------------------------------
+    try:
+        p = rtree_index.Property()
+        idx = rtree_index.Index(str(index_dir / "segments"), properties=p)
+        try:
+            # Force at least one bbox query so the page-cache actually reads
+            # bytes from segments.dat — a successful open alone is not always
+            # enough to surface truncation (rtree lazy-loads pages).
+            _ = list(idx.intersection((-1e9, -1e9, 1e9, 1e9)))
+        finally:
+            try:
+                idx.close()
+            except Exception:  # noqa: BLE001 — close failure is itself integrity-relevant
+                logger.warning(
+                    "rtree index close failed during integrity check",
+                    exc_info=True,
+                )
+    except Exception as err:  # noqa: BLE001 — rtree raises a variety of native errors
+        raise IndexIntegrityError(
+            f"rtree index at {index_dir / 'segments'} failed to open: {err}"
+        ) from err
+
+    # --- graph file check -----------------------------------------------------
+    # Prefer the compressed .zst variant — that is what the production
+    # download path writes (_write_graph_zst). Fall back to plain graph.json
+    # for local-dev installs that have not run a zstd rebuild.
+    zst_path = index_dir / "graph.json.zst"
+    json_path = index_dir / "graph.json"
+
+    if zst_path.exists():
+        try:
+            dctx = zstandard.ZstdDecompressor()
+            with zst_path.open("rb") as fh:
+                with dctx.stream_reader(fh) as reader:
+                    chunk = reader.read(1)
+            if not chunk:
+                raise IndexIntegrityError(
+                    f"graph.json.zst at {zst_path} decompressed to 0 bytes"
+                )
+        except IndexIntegrityError:
+            raise
+        except (zstandard.ZstdError, OSError) as err:
+            raise IndexIntegrityError(
+                f"graph.json.zst at {zst_path} is unreadable: {err}"
+            ) from err
+    elif json_path.exists():
+        try:
+            with json_path.open("rb") as fh:
+                chunk = fh.read(1)
+            if not chunk:
+                raise IndexIntegrityError(
+                    f"graph.json at {json_path} is empty (0 bytes)"
+                )
+        except IndexIntegrityError:
+            raise
+        except OSError as err:
+            raise IndexIntegrityError(
+                f"graph.json at {json_path} is unreadable: {err}"
+            ) from err
+    # else: no graph file — treat as "Level 4 unavailable" not "corrupt".
 
 
 def _sync_extract_zip(zip_path: Path, dest_dir: Path) -> None:

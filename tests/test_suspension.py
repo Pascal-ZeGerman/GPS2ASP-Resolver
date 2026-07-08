@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -122,18 +123,27 @@ async def test_load_fallback_on_failure() -> None:
         cal = HolidayCalendar()
         await cal.load(year=2026)
         assert cal._loaded is True
-        assert len(cal._holidays) == 39
+        assert len(cal._holidays) == 36
         assert cal.is_suspended(date(2026, 1, 1)).is_suspended is True
+        # Regression (friday-move-not-suspended): observed Independence Day
+        # suspension (July 4 falls on a Saturday in 2026) must be present in the
+        # fallback so a fetch failure never tells the user to move on July 3.
+        assert cal.is_suspended(date(2026, 7, 3)).is_suspended is True
 
 
 # --- Fallback dict ---
 
 
 def test_fallback_coverage() -> None:
-    """FALLBACK_2026 has exactly 39 entries, all in year 2026."""
-    assert len(FALLBACK_2026) == 39
+    """FALLBACK_2026 mirrors the authoritative NYC DOT ICS (36 entries, all 2026)."""
+    assert len(FALLBACK_2026) == 36
     for d in FALLBACK_2026:
         assert d.year == 2026
+    # Regression (friday-move-not-suspended): the authoritative ICS lists the
+    # observed Independence Day suspension on Fri July 3 (July 4 is a Saturday),
+    # NOT July 4. The old hand-maintained fallback had this inverted.
+    assert date(2026, 7, 3) in FALLBACK_2026
+    assert date(2026, 7, 4) not in FALLBACK_2026
 
 
 # --- Frozen dataclass ---
@@ -202,11 +212,27 @@ async def test_load_parse_error_uses_fallback(
 
     # Falls back to hardcoded dates — _loaded is True
     assert cal._loaded is True
-    assert len(cal._holidays) == 39  # FALLBACK_2026 has 39 entries
+    assert len(cal._holidays) == 36  # FALLBACK_2026 has 36 entries
     assert cal.is_suspended(date(2026, 1, 1)).is_suspended is True
 
     # A warning was logged mentioning the parse failure
     assert any("bad ics" in r.message for r in caplog.records)
+
+
+async def test_load_cancelled_during_fetch_sets_loaded_and_reraises() -> None:
+    """CancelledError from _fetch_ics must set _loaded=True with fallback, then re-raise.
+
+    Without this, the integration starts in a permanently degraded state where
+    every is_suspended() call silently returns False.
+    """
+    with patch("gps2asp.suspension._fetch_ics", side_effect=asyncio.CancelledError()):
+        cal = HolidayCalendar()
+        with pytest.raises(asyncio.CancelledError):
+            await cal.load(year=2026)
+
+    assert cal._loaded is True
+    assert len(cal._holidays) == 36  # FALLBACK_2026 populated
+    assert cal.is_suspended(date(2026, 1, 1)).is_suspended is True
 
 
 # 2. load() called twice replaces holidays (idempotent replacement, not accumulation)

@@ -27,8 +27,8 @@ def apply_suspension(
     If schedule is not ScheduleFound or ASPActiveNow, returns unchanged.
     Otherwise returns a new frozen instance with suspended=True,
     suspension_reason set to info.reason, and resolution_reason derived
-    from info.source ('holiday' -> 'suspended_holiday', 'emergency' ->
-    'suspended_emergency', unknown -> 'suspended_unknown').
+    from info.source ('holiday' -> 'suspended_holiday', 'emergency' or
+    'ha_nyc311' -> 'suspended_emergency', unknown -> 'suspended_unknown').
 
     Args:
         schedule: Pipeline output from compute_schedule().
