@@ -1870,6 +1870,10 @@ class ASPParkingCoordinator:
                 None  # clear stale errors on clean resolution failures
             )
             self.data.last_error_time = None
+            # Clean resolution outcome: the pipeline ran successfully, GPS is just
+            # outside coverage. Clear the health flag so a prior transient error
+            # does not leave entities permanently unavailable.
+            self._last_pipeline_error = False
             # Retain last schedule_result per user decision
             logger.warning(
                 "GPS coordinates (%.4f, %.4f) are outside NYC coverage area"
@@ -1893,6 +1897,10 @@ class ASPParkingCoordinator:
                 None  # clear stale errors on clean resolution failures
             )
             self.data.last_error_time = None
+            # Clean resolution outcome: the pipeline ran successfully, the GPS fix
+            # just didn't match a mapped segment. Clear the health flag so a prior
+            # transient error does not leave entities permanently unavailable.
+            self._last_pipeline_error = False
             # Retain last schedule_result per user decision
             logger.warning(
                 "No street segment found at (%.4f, %.4f)"

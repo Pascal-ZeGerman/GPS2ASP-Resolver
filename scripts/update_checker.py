@@ -55,7 +55,9 @@ def check_for_updates(
     # Determine build_info.json location
     if current_build_info_path is None:
         package_dir = Path(__file__).parent.parent
-        current_build_info_path = package_dir / "data" / "index" / "build_info.json"
+        current_build_info_path = (
+            package_dir / "src" / "gps2asp" / "data" / "index" / "build_info.json"
+        )
 
     # Read current build info
     if not current_build_info_path.exists():
@@ -89,15 +91,30 @@ def check_for_updates(
         metadata = response.json()
     except requests.RequestException as e:
         logger.error("Failed to fetch CSCL metadata: %s", e)
+        # Fail toward "check manually": a swallowed network error must not be
+        # reported as "up to date", which would silently suppress every future
+        # update notification.
         return {
-            "update_available": False,
+            "update_available": True,
             "current_build": current_build_ts,
             "latest_data": "fetch_failed",
             "days_since_build": (datetime.now(timezone.utc) - current_build_dt).days,
         }
 
     # Extract rowsUpdatedAt (Unix timestamp in seconds)
-    rows_updated_at = metadata.get("rowsUpdatedAt", 0)
+    rows_updated_at = metadata.get("rowsUpdatedAt")
+    if rows_updated_at is None:
+        # Missing field: defaulting to 0 (epoch 1970) would always compare as
+        # "up to date" and silently hide real updates. Surface it instead.
+        logger.error(
+            "CSCL metadata missing 'rowsUpdatedAt'; cannot determine update status"
+        )
+        return {
+            "update_available": True,
+            "current_build": current_build_ts,
+            "latest_data": "unknown",
+            "days_since_build": (datetime.now(timezone.utc) - current_build_dt).days,
+        }
     latest_data_dt = datetime.fromtimestamp(rows_updated_at, tz=timezone.utc)
     latest_data_ts = latest_data_dt.isoformat()
 
