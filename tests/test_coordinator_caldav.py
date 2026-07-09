@@ -197,6 +197,7 @@ def _make_coord_stub_caldav(
         _caldav_write_error_notified=False,
         _caldav_delete_error_notified=False,
         _caldav_lock=asyncio.Lock(),
+        _pipeline_lock=asyncio.Lock(),
         _caldav_write_task=None,
         _caldav_delete_task=None,
         _last_suspension_state=is_suspended,
@@ -723,6 +724,28 @@ async def test_write_or_update_success_dismisses_notification_and_resets_flag(
     assert stub._caldav_write_error_notified is False, (
         "_caldav_write_error_notified must be False after successful write"
     )
+
+
+async def test_write_or_update_forwards_real_lat_lon_in_order(monkeypatch):
+    """Closes the test gap where all nine hook tests passed (None, None):
+    driven with real coordinates, _async_caldav_write_or_update forwards
+    lat then lon to caldav_sync.write_or_update_event unchanged."""
+    _require_caldav_sync()
+    stub = _make_coord_stub_caldav()
+    schedule = stub.data.schedule_result
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.write_or_update_event",
+        new_callable=AsyncMock,
+        return_value="uid@asp-parking.local",
+    ) as mock_write:
+        write = _bind(stub, "_async_caldav_write_or_update")
+        await write(schedule, lat=40.6782, lon=-73.9442)
+
+    mock_write.assert_awaited_once()
+    call_kwargs = mock_write.await_args.kwargs
+    assert call_kwargs.get("lat") == 40.6782
+    assert call_kwargs.get("lon") == -73.9442
 
 
 async def test_write_or_update_sanitises_username_in_error_notification(monkeypatch):

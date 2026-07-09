@@ -81,6 +81,7 @@ def _make_combined_stub(
         _caldav_uid=caldav_uid,
         _caldav_store=object() if caldav_store_present else None,  # truthy sentinel
         _caldav_lock=asyncio.Lock(),
+        _pipeline_lock=asyncio.Lock(),
         _caldav_write_task=None,
         _caldav_delete_task=None,
         _caldav_write_error_notified=False,
