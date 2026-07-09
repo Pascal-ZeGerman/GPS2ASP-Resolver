@@ -783,6 +783,29 @@ def test_caldav_config_from_options_default_values():
     assert cfg.title_template == DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE
 
 
+def test_caldav_config_from_options_strict_opt_in_default_excludes_location():
+    """include_location defaults to False when the option key is absent (decision #2).
+
+    Pre-upgrade config entries have no caldav_include_location key at all —
+    strict opt-in means GPS is never embedded unless the user explicitly
+    turns the option on.
+    """
+    from custom_components.asp_parking.caldav_sync import CalDAVConfig
+    from custom_components.asp_parking.const import (
+        CONF_CALDAV_CALENDAR,
+        CONF_CALDAV_URL,
+    )
+
+    cfg = CalDAVConfig.from_options(
+        {
+            CONF_CALDAV_URL: "https://example.com/dav/",
+            CONF_CALDAV_CALENDAR: "https://example.com/dav/personal/",
+        }
+    )
+
+    assert cfg.include_location is False
+
+
 # ---------------------------------------------------------------------------
 # _delete_uid_quiet — DAVError with status 404 treated as success (Fix 8)
 # ---------------------------------------------------------------------------

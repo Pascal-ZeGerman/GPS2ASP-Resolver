@@ -17,6 +17,7 @@ from homeassistant.helpers import issue_registry as ir
 
 from .const import (
     CONF_CALDAV_CALENDAR,
+    CONF_CALDAV_INCLUDE_LOCATION,
     CONF_CALDAV_PASSWORD,
     CONF_CALDAV_URL,
     CONF_CALDAV_USERNAME,
@@ -439,12 +440,70 @@ async def _async_caldav_cleanup_on_deconfigure(
     await store.async_save(data)
 
 
+async def _async_caldav_strip_location(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Rewrite the currently-published VEVENT with GPS fields stripped.
+
+    Called when the user flips ``caldav_include_location`` from True to False
+    while CalDAV sync remains configured (decision #2, strict opt-in). The
+    live coordinator still holds the last-resolved schedule and stored UID —
+    options reload has not happened yet — so we can rewrite the event in
+    place with lat=lon=None before the reload resets ``data.last_lat`` to
+    None and the strip window closes.
+
+    No-op (nothing to strip) when: the coordinator is not set up, no UID has
+    been stored yet (no event was ever written), no schedule is cached, or
+    the cached schedule has no upcoming window.
+
+    Best-effort: all exceptions are caught so the subsequent reload always
+    runs. T-34-01: credentials are never included in log output.
+    """
+    # Lazy import — same reasoning as in _async_caldav_cleanup_on_deconfigure.
+    from . import caldav_sync
+
+    coordinator = getattr(entry, "runtime_data", None)
+    if coordinator is None:
+        return
+
+    uid = getattr(coordinator, "_caldav_uid", None)
+    if not uid:
+        return
+
+    schedule = getattr(coordinator.data, "schedule_result", None)
+    if schedule is None or getattr(schedule, "next_window", None) is None:
+        return
+
+    try:
+        config = caldav_sync.CalDAVConfig.from_options(dict(entry.options))
+        new_uid = await caldav_sync.write_or_update_event(
+            config=config,
+            entry_id=entry.entry_id,
+            schedule=schedule,
+            stored_uid=uid,
+            lat=None,
+            lon=None,
+        )
+    except Exception:  # noqa: BLE001 — best-effort; never block reload
+        logger.warning(
+            "ASP Parking: CalDAV strip-location-on-disable failed; "
+            "the calendar event may still contain the parked location "
+            "(uid=%s)",
+            uid,
+        )
+        return
+
+    coordinator._caldav_uid = new_uid  # noqa: SLF001 — same module boundary as write path
+
+
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update by reloading the integration.
 
     If the user removed the CalDAV URL (transition from set → empty), clean up
     the stored calendar event using the OLD credentials before reloading.  This
     prevents orphan events from accumulating on the server (CALDAV-07 extension).
+
+    If the user disabled GPS embedding while CalDAV sync remains configured
+    (transition from True → False), strip the location fields from the
+    currently-published event before reloading (decision #2, strict opt-in).
 
     The old options are read from hass.data (snapshot written in async_setup_entry)
     because entry.options already reflects the NEW values by the time this listener
@@ -463,5 +522,12 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
     if old_caldav_url and not new_caldav_url:
         # CalDAV URL was removed — clean up the orphan calendar event before reload.
         await _async_caldav_cleanup_on_deconfigure(hass, entry, old_options)
+    elif new_caldav_url:
+        old_incl = bool(old_options.get(CONF_CALDAV_INCLUDE_LOCATION, False))
+        new_incl = bool(entry.options.get(CONF_CALDAV_INCLUDE_LOCATION, False))
+        if old_incl and not new_incl:
+            # GPS embedding was disabled — strip location from the live event
+            # before reload resets the coordinator's last-known coordinates.
+            await _async_caldav_strip_location(hass, entry)
 
     await hass.config_entries.async_reload(entry.entry_id)

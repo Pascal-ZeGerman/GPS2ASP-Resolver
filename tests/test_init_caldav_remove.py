@@ -206,3 +206,55 @@ async def test_async_remove_entry_continues_when_delete_fails(
 
     # Best-effort cleanup: Store.async_remove() called even on delete failure
     mock_store.async_remove.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Decision #2 — strip-on-disable: GPS stripped from live event when the user
+# turns off caldav_include_location while CalDAV sync stays configured
+# ---------------------------------------------------------------------------
+
+
+async def test_async_options_updated_strips_location_when_include_location_disabled(
+    hass, enable_custom_integrations
+):
+    """When include_location flips True -> False (CalDAV URL still set),
+    _async_options_updated rewrites the live event with lat=None, lon=None
+    BEFORE reload — even when the coordinator's cached last_lat is None
+    (quiet tracker; options reload has not yet reset it)."""
+    from types import SimpleNamespace
+
+    from custom_components.asp_parking import (
+        _CALDAV_OPTIONS_CACHE_KEY_TPL,
+        _async_options_updated,
+    )
+    from custom_components.asp_parking.const import CONF_CALDAV_INCLUDE_LOCATION
+
+    new_options = {**_full_caldav_options(), CONF_CALDAV_INCLUDE_LOCATION: False}
+    entry = _make_entry(hass, options=new_options)
+
+    stub_schedule = SimpleNamespace(next_window=SimpleNamespace(start_datetime=None))
+    stub_coordinator = SimpleNamespace(
+        _caldav_uid="uid@asp-parking.local",
+        data=SimpleNamespace(schedule_result=stub_schedule, last_lat=None),
+    )
+    entry.runtime_data = stub_coordinator
+
+    old_options = {**_full_caldav_options(), CONF_CALDAV_INCLUDE_LOCATION: True}
+    cache_key = _CALDAV_OPTIONS_CACHE_KEY_TPL.format(entry_id=entry.entry_id)
+    hass.data[cache_key] = old_options
+
+    with (
+        patch(
+            "custom_components.asp_parking.caldav_sync.write_or_update_event",
+            new_callable=AsyncMock,
+            return_value="uid@asp-parking.local",
+        ) as mock_write,
+        patch.object(hass.config_entries, "async_reload", new=AsyncMock()),
+    ):
+        await _async_options_updated(hass, entry)
+
+    mock_write.assert_awaited_once()
+    call_kwargs = mock_write.await_args.kwargs
+    assert call_kwargs.get("stored_uid") == "uid@asp-parking.local"
+    assert call_kwargs.get("lat") is None
+    assert call_kwargs.get("lon") is None

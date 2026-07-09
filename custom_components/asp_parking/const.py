@@ -108,4 +108,7 @@ DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE = "ASP: {street}"  # D-04
 CONF_CALDAV_APPLE_RADIUS_M = "caldav_apple_radius_m"
 DEFAULT_CALDAV_APPLE_RADIUS_M = 50  # metres; X-APPLE-RADIUS geofence trigger radius
 CONF_CALDAV_INCLUDE_LOCATION = "caldav_include_location"
-DEFAULT_CALDAV_INCLUDE_LOCATION = True  # embed parked-car GPS in calendar events
+# Strict opt-in (decision #2): an ABSENT option key means OFF. Pre-upgrade
+# config entries (no caldav_include_location key present) never embed GPS
+# in calendar events unless the user explicitly enables this option.
+DEFAULT_CALDAV_INCLUDE_LOCATION = False
