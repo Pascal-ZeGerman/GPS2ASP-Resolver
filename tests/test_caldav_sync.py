@@ -1804,16 +1804,14 @@ async def test_compat_async_dav_client_aenter_raises_runtime_error_when_dav_clie
 def test_render_location_label_and_title_exact_format():
     """render_location_label / render_location_title match the locked format.
 
-    Label: "STREET (SIDE side) — lat,lon" (em-dash U+2014, coords comma-joined
-    with no space). Title: "STREET (SIDE side)" (street label only).
+    Label: pure coordinates "lat,lon" (comma-joined, no space, no street
+    text, no em-dash, no parentheses) — decision #3. Title: "STREET (SIDE
+    side)" (street label only, reused for X-TITLE/X-ADDRESS).
     """
     cs = _require_caldav_sync()
     schedule = _make_schedule_found(on_street="VANDERBILT AVENUE", side="N")
 
-    assert (
-        cs.render_location_label(schedule, 40.6782, -73.9442)
-        == "VANDERBILT AVENUE (N side) — 40.6782,-73.9442"
-    )
+    assert cs.render_location_label(40.6782, -73.9442) == "40.6782,-73.9442"
     assert cs.render_location_title(schedule) == "VANDERBILT AVENUE (N side)"
 
 
@@ -1828,7 +1826,7 @@ def test_build_vevent_ical_emits_location_trio_when_coords_present():
     cs = _require_caldav_sync()
     schedule = _make_schedule_found(on_street="VANDERBILT AVENUE", side="N")
     window = schedule.next_window
-    label = cs.render_location_label(schedule, 40.6782, -73.9442)
+    label = cs.render_location_label(40.6782, -73.9442)
     title = cs.render_location_title(schedule)
 
     ical_text = cs.build_vevent_ical(
@@ -1848,6 +1846,7 @@ def test_build_vevent_ical_emits_location_trio_when_coords_present():
     if isinstance(geo_ical, bytes):
         geo_ical = geo_ical.decode()
     assert geo_ical == "40.6782;-73.9442"
+    assert label == "40.6782,-73.9442"
     assert str(ev.get("location")) == label
 
     xa = ev.get("X-APPLE-STRUCTURED-LOCATION")
@@ -1855,6 +1854,61 @@ def test_build_vevent_ical_emits_location_trio_when_coords_present():
     assert str(xa.params["X-TITLE"]) == "VANDERBILT AVENUE (N side)"
     assert str(xa.params["X-ADDRESS"]) == "VANDERBILT AVENUE (N side)"
     assert "X-APPLE-RADIUS" in xa.params
+
+
+def test_build_vevent_ical_non_default_apple_radius_round_trips():
+    """A non-default Apple radius (500) survives verbatim as X-APPLE-RADIUS.
+
+    Regression guard: dropping the `radius_m=config.apple_radius_m`
+    threading between write_or_update_event and build_vevent_ical must fail
+    this test (every other radius test in this module uses 50, the shared
+    default of both DEFAULT_CALDAV_APPLE_RADIUS_M and the radius_m default).
+    """
+    from icalendar import Calendar as _ICal
+
+    cs = _require_caldav_sync()
+    schedule = _make_schedule_found(on_street="VANDERBILT AVENUE", side="N")
+    window = schedule.next_window
+    label = cs.render_location_label(40.6782, -73.9442)
+    title = cs.render_location_title(schedule)
+
+    ical_text = cs.build_vevent_ical(
+        uid="u",
+        window=window,
+        title="ASP",
+        description="desc",
+        lat=40.6782,
+        lon=-73.9442,
+        location_label=label,
+        location_title=title,
+        radius_m=500,
+    )
+
+    ev = next(iter(_ICal.from_ical(ical_text).walk("VEVENT")))
+    xa = ev.get("X-APPLE-STRUCTURED-LOCATION")
+    assert str(xa.params["X-APPLE-RADIUS"]) == "500", (
+        f"Expected X-APPLE-RADIUS == '500'; got {xa.params['X-APPLE-RADIUS']!r}"
+    )
+
+
+def test_caldav_config_negative_apple_radius_raises_value_error():
+    """CalDAVConfig(apple_radius_m=-1) raises ValueError (sign/range validation).
+
+    Mirrors the safety_window_minutes ValueError contract — a geofence
+    radius must be positive.
+    """
+    from custom_components.asp_parking.caldav_sync import CalDAVConfig
+
+    with pytest.raises(ValueError, match="apple_radius_m"):
+        CalDAVConfig(
+            url="https://example.com/dav/",
+            username="u",
+            password="p",
+            calendar_url="https://example.com/dav/cal/",
+            title_template="ASP: {street}",
+            safety_window_minutes=15,
+            apple_radius_m=-1,
+        )
 
 
 def test_build_vevent_ical_no_location_when_coords_absent():
