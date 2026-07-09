@@ -465,6 +465,12 @@ class ASPParkingCoordinator:
         )
         self._listeners.append(unsub_state)
 
+        # Arm the GPS stale watchdog immediately so a device_tracker that
+        # never fires a state-change event after this restart (already
+        # unavailable / broken source) still gets the "GPS Signal Lost"
+        # notification instead of the watchdog silently never arming.
+        self._gps_watchdog_rearm()
+
         # Periodic heartbeat: re-fetch ICS, re-check suspension, trigger pipeline
         unsub_interval = async_track_time_interval(
             self.hass,
@@ -1860,6 +1866,10 @@ class ASPParkingCoordinator:
                 None  # clear stale errors on clean resolution failures
             )
             self.data.last_error_time = None
+            # Clean resolution outcome: the pipeline ran successfully, GPS is just
+            # outside coverage. Clear the health flag so a prior transient error
+            # does not leave entities permanently unavailable.
+            self._last_pipeline_error = False
             # Retain last schedule_result per user decision
             logger.warning(
                 "GPS coordinates (%.4f, %.4f) are outside NYC coverage area"
@@ -1883,6 +1893,10 @@ class ASPParkingCoordinator:
                 None  # clear stale errors on clean resolution failures
             )
             self.data.last_error_time = None
+            # Clean resolution outcome: the pipeline ran successfully, the GPS fix
+            # just didn't match a mapped segment. Clear the health flag so a prior
+            # transient error does not leave entities permanently unavailable.
+            self._last_pipeline_error = False
             # Retain last schedule_result per user decision
             logger.warning(
                 "No street segment found at (%.4f, %.4f)"
@@ -2153,18 +2167,24 @@ class ASPParkingCoordinator:
                 and self.data.suspension_state.source in ("ha_nyc311", "emergency")
                 else SuspensionInfo(is_suspended=False, reason=None, source="none")
             )
+            fallback_mode = (
+                "failing closed, retaining active suspension"
+                if fallback_info.is_suspended
+                else "failing open"
+            )
             try:
                 info = await self._nyc311_client.fetch_status()
             except NYC311AuthError as auth_err:
                 logger.warning(
-                    "311 suspension poll: auth error (%s) — failing open, check API key",
+                    "311 suspension poll: auth error (%s) — %s, check API key",
                     auth_err,
+                    fallback_mode,
                     exc_info=True,
                 )
                 info = fallback_info
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "311 suspension poll failed, failing open", exc_info=True
+                    "311 suspension poll failed, %s", fallback_mode, exc_info=True
                 )
                 info = fallback_info
 
