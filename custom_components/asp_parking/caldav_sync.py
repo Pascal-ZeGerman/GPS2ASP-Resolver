@@ -534,7 +534,7 @@ def build_vevent_ical(
                 "X-TITLE": _addr,
             }
         )
-        ev.add("X-APPLE-STRUCTURED-LOCATION", val, encode=0)
+        ev.add("X-APPLE-STRUCTURED-LOCATION", val, encode=False)
     cal.add_component(ev)
     return cal.to_ical().decode("utf-8")
 
