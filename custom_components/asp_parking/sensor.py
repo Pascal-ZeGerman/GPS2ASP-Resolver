@@ -217,9 +217,18 @@ class ASPNextMoveTimeSensor(SensorEntity):
     def available(self) -> bool:
         """Return True if the sensor is available.
 
-        Becomes unavailable when GPS data is stale (exceeds stale_timeout hours).
+        Becomes unavailable when GPS data is stale (exceeds stale_timeout hours)
+        or when the last pipeline run failed. Without the pipeline-error check the
+        sensor would keep presenting the retained (stale) schedule as if fresh,
+        i.e. a confident wrong "next move time" / "No restrictions" -> the user
+        skips moving the car and gets ticketed.
         """
         data = self._coordinator.data
+
+        # A failed pipeline run retains the last schedule_result; surface that as
+        # unavailable rather than serving stale data as current.
+        if self._coordinator._last_pipeline_error:
+            return False
 
         # Initial state: not yet stale (no GPS update received yet)
         if data.last_gps_update is None:

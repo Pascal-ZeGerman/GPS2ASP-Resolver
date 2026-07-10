@@ -35,6 +35,7 @@ import shutil
 import time
 import zipfile
 from collections import Counter, deque
+from itertools import islice
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -227,10 +228,12 @@ def _sync_verify_index(index_dir: Path) -> None:
         p = rtree_index.Property()
         idx = rtree_index.Index(str(index_dir / "segments"), properties=p)
         try:
-            # Force at least one bbox query so the page-cache actually reads
-            # bytes from segments.dat — a successful open alone is not always
-            # enough to surface truncation (rtree lazy-loads pages).
-            _ = list(idx.intersection((-1e9, -1e9, 1e9, 1e9)))
+            # Force one bbox query and pull a single result so the page-cache
+            # actually reads bytes from segments.dat — a successful open alone
+            # is not always enough to surface truncation (rtree lazy-loads
+            # pages). islice(..., 1) stops after the first match instead of
+            # materializing every record in the dataset on every setup/reload.
+            _ = list(islice(idx.intersection((-1e9, -1e9, 1e9, 1e9)), 1))
         finally:
             try:
                 idx.close()

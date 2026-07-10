@@ -27,6 +27,10 @@ from homeassistant.core import (
     HomeAssistant,
     callback,
 )
+from homeassistant.components.persistent_notification import (
+    async_create as pn_create,
+    async_dismiss as pn_dismiss,
+)
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import (
     async_call_later,
@@ -467,6 +471,12 @@ class ASPParkingCoordinator:
             self._async_on_gps_update,  # type: ignore[arg-type]
         )
         self._listeners.append(unsub_state)
+
+        # Arm the GPS stale watchdog immediately so a device_tracker that
+        # never fires a state-change event after this restart (already
+        # unavailable / broken source) still gets the "GPS Signal Lost"
+        # notification instead of the watchdog silently never arming.
+        self._gps_watchdog_rearm()
 
         # Periodic heartbeat: re-fetch ICS, re-check suspension, trigger pipeline
         unsub_interval = async_track_time_interval(
@@ -1636,20 +1646,12 @@ class ASPParkingCoordinator:
         state refresh via ``_async_notify_entities()``.
         """
         self._gps_watchdog_cancel()
-        from homeassistant.components.persistent_notification import (
-            async_dismiss as pn_dismiss,
-        )
-
         pn_dismiss(self.hass, "asp_parking_gps_stale")
 
         delay = float(self.stale_timeout * 3600)
 
         @callback
         def _on_gps_stale(_now: datetime) -> None:
-            from homeassistant.components.persistent_notification import (
-                async_create as pn_create,
-            )
-
             pn_create(
                 self.hass,
                 f"No GPS update has been received for {self.stale_timeout} hour(s). "
@@ -1894,6 +1896,10 @@ class ASPParkingCoordinator:
                     None  # clear stale errors on clean resolution failures
                 )
                 self.data.last_error_time = None
+                # Clean resolution outcome: the pipeline ran successfully, GPS is just
+                # outside coverage. Clear the health flag so a prior transient error
+                # does not leave entities permanently unavailable.
+                self._last_pipeline_error = False
                 # Retain last schedule_result per user decision
                 logger.warning(
                     "GPS coordinates (%.4f, %.4f) are outside NYC coverage area"
@@ -1917,6 +1923,10 @@ class ASPParkingCoordinator:
                     None  # clear stale errors on clean resolution failures
                 )
                 self.data.last_error_time = None
+                # Clean resolution outcome: the pipeline ran successfully, the GPS fix
+                # just didn't match a mapped segment. Clear the health flag so a prior
+                # transient error does not leave entities permanently unavailable.
+                self._last_pipeline_error = False
                 # Retain last schedule_result per user decision
                 logger.warning(
                     "No street segment found at (%.4f, %.4f)"
@@ -2176,25 +2186,35 @@ class ASPParkingCoordinator:
         info = self._holiday_calendar.is_suspended(today)
 
         if not info.is_suspended and self._nyc311_client is not None:
-            # On failure retain the existing suspension rather than clearing it —
-            # a transient network error must not overwrite an active 311 suspension.
+            # On failure retain an active 311-sourced or emergency suspension —
+            # a transient network error must not overwrite it.  Holiday suspensions
+            # (source="holiday") are intentionally excluded: the holiday calendar
+            # already returned is_suspended=False for today, so carrying a prior
+            # holiday suspension forward would report "suspended" on an enforced day.
             fallback_info = (
                 self.data.suspension_state
                 if self.data.suspension_state.is_suspended
+                and self.data.suspension_state.source in ("ha_nyc311", "emergency")
                 else SuspensionInfo(is_suspended=False, reason=None, source="none")
+            )
+            fallback_mode = (
+                "failing closed, retaining active suspension"
+                if fallback_info.is_suspended
+                else "failing open"
             )
             try:
                 info = await self._nyc311_client.fetch_status()
             except NYC311AuthError as auth_err:
                 logger.warning(
-                    "311 suspension poll: auth error (%s) — failing open, check API key",
+                    "311 suspension poll: auth error (%s) — %s, check API key",
                     auth_err,
+                    fallback_mode,
                     exc_info=True,
                 )
                 info = fallback_info
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "311 suspension poll failed, failing open", exc_info=True
+                    "311 suspension poll failed, %s", fallback_mode, exc_info=True
                 )
                 info = fallback_info
 

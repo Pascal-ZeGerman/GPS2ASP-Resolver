@@ -30,6 +30,7 @@ from .index_io import (
     INDEX_DIR,
     INDEX_FILES,
     IndexIntegrityError,
+    _index_has_graph_file,
     _sync_atomic_swap,
     _sync_cleanup_stale,
     _sync_download_and_extract,
@@ -71,7 +72,9 @@ async def _async_ensure_index(hass: HomeAssistant) -> None:
     # Dismiss any stale error notification from a previous failed download attempt
     pn_dismiss(hass, "asp_parking_index_error")
 
-    if all((INDEX_DIR / f).exists() for f in INDEX_FILES):
+    if all((INDEX_DIR / f).exists() for f in INDEX_FILES) and _index_has_graph_file(
+        INDEX_DIR
+    ):
         # Layer 1 (quick task 260601-aru): existence is necessary but not
         # sufficient — actually open the rtree and decompress 1 byte of the
         # graph file to confirm the files are USABLE, not just present.
@@ -315,6 +318,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """
     # Stop the coordinator (cancels listeners, debouncer)
     await entry.runtime_data.async_stop()
+
+    # Clear the setup-retry counter so a future reload starts fresh (avoids
+    # a stale count from a previous failure cycle triggering Repair prematurely).
+    hass.data.pop(_SETUP_RETRY_COUNT_KEY_TPL.format(entry_id=entry.entry_id), None)
 
     # Unload entity platforms
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
