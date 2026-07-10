@@ -324,6 +324,13 @@ class ASPParkingCoordinator:
         self._caldav_write_task: asyncio.Task[None] | None = None
         self._caldav_delete_task: asyncio.Task[None] | None = None
 
+        # Pipeline-level reentrancy guard (T-PR19-04): serialises
+        # _async_resolve_pipeline so concurrent invocations (Debouncer,
+        # boundary-timer fire closure, async_force_resolve) cannot interleave
+        # their self.data mutations. None of the three callers invoke the
+        # pipeline from within itself, so this Lock cannot self-deadlock.
+        self._pipeline_lock: asyncio.Lock = asyncio.Lock()
+
         # Debouncer: coalesce rapid GPS updates into a single pipeline run
         self._debouncer = Debouncer(
             hass,
@@ -1209,7 +1216,13 @@ class ASPParkingCoordinator:
                 name="asp_parking_caldav_delete_on_suspension",
             )
 
-    async def _async_caldav_write_or_update(self, schedule: ScheduleResult) -> None:
+    async def _async_caldav_write_or_update(
+        self,
+        schedule: ScheduleResult,
+        *,
+        lat: float | None = None,
+        lon: float | None = None,
+    ) -> None:
         """Write or update the CalDAV VEVENT for the upcoming cleaning window.
 
         Wraps ``caldav_sync.write_or_update_event`` with:
@@ -1238,6 +1251,8 @@ class ASPParkingCoordinator:
                     entry_id=self.entry.entry_id,
                     schedule=schedule,
                     stored_uid=self._caldav_uid,
+                    lat=lat,
+                    lon=lon,
                 )
                 # Success: persist UID via load-merge-save so future store keys are preserved.
                 # Store persistence is in its own try/except so a disk/HA-storage
@@ -1370,12 +1385,22 @@ class ASPParkingCoordinator:
                     )
                     self._caldav_delete_error_notified = True
 
-    async def _async_caldav_hook_after_resolve(self, schedule: ScheduleResult) -> None:
+    async def _async_caldav_hook_after_resolve(
+        self, schedule: ScheduleResult, lat: float | None, lon: float | None
+    ) -> None:
         """Decide whether to spawn a CalDAV write or delete after a successful resolve.
 
         Called synchronously from ``_async_resolve_pipeline`` after
         ``_async_maybe_send_notification``. Spawns a background task (Pitfall 10
         — never awaited inline; all CalDAV I/O is off the event loop).
+
+        Args:
+            schedule: The pipeline's resolved schedule result.
+            lat: The latitude computed by THIS pipeline invocation, passed
+                explicitly by the caller rather than read from
+                ``self.data.last_lat``.
+            lon: The longitude computed by THIS pipeline invocation, passed
+                explicitly by the caller.
 
         Guards (D-02, Pitfall 4, CALDAV-04):
         - No CalDAV configured (_caldav_store is None) → no-op
@@ -1396,10 +1421,13 @@ class ASPParkingCoordinator:
         # so this is equivalent to isinstance(schedule, ScheduleFound) in practice.
         next_window = getattr(schedule, "next_window", None)
         if next_window is not None:
-            # Write/update the VEVENT for the upcoming cleaning window
+            # Write/update the VEVENT for the upcoming cleaning window using
+            # this invocation's lat/lon.
             self._caldav_write_task = self.entry.async_create_background_task(
                 self.hass,
-                ASPParkingCoordinator._async_caldav_write_or_update(self, schedule),
+                ASPParkingCoordinator._async_caldav_write_or_update(
+                    self, schedule, lat=lat, lon=lon
+                ),
                 name="asp_parking_caldav_write",
             )
         else:
@@ -1735,215 +1763,217 @@ class ASPParkingCoordinator:
         if lat is None or lon is None:
             return
 
-        try:
-            # Phase 1: GPS to street segment
-            resolution = await resolve(lat, lon)
+        async with self._pipeline_lock:
+            try:
+                # Phase 1: GPS to street segment
+                resolution = await resolve(lat, lon)
 
-            # Phase 2: Street segment to signs — Phase 26 cache lookup first (D-04)
-            cache_key = (
-                resolution.on_street,
-                resolution.from_street,
-                resolution.to_street,
-                resolution.side_of_street,
-            )
-            cached_entry = self._sign_cache.get(cache_key)
-            if cached_entry is not None:
-                # Cache hit — synthesize result from pre-fetched records, NO live call.
-                # BUG-S-007 (Phase 35.1-05): extract both records and the SODA
-                # fallback level the records were produced at, so the sensor's
-                # soda_level attribute reflects reality (not hardcoded 1).
-                # isinstance guard: a bare-list entry from a rolling restart
-                # during the schema migration would crash on ["records"] — evict
-                # it and fall through to a live SODA call instead.
-                if not isinstance(cached_entry, dict):
-                    del self._sign_cache[cache_key]
-                    cached_entry = None
-            if cached_entry is not None:
-                cached_records: list[dict[Any, Any]] = cached_entry["records"]  # type: ignore[assignment]
-                cached_level: int = cached_entry.get("soda_level", 1)  # type: ignore[assignment]
-                sign_result = materialize_cached_records(
-                    cached_records,
-                    on_street=resolution.on_street,
-                    from_street=resolution.from_street,
-                    to_street=resolution.to_street,
-                    side_of_street=resolution.side_of_street,
-                    soda_level=cached_level,
+                # Phase 2: Street segment to signs — Phase 26 cache lookup first (D-04)
+                cache_key = (
+                    resolution.on_street,
+                    resolution.from_street,
+                    resolution.to_street,
+                    resolution.side_of_street,
                 )
-                logger.debug(
-                    "Phase 26: cache hit for %s (level=%d)",
-                    cache_key,
-                    cached_level,
+                cached_entry = self._sign_cache.get(cache_key)
+                if cached_entry is not None:
+                    # Cache hit — synthesize result from pre-fetched records, NO live call.
+                    # BUG-S-007 (Phase 35.1-05): extract both records and the SODA
+                    # fallback level the records were produced at, so the sensor's
+                    # soda_level attribute reflects reality (not hardcoded 1).
+                    # isinstance guard: a bare-list entry from a rolling restart
+                    # during the schema migration would crash on ["records"] — evict
+                    # it and fall through to a live SODA call instead.
+                    if not isinstance(cached_entry, dict):
+                        del self._sign_cache[cache_key]
+                        cached_entry = None
+                if cached_entry is not None:
+                    cached_records: list[dict[Any, Any]] = cached_entry["records"]  # type: ignore[assignment]
+                    cached_level: int = cached_entry.get("soda_level", 1)  # type: ignore[assignment]
+                    sign_result = materialize_cached_records(
+                        cached_records,
+                        on_street=resolution.on_street,
+                        from_street=resolution.from_street,
+                        to_street=resolution.to_street,
+                        side_of_street=resolution.side_of_street,
+                        soda_level=cached_level,
+                    )
+                    logger.debug(
+                        "Phase 26: cache hit for %s (level=%d)",
+                        cache_key,
+                        cached_level,
+                    )
+                else:
+                    # Cache miss — existing path. D-04: do NOT write back.
+                    sign_result = await retrieve_signs(
+                        on_street=resolution.on_street,
+                        from_street=resolution.from_street,
+                        to_street=resolution.to_street,
+                        side_of_street=resolution.side_of_street,
+                    )
+
+                # Phase 3: Signs to schedule
+                schedule = compute_schedule(
+                    sign_result,
+                    now=self._get_now(),
+                    suspended_dates=(
+                        self._holiday_calendar.suspended_dates
+                        if self._holiday_calendar is not None
+                        else None
+                    ),
                 )
-            else:
-                # Cache miss — existing path. D-04: do NOT write back.
-                sign_result = await retrieve_signs(
-                    on_street=resolution.on_street,
-                    from_street=resolution.from_street,
-                    to_street=resolution.to_street,
-                    side_of_street=resolution.side_of_street,
+
+                # Phase 39 (D-05): register one-shot boundary timer before
+                # updating self.data — boundary scheduling is success-path only
+                # (Pitfall 5: never add this call to an except branch).
+                self._async_schedule_boundary_timer(schedule)
+
+                # Success: update all data fields
+                self.data.schedule_result = schedule
+                self.data.special_state = None
+                self.data.last_lat = lat
+                self.data.last_lon = lon
+                self.data.last_resolved = dt_util.utcnow()
+                self.data.confidence_score = resolution.confidence
+
+                # Phase 30: Extract new diagnostic fields from resolution (D-09, D-10, D-11)
+                self.data.borough = _BOROUGH_NAMES.get(resolution.borocode or "")
+                self.data.distance_ft = resolution.perpendicular_distance_ft
+                self.data.street_width_ft = resolution.street_width_ft
+                self.data.segment_id = resolution.segment_id
+
+                # Extract sign count from Phase 2 result
+                if isinstance(sign_result, SignRetrievalSuccess):
+                    self.data.sign_count = len(sign_result.signs)
+                else:
+                    self.data.sign_count = 0
+
+                # Extract SODA fallback level from Phase 2 result
+                if isinstance(sign_result, SignRetrievalSuccess):
+                    self.data.soda_level = sign_result.soda_level
+                else:
+                    self.data.soda_level = 0
+
+                # Extract parse failure count from Phase 3 result
+                if isinstance(schedule, (ScheduleFound, AllUnparseable)):
+                    self.data.parse_failures = len(schedule.parse_failures)
+                else:
+                    self.data.parse_failures = 0
+
+                # Clear error state on success
+                self.data.last_error = None
+                self.data.last_error_time = None
+                self._last_pipeline_error = False
+
+                # --- Notification (Phase 24, D-12/D-14/D-15/D-16) ---
+                await self._async_maybe_send_notification(schedule)
+
+                # --- CalDAV sync (Phase 34, CALDAV-04) --- Pitfall 10: hook is
+                # async but spawns background task; never awaited inline.
+                # This invocation's lat/lon are handed to the hook explicitly.
+                await self._async_caldav_hook_after_resolve(schedule, lat, lon)
+
+                logger.info(
+                    "Pipeline resolved: %s (%s side), %d signs, schedule=%s",
+                    resolution.on_street,
+                    resolution.side_of_street,
+                    self.data.sign_count,
+                    schedule.status,
                 )
 
-            # Phase 3: Signs to schedule
-            schedule = compute_schedule(
-                sign_result,
-                now=self._get_now(),
-                suspended_dates=(
-                    self._holiday_calendar.suspended_dates
-                    if self._holiday_calendar is not None
-                    else None
-                ),
-            )
+            except OutsideNYCError:
+                # GPS is outside NYC coverage area
+                self.data.special_state = "outside_coverage"
+                self.data.last_lat = lat
+                self.data.last_lon = lon
+                self.data.soda_level = 0  # reset: GPS outside coverage
+                # Phase 30: reset new diagnostic fields
+                self.data.borough = None
+                self.data.distance_ft = None
+                self.data.street_width_ft = None
+                self.data.segment_id = None
+                self.data.last_error = (
+                    None  # clear stale errors on clean resolution failures
+                )
+                self.data.last_error_time = None
+                # Clean resolution outcome: the pipeline ran successfully, GPS is just
+                # outside coverage. Clear the health flag so a prior transient error
+                # does not leave entities permanently unavailable.
+                self._last_pipeline_error = False
+                # Retain last schedule_result per user decision
+                logger.warning(
+                    "GPS coordinates (%.4f, %.4f) are outside NYC coverage area"
+                    " -- check that your device tracker is reporting a valid NYC location",
+                    lat,
+                    lon,
+                )
 
-            # Phase 39 (D-05): register one-shot boundary timer before
-            # updating self.data — boundary scheduling is success-path only
-            # (Pitfall 5: never add this call to an except branch).
-            self._async_schedule_boundary_timer(schedule)
+            except (NoSegmentFoundError, AmbiguousResolutionError) as err:
+                # GPS is valid but no matching street segment
+                self.data.special_state = "no_street_match"
+                self.data.last_lat = lat
+                self.data.last_lon = lon
+                self.data.soda_level = 0  # reset: no street match
+                # Phase 30: reset new diagnostic fields
+                self.data.borough = None
+                self.data.distance_ft = None
+                self.data.street_width_ft = None
+                self.data.segment_id = None
+                self.data.last_error = (
+                    None  # clear stale errors on clean resolution failures
+                )
+                self.data.last_error_time = None
+                # Clean resolution outcome: the pipeline ran successfully, the GPS fix
+                # just didn't match a mapped segment. Clear the health flag so a prior
+                # transient error does not leave entities permanently unavailable.
+                self._last_pipeline_error = False
+                # Retain last schedule_result per user decision
+                logger.warning(
+                    "No street segment found at (%.4f, %.4f)"
+                    " -- check that your device tracker is reporting accurate"
+                    " coordinates within a mapped NYC street: %s",
+                    lat,
+                    lon,
+                    err,
+                )
 
-            # Success: update all data fields
-            self.data.schedule_result = schedule
-            self.data.special_state = None
-            self.data.last_lat = lat
-            self.data.last_lon = lon
-            self.data.last_resolved = dt_util.utcnow()
-            self.data.confidence_score = resolution.confidence
+            except ValueError as err:
+                # Data-integrity or programming errors (e.g. zero-length segment from
+                # determine_side, or SpatialIndex path mismatch after rebuild).  These
+                # are intentionally loud -- do NOT silently retain stale state.
+                self.data.last_error = str(err)
+                self.data.last_error_time = dt_util.utcnow()
+                self._last_pipeline_error = True
+                logger.error(
+                    "Pipeline data-integrity error at (%.4f, %.4f): %s",
+                    lat,
+                    lon,
+                    err,
+                    exc_info=True,
+                )
+                from homeassistant.components.persistent_notification import (
+                    async_create as pn_create,
+                )
 
-            # Phase 30: Extract new diagnostic fields from resolution (D-09, D-10, D-11)
-            self.data.borough = _BOROUGH_NAMES.get(resolution.borocode or "")
-            self.data.distance_ft = resolution.perpendicular_distance_ft
-            self.data.street_width_ft = resolution.street_width_ft
-            self.data.segment_id = resolution.segment_id
+                pn_create(
+                    self.hass,
+                    f"A data-integrity error occurred at ({lat:.4f}, {lon:.4f}): {err}. "
+                    "Sensor values may be stale. Check your Home Assistant logs for details.",
+                    title="ASP Parking: Pipeline Error",
+                    notification_id="asp_parking_pipeline_integrity_error",
+                )
 
-            # Extract sign count from Phase 2 result
-            if isinstance(sign_result, SignRetrievalSuccess):
-                self.data.sign_count = len(sign_result.signs)
-            else:
-                self.data.sign_count = 0
+            except Exception as err:  # noqa: BLE001
+                # SODA API errors, network errors, unexpected exceptions
+                # Fall back to last known state -- do NOT clear schedule or special_state
+                self.data.last_error = str(err)
+                self.data.last_error_time = dt_util.utcnow()
+                self._last_pipeline_error = True
+                logger.warning(
+                    "Pipeline error at (%.4f, %.4f): %s", lat, lon, err, exc_info=True
+                )
 
-            # Extract SODA fallback level from Phase 2 result
-            if isinstance(sign_result, SignRetrievalSuccess):
-                self.data.soda_level = sign_result.soda_level
-            else:
-                self.data.soda_level = 0
-
-            # Extract parse failure count from Phase 3 result
-            if isinstance(schedule, (ScheduleFound, AllUnparseable)):
-                self.data.parse_failures = len(schedule.parse_failures)
-            else:
-                self.data.parse_failures = 0
-
-            # Clear error state on success
-            self.data.last_error = None
-            self.data.last_error_time = None
-            self._last_pipeline_error = False
-
-            # --- Notification (Phase 24, D-12/D-14/D-15/D-16) ---
-            await self._async_maybe_send_notification(schedule)
-
-            # --- CalDAV sync (Phase 34, CALDAV-04) --- Pitfall 10: hook is
-            # async but spawns background task; never awaited inline.
-            await self._async_caldav_hook_after_resolve(schedule)
-
-            logger.info(
-                "Pipeline resolved: %s (%s side), %d signs, schedule=%s",
-                resolution.on_street,
-                resolution.side_of_street,
-                self.data.sign_count,
-                schedule.status,
-            )
-
-        except OutsideNYCError:
-            # GPS is outside NYC coverage area
-            self.data.special_state = "outside_coverage"
-            self.data.last_lat = lat
-            self.data.last_lon = lon
-            self.data.soda_level = 0  # reset: GPS outside coverage
-            # Phase 30: reset new diagnostic fields
-            self.data.borough = None
-            self.data.distance_ft = None
-            self.data.street_width_ft = None
-            self.data.segment_id = None
-            self.data.last_error = (
-                None  # clear stale errors on clean resolution failures
-            )
-            self.data.last_error_time = None
-            # Clean resolution outcome: the pipeline ran successfully, GPS is just
-            # outside coverage. Clear the health flag so a prior transient error
-            # does not leave entities permanently unavailable.
-            self._last_pipeline_error = False
-            # Retain last schedule_result per user decision
-            logger.warning(
-                "GPS coordinates (%.4f, %.4f) are outside NYC coverage area"
-                " -- check that your device tracker is reporting a valid NYC location",
-                lat,
-                lon,
-            )
-
-        except (NoSegmentFoundError, AmbiguousResolutionError) as err:
-            # GPS is valid but no matching street segment
-            self.data.special_state = "no_street_match"
-            self.data.last_lat = lat
-            self.data.last_lon = lon
-            self.data.soda_level = 0  # reset: no street match
-            # Phase 30: reset new diagnostic fields
-            self.data.borough = None
-            self.data.distance_ft = None
-            self.data.street_width_ft = None
-            self.data.segment_id = None
-            self.data.last_error = (
-                None  # clear stale errors on clean resolution failures
-            )
-            self.data.last_error_time = None
-            # Clean resolution outcome: the pipeline ran successfully, the GPS fix
-            # just didn't match a mapped segment. Clear the health flag so a prior
-            # transient error does not leave entities permanently unavailable.
-            self._last_pipeline_error = False
-            # Retain last schedule_result per user decision
-            logger.warning(
-                "No street segment found at (%.4f, %.4f)"
-                " -- check that your device tracker is reporting accurate"
-                " coordinates within a mapped NYC street: %s",
-                lat,
-                lon,
-                err,
-            )
-
-        except ValueError as err:
-            # Data-integrity or programming errors (e.g. zero-length segment from
-            # determine_side, or SpatialIndex path mismatch after rebuild).  These
-            # are intentionally loud -- do NOT silently retain stale state.
-            self.data.last_error = str(err)
-            self.data.last_error_time = dt_util.utcnow()
-            self._last_pipeline_error = True
-            logger.error(
-                "Pipeline data-integrity error at (%.4f, %.4f): %s",
-                lat,
-                lon,
-                err,
-                exc_info=True,
-            )
-            from homeassistant.components.persistent_notification import (
-                async_create as pn_create,
-            )
-
-            pn_create(
-                self.hass,
-                f"A data-integrity error occurred at ({lat:.4f}, {lon:.4f}): {err}. "
-                "Sensor values may be stale. Check your Home Assistant logs for details.",
-                title="ASP Parking: Pipeline Error",
-                notification_id="asp_parking_pipeline_integrity_error",
-            )
-
-        except Exception as err:  # noqa: BLE001
-            # SODA API errors, network errors, unexpected exceptions
-            # Fall back to last known state -- do NOT clear schedule or special_state
-            self.data.last_error = str(err)
-            self.data.last_error_time = dt_util.utcnow()
-            self._last_pipeline_error = True
-            logger.warning(
-                "Pipeline error at (%.4f, %.4f): %s", lat, lon, err, exc_info=True
-            )
-
-        self._async_notify_entities()
+            self._async_notify_entities()
 
     # ------------------------------------------------------------------
     # Suspension polling

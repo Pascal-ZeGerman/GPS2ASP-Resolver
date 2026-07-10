@@ -484,6 +484,8 @@ async def test_write_or_update_event_first_write_no_stored_uid():
             calendar_url="https://example.com/dav/cal/",
             title_template="ASP: {street}",
             safety_window_minutes=15,
+            apple_radius_m=50,
+            include_location=True,
         )
         returned_uid = await cs.write_or_update_event(
             config=config,
@@ -779,6 +781,29 @@ def test_caldav_config_from_options_default_values():
     assert cfg.password == ""
     assert cfg.safety_window_minutes == DEFAULT_CALDAV_SAFETY_WINDOW
     assert cfg.title_template == DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE
+
+
+def test_caldav_config_from_options_strict_opt_in_default_excludes_location():
+    """include_location defaults to False when the option key is absent (decision #2).
+
+    Pre-upgrade config entries have no caldav_include_location key at all —
+    strict opt-in means GPS is never embedded unless the user explicitly
+    turns the option on.
+    """
+    from custom_components.asp_parking.caldav_sync import CalDAVConfig
+    from custom_components.asp_parking.const import (
+        CONF_CALDAV_CALENDAR,
+        CONF_CALDAV_URL,
+    )
+
+    cfg = CalDAVConfig.from_options(
+        {
+            CONF_CALDAV_URL: "https://example.com/dav/",
+            CONF_CALDAV_CALENDAR: "https://example.com/dav/personal/",
+        }
+    )
+
+    assert cfg.include_location is False
 
 
 # ---------------------------------------------------------------------------
@@ -1792,3 +1817,258 @@ async def test_compat_async_dav_client_aenter_raises_runtime_error_when_dav_clie
             await client.__aenter__()
     finally:
         del caldav.DAVClient  # restore __getattr__ resolution
+
+
+# ---------------------------------------------------------------------------
+# Parked-car location emission (CALDAV-LOC-01)
+# ---------------------------------------------------------------------------
+
+
+def test_render_location_label_and_title_exact_format():
+    """render_location_label / render_location_title match the locked format.
+
+    Label: pure coordinates "lat,lon" (comma-joined, no space, no street
+    text, no em-dash, no parentheses) — decision #3. Title: "STREET (SIDE
+    side)" (street label only, reused for X-TITLE/X-ADDRESS).
+    """
+    cs = _require_caldav_sync()
+    schedule = _make_schedule_found(on_street="VANDERBILT AVENUE", side="N")
+
+    assert cs.render_location_label(40.6782, -73.9442) == "40.6782,-73.9442"
+    assert cs.render_location_title(schedule) == "VANDERBILT AVENUE (N side)"
+
+
+def test_build_vevent_ical_emits_location_trio_when_coords_present():
+    """With coords, the VEVENT carries GEO + LOCATION + X-APPLE-STRUCTURED-LOCATION.
+
+    Re-parses the serialized ical (robust to line-folding and comma-escaping)
+    and inspects the single VEVENT.
+    """
+    from icalendar import Calendar as _ICal
+
+    cs = _require_caldav_sync()
+    schedule = _make_schedule_found(on_street="VANDERBILT AVENUE", side="N")
+    window = schedule.next_window
+    label = cs.render_location_label(40.6782, -73.9442)
+    title = cs.render_location_title(schedule)
+
+    ical_text = cs.build_vevent_ical(
+        uid="u",
+        window=window,
+        title="ASP",
+        description="desc",
+        lat=40.6782,
+        lon=-73.9442,
+        location_label=label,
+        location_title=title,
+    )
+
+    ev = next(iter(_ICal.from_ical(ical_text).walk("VEVENT")))
+
+    geo_ical = ev.get("geo").to_ical()
+    if isinstance(geo_ical, bytes):
+        geo_ical = geo_ical.decode()
+    assert geo_ical == "40.6782;-73.9442"
+    assert label == "40.6782,-73.9442"
+    assert str(ev.get("location")) == label
+
+    xa = ev.get("X-APPLE-STRUCTURED-LOCATION")
+    assert str(xa) == "geo:40.6782,-73.9442"
+    assert str(xa.params["X-TITLE"]) == "VANDERBILT AVENUE (N side)"
+    assert str(xa.params["X-ADDRESS"]) == "VANDERBILT AVENUE (N side)"
+    assert "X-APPLE-RADIUS" in xa.params
+
+
+def test_build_vevent_ical_non_default_apple_radius_round_trips():
+    """A non-default Apple radius (500) survives verbatim as X-APPLE-RADIUS.
+
+    Regression guard: dropping the `radius_m=config.apple_radius_m`
+    threading between write_or_update_event and build_vevent_ical must fail
+    this test (every other radius test in this module uses 50, the shared
+    default of both DEFAULT_CALDAV_APPLE_RADIUS_M and the radius_m default).
+    """
+    from icalendar import Calendar as _ICal
+
+    cs = _require_caldav_sync()
+    schedule = _make_schedule_found(on_street="VANDERBILT AVENUE", side="N")
+    window = schedule.next_window
+    label = cs.render_location_label(40.6782, -73.9442)
+    title = cs.render_location_title(schedule)
+
+    ical_text = cs.build_vevent_ical(
+        uid="u",
+        window=window,
+        title="ASP",
+        description="desc",
+        lat=40.6782,
+        lon=-73.9442,
+        location_label=label,
+        location_title=title,
+        radius_m=500,
+    )
+
+    ev = next(iter(_ICal.from_ical(ical_text).walk("VEVENT")))
+    xa = ev.get("X-APPLE-STRUCTURED-LOCATION")
+    assert str(xa.params["X-APPLE-RADIUS"]) == "500", (
+        f"Expected X-APPLE-RADIUS == '500'; got {xa.params['X-APPLE-RADIUS']!r}"
+    )
+
+
+def test_caldav_config_negative_apple_radius_raises_value_error():
+    """CalDAVConfig(apple_radius_m=-1) raises ValueError (sign/range validation).
+
+    Mirrors the safety_window_minutes ValueError contract — a geofence
+    radius must be positive.
+    """
+    from custom_components.asp_parking.caldav_sync import CalDAVConfig
+
+    with pytest.raises(ValueError, match="apple_radius_m"):
+        CalDAVConfig(
+            url="https://example.com/dav/",
+            username="u",
+            password="p",
+            calendar_url="https://example.com/dav/cal/",
+            title_template="ASP: {street}",
+            safety_window_minutes=15,
+            apple_radius_m=-1,
+        )
+
+
+def test_build_vevent_ical_no_location_when_coords_absent():
+    """Graceful degradation: no coords → none of the three location properties."""
+    cs = _require_caldav_sync()
+    schedule = _make_schedule_found(on_street="VANDERBILT AVENUE", side="N")
+    window = schedule.next_window
+
+    ical_text = cs.build_vevent_ical(
+        uid="u",
+        window=window,
+        title="ASP",
+        description="desc",
+    )
+    unfolded = ical_text.replace("\r\n", "\n").replace("\n ", "")
+
+    assert "GEO:" not in unfolded
+    assert "LOCATION:" not in unfolded
+    assert "X-APPLE" not in unfolded
+
+
+async def test_write_or_update_event_threads_coords_into_ical():
+    """End-to-end: lat/lon passed to write_or_update_event reach the serialized ical.
+
+    Mirrors test_write_or_update_event_first_write_no_stored_uid's mocking; also
+    asserts that omitting coords yields an ical with none of the location props.
+    """
+    cs = _require_caldav_sync()
+
+    start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
+    schedule = _make_schedule_found(start=start)
+
+    config = SimpleNamespace(
+        url="https://example.com/dav/",
+        username="user",
+        password="pw",
+        calendar_url="https://example.com/dav/cal/",
+        title_template="ASP: {street}",
+        safety_window_minutes=15,
+        apple_radius_m=50,
+        include_location=True,
+    )
+
+    def _build_mock_client():
+        mock_cal = AsyncMock()
+        mock_cal.add_event = AsyncMock()
+        mock_principal = AsyncMock()
+        mock_principal.calendar = MagicMock(return_value=mock_cal)
+        mock_client = AsyncMock()
+        mock_client.get_principal = AsyncMock(return_value=mock_principal)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        return mock_client, mock_cal
+
+    # With coords: the serialized ical carries the location trio.
+    mock_client, mock_cal = _build_mock_client()
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=mock_client,
+    ):
+        await cs.write_or_update_event(
+            config=config,
+            entry_id="entry_abc",
+            schedule=schedule,
+            stored_uid=None,
+            lat=40.6782,
+            lon=-73.9442,
+        )
+    ical_with = mock_cal.add_event.call_args.kwargs["ical"]
+    unfolded_with = ical_with.replace("\r\n", "\n").replace("\n ", "")
+    assert "GEO:40.6782;-73.9442" in unfolded_with
+    assert "X-APPLE-STRUCTURED-LOCATION" in unfolded_with
+
+    # Without coords: none of the location properties are emitted.
+    mock_client2, mock_cal2 = _build_mock_client()
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=mock_client2,
+    ):
+        await cs.write_or_update_event(
+            config=config,
+            entry_id="entry_abc",
+            schedule=schedule,
+            stored_uid=None,
+            lat=None,
+            lon=None,
+        )
+    ical_without = mock_cal2.add_event.call_args.kwargs["ical"]
+    unfolded_without = ical_without.replace("\r\n", "\n").replace("\n ", "")
+    assert "GEO:" not in unfolded_without
+    assert "LOCATION:" not in unfolded_without
+    assert "X-APPLE" not in unfolded_without
+
+
+async def test_write_or_update_event_include_location_false_omits_all_location_props():
+    """config.include_location=False is a privacy opt-out: even with lat/lon
+    supplied, GEO/LOCATION/X-APPLE-STRUCTURED-LOCATION must all be withheld.
+    """
+    cs = _require_caldav_sync()
+
+    start = datetime(2026, 5, 18, 8, 0, tzinfo=ZoneInfo("America/New_York"))
+    schedule = _make_schedule_found(start=start)
+
+    config = SimpleNamespace(
+        url="https://example.com/dav/",
+        username="user",
+        password="pw",
+        calendar_url="https://example.com/dav/cal/",
+        title_template="ASP: {street}",
+        safety_window_minutes=15,
+        apple_radius_m=50,
+        include_location=False,
+    )
+
+    mock_cal = AsyncMock()
+    mock_cal.add_event = AsyncMock()
+    mock_principal = AsyncMock()
+    mock_principal.calendar = MagicMock(return_value=mock_cal)
+    mock_client = AsyncMock()
+    mock_client.get_principal = AsyncMock(return_value=mock_principal)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.caldav.aio.AsyncDAVClient",
+        return_value=mock_client,
+    ):
+        await cs.write_or_update_event(
+            config=config,
+            entry_id="entry_abc",
+            schedule=schedule,
+            stored_uid=None,
+            lat=40.6782,
+            lon=-73.9442,
+        )
+    ical_text = mock_cal.add_event.call_args.kwargs["ical"]
+    unfolded = ical_text.replace("\r\n", "\n").replace("\n ", "")
+    assert "GEO:" not in unfolded
+    assert "LOCATION:" not in unfolded
+    assert "X-APPLE" not in unfolded

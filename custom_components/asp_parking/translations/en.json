@@ -105,14 +105,18 @@
           "caldav_username": "Username",
           "caldav_password": "Password",
           "caldav_safety_window": "Safety window",
-          "caldav_event_title_template": "Event title template"
+          "caldav_event_title_template": "Event title template",
+          "caldav_include_location": "Include parked location",
+          "caldav_apple_radius_m": "Apple geofence radius"
         },
         "data_description": {
           "caldav_url": "CalDAV server URL. Supports Nextcloud, Fastmail, iCloud, and other CalDAV-compatible servers.",
           "caldav_username": "CalDAV account username.",
           "caldav_password": "CalDAV account password or app-specific password.",
           "caldav_safety_window": "Position changes within this window before the next move time will NOT delete the calendar event. Default 15 minutes.",
-          "caldav_event_title_template": "Title template. Supported placeholders: [street], [time], [side] (wrap each name in curly braces). Default: ASP: [street]."
+          "caldav_event_title_template": "Title template. Supported placeholders: [street], [time], [side] (wrap each name in curly braces). Default: ASP: [street].",
+          "caldav_include_location": "When enabled, your parked car's GPS coordinates are published to the CalDAV server as part of the calendar event, visible to anyone with access to that calendar. Off by default — no location data is shared unless you turn this on.",
+          "caldav_apple_radius_m": "Radius in meters for the iOS (Apple) reminder geofence around the parked location. Only used when parked location is included."
         }
       },
       "caldav_calendar": {

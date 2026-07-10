@@ -46,8 +46,22 @@ from urllib.parse import quote as _url_quote
 
 import caldav  # top-level package — present on all caldav versions
 from caldav.lib import error as caldav_error
-from icalendar import Calendar, Event
+from icalendar import Calendar, Event, Parameters, vUri
 
+from .const import (
+    CONF_CALDAV_APPLE_RADIUS_M,
+    CONF_CALDAV_CALENDAR,
+    CONF_CALDAV_EVENT_TITLE_TEMPLATE,
+    CONF_CALDAV_INCLUDE_LOCATION,
+    CONF_CALDAV_PASSWORD,
+    CONF_CALDAV_SAFETY_WINDOW,
+    CONF_CALDAV_URL,
+    CONF_CALDAV_USERNAME,
+    DEFAULT_CALDAV_APPLE_RADIUS_M,
+    DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE,
+    DEFAULT_CALDAV_INCLUDE_LOCATION,
+    DEFAULT_CALDAV_SAFETY_WINDOW,
+)
 from .gps2asp.schedule.models import ScheduleFound
 
 logger = logging.getLogger(__name__)
@@ -260,6 +274,8 @@ class CalDAVConfig:
     calendar_url: str
     title_template: str
     safety_window_minutes: int
+    apple_radius_m: int = DEFAULT_CALDAV_APPLE_RADIUS_M
+    include_location: bool = DEFAULT_CALDAV_INCLUDE_LOCATION
 
     def __post_init__(self) -> None:
         """Validate fields at construction time (runs before the dataclass freeze)."""
@@ -271,28 +287,20 @@ class CalDAVConfig:
             raise ValueError(
                 f"CalDAVConfig.safety_window_minutes must be >= 0, got {self.safety_window_minutes}"
             )
+        if self.apple_radius_m <= 0:
+            raise ValueError(
+                f"CalDAVConfig.apple_radius_m must be > 0, got {self.apple_radius_m}"
+            )
 
     @classmethod
     def from_options(cls, options: dict[str, Any]) -> "CalDAVConfig":
         """Build a CalDAVConfig from a HA config entry options dict.
 
-        Imports CONF_CALDAV_* lazily to avoid a circular import between
-        ``caldav_sync`` and ``const`` (the latter is small and HA-agnostic,
-        but the lazy import keeps the module-import graph simple).
+        ``const.py`` is HA-agnostic and does not import ``caldav_sync``, so
+        no import cycle exists — all ``CONF_CALDAV_*`` / ``DEFAULT_CALDAV_*``
+        names are imported once at module top (see the module-level import
+        block above).
         """
-        # Local import to keep the module-load graph minimal and to avoid
-        # any potential circular import with .const additions in Plan 03.
-        from .const import (  # noqa: PLC0415 — intentional lazy import
-            CONF_CALDAV_CALENDAR,
-            CONF_CALDAV_EVENT_TITLE_TEMPLATE,
-            CONF_CALDAV_PASSWORD,
-            CONF_CALDAV_SAFETY_WINDOW,
-            CONF_CALDAV_URL,
-            CONF_CALDAV_USERNAME,
-            DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE,
-            DEFAULT_CALDAV_SAFETY_WINDOW,
-        )
-
         return cls(
             # BUG-C-003: use options.get() (not bare subscript). A missing
             # CONF_CALDAV_URL key used to raise an opaque KeyError that
@@ -313,6 +321,18 @@ class CalDAVConfig:
                 options.get(
                     CONF_CALDAV_SAFETY_WINDOW,
                     DEFAULT_CALDAV_SAFETY_WINDOW,
+                )
+            ),
+            apple_radius_m=int(
+                options.get(
+                    CONF_CALDAV_APPLE_RADIUS_M,
+                    DEFAULT_CALDAV_APPLE_RADIUS_M,
+                )
+            ),
+            include_location=bool(
+                options.get(
+                    CONF_CALDAV_INCLUDE_LOCATION,
+                    DEFAULT_CALDAV_INCLUDE_LOCATION,
                 )
             ),
         )
@@ -337,15 +357,28 @@ class _SafeDict(dict):
         return "{" + key + "}"
 
 
+def _street_and_side(schedule: ScheduleFound) -> tuple[str, str]:
+    """Return the parked-car ``(on_street, side_of_street)`` pair.
+
+    Shared defensive-getattr pattern used by every renderer below so the
+    on_street/side_of_street defaulting logic lives in exactly one place.
+    """
+    return (
+        getattr(schedule, "on_street", "") or "",
+        getattr(schedule, "side_of_street", "") or "",
+    )
+
+
 def render_title(template: str, schedule: ScheduleFound) -> str:
     """Render the event title template against a ScheduleFound-shaped object.
 
     Supported placeholders: ``{street}``, ``{side}``, ``{time}``. Unknown
     placeholders are preserved literally via :class:`_SafeDict`.
     """
+    on_street, side_of_street = _street_and_side(schedule)
     fields = {
-        "street": getattr(schedule, "on_street", "") or "",
-        "side": getattr(schedule, "side_of_street", "") or "",
+        "street": on_street,
+        "side": side_of_street,
         "time": getattr(schedule, "summary", "") or "",
     }
     return template.format_map(_SafeDict(fields))
@@ -356,12 +389,45 @@ def render_description(schedule: ScheduleFound) -> str:
 
     Format: ``"{on_street} ({side_of_street} side)\\n{summary}"`` — used
     verbatim as the VEVENT description. icalendar handles any RFC 5545
-    line-wrap escaping at serialisation time.
+    line-wrap escaping at serialisation time. The first line is single-
+    sourced from :func:`render_location_title` (same street/side label used
+    for X-TITLE/X-ADDRESS) so the format lives in exactly one place.
     """
-    on_street = getattr(schedule, "on_street", "") or ""
-    side_of_street = getattr(schedule, "side_of_street", "") or ""
     summary = getattr(schedule, "summary", "") or ""
-    return f"{on_street} ({side_of_street} side)\n{summary}"
+    return f"{render_location_title(schedule)}\n{summary}"
+
+
+def _fmt_coord(v: float) -> str:
+    """Format a coordinate with bounded precision and no trailing-zero noise.
+
+    Fixes float-repr jitter to a deterministic 6-decimal string, then strips
+    trailing zeros and any dangling decimal point: 40.6782 -> "40.6782",
+    40.0 -> "40".
+    """
+    return f"{v:.6f}".rstrip("0").rstrip(".")
+
+
+def render_location_title(schedule: ScheduleFound) -> str:
+    """Return the street label reused for X-TITLE / X-ADDRESS.
+
+    Format: ``"{on_street} ({side_of_street} side)"`` — same defensive
+    getattr pattern as :func:`render_description`.
+    """
+    on_street, side_of_street = _street_and_side(schedule)
+    return f"{on_street} ({side_of_street} side)"
+
+
+def render_location_label(lat: float, lon: float) -> str:
+    """Return the LOCATION text that Android/Google geocodes.
+
+    Format: pure coordinates, ``"lat,lon"`` — no street text, no em-dash,
+    no parentheses. Deterministic geocoding for Google/Android travel-time
+    directions requires LOCATION to contain ONLY coordinates; the
+    human-readable street/side label lives in SUMMARY/DESCRIPTION and in
+    the Apple X-APPLE-STRUCTURED-LOCATION X-TITLE/X-ADDRESS params instead
+    (see :func:`render_location_title`).
+    """
+    return f"{_fmt_coord(lat)},{_fmt_coord(lon)}"
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +468,11 @@ def build_vevent_ical(
     window: Any,
     title: str,
     description: str,
+    lat: float | None = None,
+    lon: float | None = None,
+    location_label: str | None = None,
+    location_title: str | None = None,
+    radius_m: int = DEFAULT_CALDAV_APPLE_RADIUS_M,
 ) -> str:
     """Return RFC 5545 iCalendar text for a single VEVENT.
 
@@ -426,6 +497,44 @@ def build_vevent_ical(
     ev.add("dtend", window.end_datetime)
     # RFC 5545 §3.8.7.2: DTSTAMP MUST be in UTC.
     ev.add("dtstamp", datetime.now(timezone.utc))
+    # Location is strictly additive: only emitted when a GPS fix is known.
+    # When either coordinate is None the branch is skipped entirely, keeping
+    # today's byte-for-byte output for the no-location case.
+    if lat is not None and lon is not None:
+        # RFC 5545 machine coordinates (semicolon-separated on the wire).
+        # Rounded to 6 decimals — the SAME precision _fmt_coord() uses for
+        # LOCATION and the X-APPLE-STRUCTURED-LOCATION geo: URI, so all
+        # three encode the identical coordinate value. The TEXTUAL form
+        # differs by design: icalendar's vGeo serialiser keeps trailing
+        # zeros (a whole-number coordinate renders "40.0"), while
+        # _fmt_coord() strips them ("40"). This is cosmetic only — it does
+        # NOT indicate a numeric mismatch between GEO and LOCATION/geo:.
+        ev.add("geo", (round(lat, 6), round(lon, 6)))
+        # is not None (not truthy) so it stays consistent with the outer
+        # gate above: "caller omitted it" (None) skips LOCATION, "caller
+        # passed an empty string" does not silently do the same thing.
+        if location_label is not None:
+            # Pure lat,lon coordinates (no street text) geocoded by
+            # Android/Google for deterministic travel-time directions.
+            ev.add("location", location_label)
+        # Apple structured location. The params MUST live on val.params — with
+        # encode=0 a parameters= kwarg is silently dropped. vUri (not vText)
+        # keeps the geo: URI comma un-escaped.
+        val = vUri(f"geo:{_fmt_coord(lat)},{_fmt_coord(lon)}")
+        # X-ADDRESS is documented by Apple as a postal address, but
+        # ScheduleFound has no house number/city/zip to build one from —
+        # only a street name and cross streets. Reusing the street/side
+        # label is the best available stand-in and matches X-TITLE.
+        _addr = location_title or location_label or ""
+        val.params = Parameters(
+            {
+                "VALUE": "URI",
+                "X-ADDRESS": _addr,
+                "X-APPLE-RADIUS": str(radius_m),
+                "X-TITLE": _addr,
+            }
+        )
+        ev.add("X-APPLE-STRUCTURED-LOCATION", val, encode=False)
     cal.add_component(ev)
     return cal.to_ical().decode("utf-8")
 
@@ -698,6 +807,8 @@ async def write_or_update_event(
     entry_id: str,
     schedule: Any,
     stored_uid: str | None,
+    lat: float | None = None,
+    lon: float | None = None,
 ) -> str:
     """Idempotent write of the upcoming cleaning-window VEVENT.
 
@@ -717,6 +828,13 @@ async def write_or_update_event(
         schedule: a ScheduleFound-shaped object with ``next_window`` set.
         stored_uid: the UID we wrote on the previous cycle, loaded from
             :class:`homeassistant.helpers.storage.Store` by the caller.
+        lat: optional parked-car latitude. When both ``lat`` and ``lon`` are
+            provided AND ``config.include_location`` is ``True``,
+            GEO/LOCATION/X-APPLE-STRUCTURED-LOCATION are embedded in the
+            VEVENT; otherwise no location is embedded, matching pre-PR
+            behaviour. ``config.include_location`` is the user-facing
+            privacy opt-out for sharing GPS coordinates via the calendar.
+        lon: optional parked-car longitude. See ``lat``.
 
     Returns:
         The new UID. The caller MUST persist this via the Store before
@@ -743,11 +861,28 @@ async def write_or_update_event(
                     exc_info=True,
                 )
 
+        # config.include_location is the user's privacy opt-out (CALDAV-LOC-02):
+        # when False, lat/lon are withheld from build_vevent_ical entirely so
+        # GEO/LOCATION/X-APPLE-STRUCTURED-LOCATION are all skipped, not just
+        # the human-readable label.
+        if config.include_location and lat is not None and lon is not None:
+            event_lat, event_lon = lat, lon
+            location_title = render_location_title(schedule)
+            location_label = render_location_label(lat, lon)
+        else:
+            event_lat, event_lon = None, None
+            location_label = None
+            location_title = None
         ical_text = build_vevent_ical(
             uid=new_uid,
             window=window,
             title=render_title(config.title_template, schedule),
             description=render_description(schedule),
+            lat=event_lat,
+            lon=event_lon,
+            location_label=location_label,
+            location_title=location_title,
+            radius_m=config.apple_radius_m,
         )
         try:
             await cal.add_event(ical=ical_text)

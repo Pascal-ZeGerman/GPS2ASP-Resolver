@@ -197,6 +197,7 @@ def _make_coord_stub_caldav(
         _caldav_write_error_notified=False,
         _caldav_delete_error_notified=False,
         _caldav_lock=asyncio.Lock(),
+        _pipeline_lock=asyncio.Lock(),
         _caldav_write_task=None,
         _caldav_delete_task=None,
         _last_suspension_state=is_suspended,
@@ -225,7 +226,7 @@ async def test_resolve_writes_event_when_caldav_configured():
     schedule = stub.data.schedule_result
 
     hook = _bind(stub, "_async_caldav_hook_after_resolve")
-    await hook(schedule)
+    await hook(schedule, None, None)
 
     assert stub.entry.async_create_background_task.call_count == 1
     name = stub.entry.async_create_background_task.call_args.kwargs.get("name")
@@ -240,7 +241,7 @@ async def test_resolve_skips_write_when_suspended():
     schedule = stub.data.schedule_result
 
     hook = _bind(stub, "_async_caldav_hook_after_resolve")
-    await hook(schedule)
+    await hook(schedule, None, None)
 
     assert stub.entry.async_create_background_task.call_count == 0, (
         "Suspended day must skip CalDAV write (raw suspension_state.is_suspended check)"
@@ -253,7 +254,7 @@ async def test_resolve_skips_write_when_caldav_url_absent():
     schedule = stub.data.schedule_result
 
     hook = _bind(stub, "_async_caldav_hook_after_resolve")
-    await hook(schedule)
+    await hook(schedule, None, None)
 
     assert stub.entry.async_create_background_task.call_count == 0, (
         "D-02: absent CONF_CALDAV_URL must spawn no background tasks"
@@ -267,7 +268,7 @@ async def test_resolve_with_no_next_window_spawns_delete():
     no_window_schedule = SimpleNamespace(status="no_asp_schedule", next_window=None)
 
     hook = _bind(stub, "_async_caldav_hook_after_resolve")
-    await hook(no_window_schedule)
+    await hook(no_window_schedule, None, None)
 
     assert stub.entry.async_create_background_task.call_count == 1
     name = stub.entry.async_create_background_task.call_args.kwargs.get("name")
@@ -725,6 +726,28 @@ async def test_write_or_update_success_dismisses_notification_and_resets_flag(
     )
 
 
+async def test_write_or_update_forwards_real_lat_lon_in_order(monkeypatch):
+    """Closes the test gap where all nine hook tests passed (None, None):
+    driven with real coordinates, _async_caldav_write_or_update forwards
+    lat then lon to caldav_sync.write_or_update_event unchanged."""
+    _require_caldav_sync()
+    stub = _make_coord_stub_caldav()
+    schedule = stub.data.schedule_result
+
+    with patch(
+        "custom_components.asp_parking.caldav_sync.write_or_update_event",
+        new_callable=AsyncMock,
+        return_value="uid@asp-parking.local",
+    ) as mock_write:
+        write = _bind(stub, "_async_caldav_write_or_update")
+        await write(schedule, lat=40.6782, lon=-73.9442)
+
+    mock_write.assert_awaited_once()
+    call_kwargs = mock_write.await_args.kwargs
+    assert call_kwargs.get("lat") == 40.6782
+    assert call_kwargs.get("lon") == -73.9442
+
+
 async def test_write_or_update_sanitises_username_in_error_notification(monkeypatch):
     """Error messages must not leak the CalDAV username into persistent notifications.
 
@@ -832,7 +855,7 @@ async def test_hook_after_resolve_noop_when_store_none():
     schedule = stub.data.schedule_result
 
     hook = _bind(stub, "_async_caldav_hook_after_resolve")
-    await hook(schedule)
+    await hook(schedule, None, None)
 
     assert stub.entry.async_create_background_task.call_count == 0, (
         "_caldav_store=None must make the hook a complete no-op"
@@ -849,7 +872,7 @@ async def test_hook_after_resolve_noop_when_suspended():
     schedule = stub.data.schedule_result
 
     hook = _bind(stub, "_async_caldav_hook_after_resolve")
-    await hook(schedule)
+    await hook(schedule, None, None)
 
     assert stub.entry.async_create_background_task.call_count == 0, (
         "Suspended state must prevent any CalDAV task from being spawned (Pitfall 4)"
@@ -874,7 +897,7 @@ async def test_hook_after_resolve_no_next_window_spawns_delete():
     )
 
     hook = _bind(stub, "_async_caldav_hook_after_resolve")
-    await hook(active_now_schedule)
+    await hook(active_now_schedule, None, None)
 
     assert stub.entry.async_create_background_task.call_count == 1
     name = stub.entry.async_create_background_task.call_args.kwargs.get("name")
@@ -950,7 +973,7 @@ async def test_hook_after_resolve_no_asp_schedule_spawns_delete():
     no_asp = SimpleNamespace(status="no_asp_schedule", next_window=None)
 
     hook = _bind(stub, "_async_caldav_hook_after_resolve")
-    await hook(no_asp)
+    await hook(no_asp, None, None)
 
     assert stub.entry.async_create_background_task.call_count == 1
     name = stub.entry.async_create_background_task.call_args.kwargs.get("name")
@@ -1170,7 +1193,7 @@ async def test_no_caldav_task_when_no_uid_and_no_window():
     no_window_schedule = SimpleNamespace(status="no_asp_schedule", next_window=None)
 
     hook = _bind(stub, "_async_caldav_hook_after_resolve")
-    await hook(no_window_schedule)
+    await hook(no_window_schedule, None, None)
 
     assert stub.entry.async_create_background_task.call_count == 0, (
         "BUG-C-004: with _caldav_uid=None AND next_window=None the hook "

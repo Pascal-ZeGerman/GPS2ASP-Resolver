@@ -60,8 +60,10 @@ except ImportError:  # pragma: no cover - parallel-wave merge fallback
     _sys.modules["custom_components.asp_parking.caldav_sync"] = caldav_sync
 
 from .const import (
+    CONF_CALDAV_APPLE_RADIUS_M,
     CONF_CALDAV_CALENDAR,
     CONF_CALDAV_EVENT_TITLE_TEMPLATE,
+    CONF_CALDAV_INCLUDE_LOCATION,
     CONF_CALDAV_PASSWORD,
     CONF_CALDAV_SAFETY_WINDOW,
     CONF_CALDAV_URL,
@@ -81,7 +83,9 @@ from .const import (
     CONF_REFRESH_INTERVAL,
     CONF_STALE_TIMEOUT,
     CONF_SUPPRESS_NOTIFICATIONS,
+    DEFAULT_CALDAV_APPLE_RADIUS_M,
     DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE,
+    DEFAULT_CALDAV_INCLUDE_LOCATION,
     DEFAULT_CALDAV_SAFETY_WINDOW,
     DEFAULT_MOVEMENT_THRESHOLD,
     DEFAULT_NOTIFY_LEAD_TIME,
@@ -583,6 +587,8 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                     CONF_CALDAV_CALENDAR,
                     CONF_CALDAV_SAFETY_WINDOW,
                     CONF_CALDAV_EVENT_TITLE_TEMPLATE,
+                    CONF_CALDAV_APPLE_RADIUS_M,
+                    CONF_CALDAV_INCLUDE_LOCATION,
                 ):
                     options.pop(k, None)
                 return self.async_create_entry(title="", data=options)
@@ -611,6 +617,16 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                         CONF_CALDAV_SAFETY_WINDOW, DEFAULT_CALDAV_SAFETY_WINDOW
                     )
                 )
+                apple_radius_m = int(
+                    user_input.get(
+                        CONF_CALDAV_APPLE_RADIUS_M, DEFAULT_CALDAV_APPLE_RADIUS_M
+                    )
+                )
+                include_location = bool(
+                    user_input.get(
+                        CONF_CALDAV_INCLUDE_LOCATION, DEFAULT_CALDAV_INCLUDE_LOCATION
+                    )
+                )
                 template = (
                     user_input.get(CONF_CALDAV_EVENT_TITLE_TEMPLATE)
                     or DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE
@@ -622,6 +638,8 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 self._options[CONF_CALDAV_USERNAME] = username
                 self._options[CONF_CALDAV_PASSWORD] = password
                 self._options[CONF_CALDAV_SAFETY_WINDOW] = safety_window
+                self._options[CONF_CALDAV_APPLE_RADIUS_M] = apple_radius_m
+                self._options[CONF_CALDAV_INCLUDE_LOCATION] = include_location
                 self._options[CONF_CALDAV_EVENT_TITLE_TEMPLATE] = template
                 return await self.async_step_caldav_calendar()
 
@@ -664,6 +682,26 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
+                vol.Optional(
+                    CONF_CALDAV_APPLE_RADIUS_M,
+                    default=opts.get(
+                        CONF_CALDAV_APPLE_RADIUS_M, DEFAULT_CALDAV_APPLE_RADIUS_M
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=10,
+                        max=1000,
+                        step=1,
+                        unit_of_measurement="m",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_CALDAV_INCLUDE_LOCATION,
+                    default=opts.get(
+                        CONF_CALDAV_INCLUDE_LOCATION, DEFAULT_CALDAV_INCLUDE_LOCATION
+                    ),
+                ): selector.BooleanSelector(),
                 vol.Optional(
                     CONF_CALDAV_EVENT_TITLE_TEMPLATE,
                     default=opts.get(

@@ -105,3 +105,10 @@ CONF_CALDAV_SAFETY_WINDOW = "caldav_safety_window"
 DEFAULT_CALDAV_SAFETY_WINDOW = 15  # minutes; D-04 / CALDAV-03
 CONF_CALDAV_EVENT_TITLE_TEMPLATE = "caldav_event_title_template"
 DEFAULT_CALDAV_EVENT_TITLE_TEMPLATE = "ASP: {street}"  # D-04
+CONF_CALDAV_APPLE_RADIUS_M = "caldav_apple_radius_m"
+DEFAULT_CALDAV_APPLE_RADIUS_M = 50  # metres; X-APPLE-RADIUS geofence trigger radius
+CONF_CALDAV_INCLUDE_LOCATION = "caldav_include_location"
+# Strict opt-in (decision #2): an ABSENT option key means OFF. Pre-upgrade
+# config entries (no caldav_include_location key present) never embed GPS
+# in calendar events unless the user explicitly enables this option.
+DEFAULT_CALDAV_INCLUDE_LOCATION = False
