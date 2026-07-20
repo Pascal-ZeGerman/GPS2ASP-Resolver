@@ -570,6 +570,16 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
         ``if not errors`` gate is the ONLY code path that writes to
         ``self._options``. T-34-01 mitigation: the password form default is
         hardcoded to ``""`` so a re-render after error does NOT echo it back.
+
+        A blank password submission means "keep the existing password"
+        (mirrors the NYC 311 API key pattern in ``async_step_init``) — since
+        the form default is always ``""`` per T-34-01, an empty field can't
+        be distinguished from "user didn't retype it" otherwise. Without
+        this fallback, reconfiguring ANY option (this step runs on every
+        options-flow pass once CalDAV is set up) would force re-entering the
+        CalDAV password every time, and — worse — a probe that happens to
+        succeed with a blank password (e.g. a lenient self-hosted server)
+        would silently overwrite the stored password with an empty string.
         """
         errors: dict[str, str] = {}
 
@@ -594,7 +604,10 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 return self.async_create_entry(title="", data=options)
 
             username = user_input.get(CONF_CALDAV_USERNAME, "") or ""
-            password = user_input.get(CONF_CALDAV_PASSWORD, "") or ""
+            submitted_password = user_input.get(CONF_CALDAV_PASSWORD, "") or ""
+            password = submitted_password or (
+                self.config_entry.options.get(CONF_CALDAV_PASSWORD, "") or ""
+            )
 
             try:
                 await caldav_sync.validate_connection(

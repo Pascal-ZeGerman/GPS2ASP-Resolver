@@ -455,6 +455,67 @@ async def test_caldav_step_validate_connection_called_with_submitted_creds(
 
 
 # ---------------------------------------------------------------------------
+# Blank-password-preserves-existing regression — mirrors the NYC 311 API key
+# pattern. Without this, reconfiguring ANY unrelated option would force
+# re-entering the CalDAV password every time (this step runs on every
+# options-flow pass), and a probe that happens to succeed with a blank
+# password would silently wipe the stored credential.
+# ---------------------------------------------------------------------------
+
+
+async def test_caldav_step_blank_password_keeps_existing_and_probes_with_it(
+    hass, enable_custom_integrations
+):
+    """Submitting a blank password re-uses the stored one for the probe AND
+    for persistence -- it must NOT be treated as 'clear the password'."""
+    stored = {
+        CONF_CALDAV_URL: "https://example.com/dav/",
+        CONF_CALDAV_USERNAME: "u",
+        CONF_CALDAV_PASSWORD: "existing_secret",
+    }
+    entry = _make_entry(hass, options=stored)
+
+    result = await _reach_caldav_step(hass, entry)
+    assert result["step_id"] == "caldav"
+
+    with (
+        patch(
+            "custom_components.asp_parking.config_flow.caldav_sync.validate_connection",
+            new_callable=AsyncMock,
+        ) as mock_validate,
+        patch(
+            "custom_components.asp_parking.config_flow.caldav_sync.list_calendars",
+            new_callable=AsyncMock,
+            return_value=[("https://srv/cal/work/", "Work")],
+        ),
+    ):
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                CONF_CALDAV_URL: "https://example.com/dav/",
+                CONF_CALDAV_USERNAME: "u",
+                CONF_CALDAV_PASSWORD: "",
+                CONF_CALDAV_SAFETY_WINDOW: 45,
+            },
+        )
+
+    # The probe must run with the STORED password, not the blank submission.
+    mock_validate.assert_awaited_once()
+    assert mock_validate.await_args.kwargs.get("password") == "existing_secret"
+
+    assert result["step_id"] == "caldav_calendar"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_CALDAV_CALENDAR: "https://srv/cal/work/"},
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    # The stored password must survive, unchanged.
+    assert result["data"][CONF_CALDAV_PASSWORD] == "existing_secret"
+    assert result["data"][CONF_CALDAV_SAFETY_WINDOW] == 45
+
+
+# ---------------------------------------------------------------------------
 # T-34-01 — password form default must be '' on re-render after error
 # ---------------------------------------------------------------------------
 
