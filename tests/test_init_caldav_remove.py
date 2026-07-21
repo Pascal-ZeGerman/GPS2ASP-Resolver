@@ -77,6 +77,7 @@ def _require_async_remove_entry():
             "async_remove_entry not importable — Plan 05 has not yet added it to "
             "custom_components/asp_parking/__init__.py"
         )
+        return None  # unreachable: pytest.fail() always raises
 
 
 # ---------------------------------------------------------------------------

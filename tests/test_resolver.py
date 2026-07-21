@@ -337,7 +337,7 @@ class TestDetermineSideSkippedAtZeroConfidence:
         _patch_index(monkeypatch, [candidate])
 
         # Counter wrapping determine_side
-        import gps2asp.resolver as resolver_pkg
+        from gps2asp import resolver as resolver_pkg
         from gps2asp.resolver import side_resolver as sr_mod
 
         call_count = {"n": 0}

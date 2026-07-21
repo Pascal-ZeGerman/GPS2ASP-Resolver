@@ -243,7 +243,7 @@ async def resolve_segment(
         # has_asp_right because _check_has_asp() sets both to the same
         # boolean; a compass→left/right mapping would require knowing the
         # segment bearing and is not reliable without per-side index data.
-        assert (
+        assert (  # nosec B101
             side is not None
         )  # guaranteed: AmbiguousResolutionError raised above when not is_confident
         has_asp = best.has_asp_left or best.has_asp_right

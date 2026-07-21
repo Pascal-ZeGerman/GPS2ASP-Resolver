@@ -94,7 +94,7 @@ _BOROUGH_LABELS: dict[str, str] = {
 }
 
 # Validate that both dicts are in sync — adding a new borough requires both.
-assert set(_BOROUGH_ADDRESSES.keys()) == set(_BOROUGH_LABELS.keys()), (
+assert set(_BOROUGH_ADDRESSES.keys()) == set(_BOROUGH_LABELS.keys()), (  # nosec B101
     "Borough address and label dicts are out of sync"
 )
 

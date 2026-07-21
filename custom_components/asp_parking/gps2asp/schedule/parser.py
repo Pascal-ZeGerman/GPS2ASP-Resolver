@@ -110,9 +110,9 @@ def parse_time_token(token: str) -> time:
     """
     token = token.strip().upper()
 
-    if token == "NOON":
+    if token == "NOON":  # nosec B105 - time-of-day literal, not a credential
         return time(12, 0)
-    if token == "MIDNIGHT":
+    if token == "MIDNIGHT":  # nosec B105 - time-of-day literal, not a credential
         return time(0, 0)
 
     match = re.match(r"^(\d{1,2})(?::(\d{2}))?(AM|PM)$", token)

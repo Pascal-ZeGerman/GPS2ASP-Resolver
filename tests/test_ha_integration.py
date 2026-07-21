@@ -711,9 +711,6 @@ class TestStaleTimeout:
 # Pattern for "Today" tier: "⚠ Today, 8:30 AM"
 _TODAY_FORMAT_RE = re.compile(r"^⚠ Today, \d{1,2}:\d{2} (AM|PM)$")
 
-# Pattern for "Tomorrow" tier: "Tomorrow, 8:30 AM"
-_TOMORROW_FORMAT_RE = re.compile(r"^Tomorrow, \d{1,2}:\d{2} (AM|PM)$")
-
 # Pattern for "other day" tier: "Thursday (5/3), 8:30 AM"
 # Full weekday name + unpadded M/D (no %-d which breaks on non-Linux CI).
 _OTHER_DAY_FORMAT_RE = re.compile(
