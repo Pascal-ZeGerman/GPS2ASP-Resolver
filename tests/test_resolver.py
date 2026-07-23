@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 
 import pytest
@@ -337,7 +338,9 @@ class TestDetermineSideSkippedAtZeroConfidence:
         _patch_index(monkeypatch, [candidate])
 
         # Counter wrapping determine_side
-        import gps2asp.resolver as resolver_pkg
+        # (module object reused via sys.modules rather than re-imported, so this
+        # file doesn't mix `import` and `from ... import` for gps2asp.resolver)
+        resolver_pkg = sys.modules[resolve.__module__]
         from gps2asp.resolver import side_resolver as sr_mod
 
         call_count = {"n": 0}

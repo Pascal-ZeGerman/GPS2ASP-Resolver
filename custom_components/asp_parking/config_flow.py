@@ -12,6 +12,7 @@ both flows in sync.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -97,6 +98,8 @@ from .const import (
 )
 from .gps2asp.suspension import NYC311Client
 from .gps2asp.suspension.poller import NYC311AuthError
+
+logger = logging.getLogger(__name__)
 
 # Allowed characters in a CalDAV event title template: printable text plus
 # the {placeholder} syntax. Rejects attribute access ({x.y}) and index
@@ -254,7 +257,13 @@ class ASPParkingConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except NYC311AuthError:
                     errors[CONF_NYC311_API_KEY] = "invalid_api_key"
                 except Exception:  # noqa: BLE001
-                    pass  # Network error during validation -- accept key anyway
+                    # Network error during validation -- accept key anyway, but
+                    # log so a misbehaving key isn't silently invisible later.
+                    logger.debug(
+                        "NYC 311 API key validation failed with a non-auth error; "
+                        "accepting the key anyway",
+                        exc_info=True,
+                    )
             if not errors:
                 options = {**self._settings}
                 if api_key:
@@ -319,7 +328,13 @@ class ASPParkingOptionsFlow(config_entries.OptionsFlow):
                 except NYC311AuthError:
                     errors[CONF_NYC311_API_KEY] = "invalid_api_key"
                 except Exception:  # noqa: BLE001
-                    pass  # Network error during validation -- accept key anyway
+                    # Network error during validation -- accept key anyway, but
+                    # log so a misbehaving key isn't silently invisible later.
+                    logger.debug(
+                        "NYC 311 API key validation failed with a non-auth error; "
+                        "accepting the key anyway",
+                        exc_info=True,
+                    )
             if not errors:
                 options: dict[str, Any] = {**cleaned}
                 if nyc311_entity:

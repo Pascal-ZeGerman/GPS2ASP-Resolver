@@ -80,7 +80,7 @@ def _background_task_sink(hass, coro, *, name=""):
     try:
         coro.close()
     except Exception:
-        pass
+        pass  # coroutine already closed/consumed elsewhere -- nothing to clean up
     return MagicMock()
 
 
