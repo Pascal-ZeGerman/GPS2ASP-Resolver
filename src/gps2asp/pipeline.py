@@ -25,7 +25,7 @@ async def resolve_asp(
     debug: Literal[False] = ...,
     suspension_status: SuspensionInfo | None = ...,
     suspended_dates: frozenset[date] | None = ...,
-) -> ASPResult: ...  # lgtm[py/ineffectual-statement]
+) -> ASPResult: ...
 
 
 @overload
@@ -35,7 +35,7 @@ async def resolve_asp(
     debug: Literal[True],
     suspension_status: SuspensionInfo | None = ...,
     suspended_dates: frozenset[date] | None = ...,
-) -> ASPDebugResult: ...  # lgtm[py/ineffectual-statement]
+) -> ASPDebugResult: ...
 
 
 async def resolve_asp(
