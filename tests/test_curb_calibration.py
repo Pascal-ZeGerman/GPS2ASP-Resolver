@@ -13,7 +13,6 @@ from shapely.geometry import LineString
 
 from gps2asp.resolver.curb_calibration import (
     CURB_SAMPLE_STEP_FT,
-    SPREAD_GATE_FT,
     SegmentCalibration,
     derive_segment_calibration,
 )
