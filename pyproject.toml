@@ -27,7 +27,8 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-homeassistant-custom-component",
-    "mypy",
+    "mypy==2.1.0",
+    "ruff==0.15.14",
     "caldav[async]==3.2.0",
 ]
 
