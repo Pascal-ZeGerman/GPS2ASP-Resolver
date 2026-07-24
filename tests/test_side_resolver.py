@@ -7,6 +7,7 @@ from gps2asp.resolver.side_resolver import (
     compute_distance_to_endpoints,
     compute_perpendicular_distance,
     determine_side,
+    signed_offset,
 )
 
 
@@ -82,6 +83,41 @@ class TestDetermineSide:
         # Point near the north-running part, to the right -> E
         result = determine_side(60, 25, segment, nominaldir="N")
         assert result == "E"
+
+
+class TestSignedOffset:
+    """signed_offset() — perpendicular signed distance, +ve = LEFT/N of the directed segment."""
+
+    def test_point_north_of_east_running_is_positive(self):
+        """Point 10 ft LEFT/North of an East-running segment returns ~+10.0."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert signed_offset(50, 10, segment) == pytest.approx(10.0)
+
+    def test_point_south_of_east_running_is_negative(self):
+        """Point 10 ft RIGHT/South of an East-running segment returns ~-10.0."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert signed_offset(50, -10, segment) == pytest.approx(-10.0)
+
+    def test_point_on_centerline_is_zero(self):
+        """Point exactly on the segment returns ~0.0."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert signed_offset(50, 0, segment) == pytest.approx(0.0, abs=1e-9)
+
+    def test_sign_agrees_with_determine_side_convention(self):
+        """A point determine_side calls 'N' on an East-running block has a positive offset."""
+        segment = LineString([(0, 0), (100, 0)])
+        # North point -> determine_side 'N', signed_offset > 0
+        assert determine_side(50, 10, segment, nominaldir="E") == "N"
+        assert signed_offset(50, 10, segment) > 0
+        # South point -> determine_side 'S', signed_offset < 0
+        assert determine_side(50, -10, segment, nominaldir="E") == "S"
+        assert signed_offset(50, -10, segment) < 0
+
+    def test_zero_length_segment_raises_value_error(self):
+        """Degenerate zero-length LineString must raise ValueError (BUG-R-004 style)."""
+        seg = LineString([(100, 200), (100, 200)])
+        with pytest.raises(ValueError, match="zero-length"):
+            signed_offset(100.0, 200.0, seg)
 
 
 class TestPerpendicularDistance:
