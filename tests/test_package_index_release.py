@@ -28,9 +28,7 @@ _MODULE_PATH = (
 
 
 def _load_packager():
-    spec = importlib.util.spec_from_file_location(
-        "package_index_release", _MODULE_PATH
-    )
+    spec = importlib.util.spec_from_file_location("package_index_release", _MODULE_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
