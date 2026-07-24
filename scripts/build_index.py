@@ -21,6 +21,7 @@ import json
 import logging
 import math
 import os
+import statistics
 import sys
 import time
 from collections import Counter, deque
@@ -30,9 +31,15 @@ import geopandas as gpd
 import requests
 import zstandard
 from rtree import index as rtree_index
-from shapely.geometry import LineString
+from shapely.geometry import LineString, box
+from shapely.ops import unary_union
 from shapely.strtree import STRtree
 
+from gps2asp.resolver.curb_calibration import (
+    SegmentCalibration,
+    derive_segment_calibration,
+)
+from gps2asp.resolver.side_resolver import signed_offset
 from gps2asp.signs.normalize import normalize_to_soda
 
 logger = logging.getLogger("gps2asp.build")
@@ -949,11 +956,126 @@ def _check_has_asp(
     return has_left, has_right
 
 
+def _roadbed_center_offset(
+    centerline: LineString,
+    roadbed_tree: STRtree,
+    roadbed_polys: list,
+) -> float | None:
+    """Independent roadbed-derived centre offset ``c`` (build-time cross-check).
+
+    Ports spike 007's ``roadbed_c``: cast a perpendicular transect at each of 39
+    interior samples along the centerline, clip it to the flanking pavement
+    polygon, take the signed offset of each clipped mid-span, and return the
+    median. This is a SECOND authoritative source, independent of the curb lines;
+    the caller downgrades a segment whose curb ``c`` disagrees with this value by
+    more than ``ROADBED_DISAGREEMENT_FT``.
+
+    Args:
+        centerline: CSCL segment centerline (EPSG:2263).
+        roadbed_tree: STRtree of roadbed polygons.
+        roadbed_polys: Polygon list aligned with ``roadbed_tree`` query indices.
+
+    Returns:
+        Median roadbed centre offset (feet, same sign convention as the curb
+        ``c``), or ``None`` when the pavement is absent/too thin to trust.
+    """
+    minx, miny, maxx, maxy = centerline.bounds
+    qbox = box(
+        minx - ROADBED_QUERY_PAD_FT,
+        miny - ROADBED_QUERY_PAD_FT,
+        maxx + ROADBED_QUERY_PAD_FT,
+        maxy + ROADBED_QUERY_PAD_FT,
+    )
+    idxs = roadbed_tree.query(qbox)
+    polys = [roadbed_polys[i] for i in idxs]
+    if not polys:
+        return None
+
+    pavement = unary_union(polys)
+    length = centerline.length
+    mids: list[float] = []
+    for i in range(1, 40):
+        frac = i / 40.0
+        cp = centerline.interpolate(frac, normalized=True)
+        a = centerline.interpolate(max(0.0, frac * length - 1.0))
+        b = centerline.interpolate(min(length, frac * length + 1.0))
+        tx, ty = b.x - a.x, b.y - a.y
+        tn = math.hypot(tx, ty) or 1.0
+        px, py = -ty / tn, tx / tn
+        transect = LineString(
+            [(cp.x - px * 80, cp.y - py * 80), (cp.x + px * 80, cp.y + py * 80)]
+        )
+        clip = transect.intersection(pavement)
+        if clip.is_empty or clip.length < 8:
+            continue
+        mids.append(signed_offset(clip.centroid.x, clip.centroid.y, centerline))
+
+    if len(mids) < 5:
+        return None
+    return round(statistics.median(mids), 2)
+
+
+def _derive_segment_fields(
+    geom: LineString,
+    cscl_width_ft: float,
+    curb_tree: STRtree,
+    curb_lines: list[LineString],
+    roadbed_tree: STRtree,
+    roadbed_polys: list,
+) -> SegmentCalibration:
+    """Derive one segment's calibration, spread-gated and roadbed-cross-checked.
+
+    1. Query the curb STRtree for lines within a bbox of ``max(160, width*4)`` ft
+       around the segment.
+    2. Derive ``c`` / width / spreads via :func:`derive_segment_calibration`
+       (spread gate applied inside).
+    3. For a calibrated result, compute an independent roadbed ``c`` and DOWNGRADE
+       to non-calibrated when the two authoritative sources disagree by more than
+       ``ROADBED_DISAGREEMENT_FT`` (the measured spreads are retained so the
+       rejection reason stays inspectable).
+
+    Returns:
+        A :class:`SegmentCalibration` (calibrated flag drives the runtime fallback
+        chain).
+    """
+    query_pad = max(160.0, cscl_width_ft * 4.0)
+    minx, miny, maxx, maxy = geom.bounds
+    qbox = box(minx - query_pad, miny - query_pad, maxx + query_pad, maxy + query_pad)
+    flanking = [curb_lines[i] for i in curb_tree.query(qbox)]
+
+    cal = derive_segment_calibration(geom, flanking, cscl_width_ft)
+    if not cal.calibrated:
+        return cal
+
+    roadbed_c = _roadbed_center_offset(geom, roadbed_tree, roadbed_polys)
+    if (
+        roadbed_c is not None
+        and abs(cal.center_offset_c - roadbed_c) > ROADBED_DISAGREEMENT_FT
+    ):
+        # Two authoritative sources disagree -> do not trust c. Downgrade to
+        # non-calibrated (plain-CSCL fallback) but keep the measured spreads.
+        return SegmentCalibration(
+            center_offset_c=0.0,
+            curb_width_ft=None,
+            spread_n=cal.spread_n,
+            spread_s=cal.spread_s,
+            calibrated=False,
+        )
+
+    return cal
+
+
 def _build_rtree_and_metadata(
     gdf: gpd.GeoDataFrame,
     cross_streets: dict[int, tuple[str, str]],
     asp_lookup: set[tuple[str, str, str, str]],
     output_dir: Path,
+    *,
+    curb_calibration_enabled: bool = False,
+    curb_tree: STRtree | None = None,
+    curb_lines: list[LineString] | None = None,
+    roadbed_tree: STRtree | None = None,
+    roadbed_polys: list | None = None,
 ) -> dict:
     """Build the R-tree index and save segment metadata.
 
@@ -965,12 +1087,31 @@ def _build_rtree_and_metadata(
         cross_streets: Pre-computed cross streets mapping.
         asp_lookup: ASP sign tuples for has_asp flagging.
         output_dir: Directory to write index files.
+        curb_calibration_enabled: When True (and the curb/roadbed trees are
+            provided), derive per-segment calibration and write the five
+            calibration keys with measured values; otherwise write the
+            non-calibrated defaults.
+        curb_tree: STRtree of curb LineStrings (flanking-curb bbox queries).
+        curb_lines: Curb LineString list aligned with ``curb_tree`` indices.
+        roadbed_tree: STRtree of roadbed polygons (build-time cross-validator).
+        roadbed_polys: Roadbed polygon list aligned with ``roadbed_tree`` indices.
 
     Returns:
-        Build statistics dict.
+        Build statistics dict (includes calibrated_count / non_calibrated_count).
     """
     logger.info("Building R-tree index...")
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    calibrate = bool(
+        curb_calibration_enabled
+        and curb_tree is not None
+        and curb_lines is not None
+        and roadbed_tree is not None
+        and roadbed_polys is not None
+    )
+    logger.info(
+        "Per-segment curb calibration: %s", "ENABLED" if calibrate else "disabled"
+    )
 
     index_path = str(output_dir / "segments")
 
@@ -983,6 +1124,8 @@ def _build_rtree_and_metadata(
     asp_count = 0
     insert_count = 0
     skipped = 0
+    calibrated_count = 0
+    non_calibrated_count = 0
 
     for _, row in gdf.iterrows():
         geom = row.geometry
@@ -1025,6 +1168,32 @@ def _build_rtree_and_metadata(
         except (ValueError, TypeError):
             streetwidth = 0.0
 
+        # Per-segment curb calibration (SC-1/SC-5). Derive c/width from flanking
+        # curbs, spread-gated (40-05) and roadbed-cross-checked; fall back to the
+        # non-calibrated defaults when disabled, geometry is missing, or the two
+        # sources disagree. The five keys use the EXACT 40-04 name contract.
+        if calibrate and geom.geom_type == "LineString":
+            cal = _derive_segment_fields(
+                geom,
+                streetwidth if streetwidth > 0 else 30.0,
+                curb_tree,
+                curb_lines,
+                roadbed_tree,
+                roadbed_polys,
+            )
+        else:
+            cal = SegmentCalibration(
+                center_offset_c=0.0,
+                curb_width_ft=None,
+                spread_n=None,
+                spread_s=None,
+                calibrated=False,
+            )
+        if cal.calibrated:
+            calibrated_count += 1
+        else:
+            non_calibrated_count += 1
+
         # Build segment metadata
         segments[str(pid)] = {
             "geometry_wkt": geom.wkt,
@@ -1038,6 +1207,11 @@ def _build_rtree_and_metadata(
             "borocode": str(row.get("boroughcode", row.get("borocode", ""))),
             "has_asp_left": has_asp_left,
             "has_asp_right": has_asp_right,
+            "center_offset_c": cal.center_offset_c,
+            "curb_width_ft": cal.curb_width_ft,
+            "spread_n": cal.spread_n,
+            "spread_s": cal.spread_s,
+            "calibrated": cal.calibrated,
         }
 
     # Flush and close the R-tree index to ensure files are written
@@ -1046,6 +1220,11 @@ def _build_rtree_and_metadata(
         "R-tree index built with %d segments (skipped %d)",
         insert_count,
         skipped,
+    )
+    logger.info(
+        "Curb calibration: %d calibrated, %d non-calibrated",
+        calibrated_count,
+        non_calibrated_count,
     )
 
     # Save segment metadata as JSON
@@ -1069,6 +1248,8 @@ def _build_rtree_and_metadata(
     return {
         "filtered_count": insert_count,
         "asp_segments_count": asp_count,
+        "calibrated_count": calibrated_count,
+        "non_calibrated_count": non_calibrated_count,
         "index_file_sizes": {
             "segments.idx": idx_size,
             "segments.dat": dat_size,
@@ -1150,6 +1331,23 @@ def build_index(
     # Step D: Fetch ASP signs
     asp_lookup = _fetch_asp_signs()
 
+    # Step D1: Bulk-download the curb + roadbed planimetric layers ONCE and build
+    # the spatial-lookup trees. Skipped entirely when --no-curb-calibration is
+    # set (calibration-free index). Roadbed is a build-time cross-validator only.
+    curb_tree: STRtree | None = None
+    curb_lines: list[LineString] | None = None
+    roadbed_tree: STRtree | None = None
+    roadbed_polys: list | None = None
+    if not no_curb_calibration:
+        curbs = _download_curbs(curb_cache)
+        curb_tree, curb_lines = _build_curb_strtree(curbs)
+        logger.info("Curb STRtree built with %d curb lines", len(curb_lines))
+        roadbed = _download_roadbed(roadbed_cache)
+        roadbed_tree, roadbed_polys = _build_roadbed_strtree(roadbed)
+        logger.info("Roadbed STRtree built with %d polygons", len(roadbed_polys))
+    else:
+        logger.info("Curb calibration DISABLED (--no-curb-calibration)")
+
     # Step D2: Build graph and propagate ASP flags to interior blocks
     logger.info("Building street adjacency graph...")
     gdf_street_names: dict[int, str] = {
@@ -1180,6 +1378,11 @@ def build_index(
         cross_streets,
         asp_lookup,
         output_dir,
+        curb_calibration_enabled=not no_curb_calibration,
+        curb_tree=curb_tree,
+        curb_lines=curb_lines,
+        roadbed_tree=roadbed_tree,
+        roadbed_polys=roadbed_polys,
     )
 
     # Step F2: Write graph.json.zst (2-hop filtered + zstandard compressed)
