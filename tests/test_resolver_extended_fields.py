@@ -21,6 +21,7 @@ from gps2asp.resolver import resolve_segment
 from gps2asp.resolver.confidence import resolve_effective_width
 from gps2asp.resolver.models import ResolutionResult, SegmentCandidate
 from gps2asp.resolver.side_resolver import compute_perpendicular_distance
+from gps2asp.resolver.spatial_index import SpatialIndex
 
 
 def _make_segment_candidate(
@@ -184,6 +185,97 @@ class TestSegmentCandidateCalibrationFields:
         assert candidate.spread_n == pytest.approx(1.5)
         assert candidate.spread_s == pytest.approx(2.0)
         assert candidate.calibrated is True
+
+
+class _FakeRTree:
+    """Minimal rtree stand-in: returns the same ids for nearest()/intersection().
+
+    The real geometry-distance filter in nearest()/query_radius() still runs, so
+    the returned candidates are governed by the WKT + query point, not this stub.
+    """
+
+    def __init__(self, ids: list[int]) -> None:
+        self._ids = list(ids)
+
+    def nearest(self, coords: tuple, n: int) -> list[int]:
+        return list(self._ids)
+
+    def intersection(self, coords: tuple) -> list[int]:
+        return list(self._ids)
+
+
+def _make_loader_index(segments: dict) -> SpatialIndex:
+    """Build a SpatialIndex wired to an in-memory fake rtree + segment dict."""
+    idx = SpatialIndex(index_dir="/nonexistent")
+    idx._index = _FakeRTree([int(k) for k in segments])  # type: ignore[assignment]
+    idx._segments = segments
+    return idx
+
+
+class TestSpatialIndexLoaderCalibration:
+    """Phase 40 Plan 04: both loader paths surface calibration fields.
+
+    Absent calibration keys (legacy index / from-source rebuild) MUST degrade
+    to the safe non-calibrated candidate (center_offset_c=0.0, calibrated=False)
+    with no KeyError.
+    """
+
+    _GEOM_WKT = "LINESTRING (1000 1000, 1100 1000)"
+    _QX, _QY = 1050.0, 1005.0  # 5ft off the centerline -> within all radii
+
+    def _segments(self) -> dict:
+        return {
+            "1": {
+                "geometry_wkt": self._GEOM_WKT,
+                "full_street_name": "CALIBRATED ST",
+                "center_offset_c": -2.38,
+                "curb_width_ft": 32.0,
+                "spread_n": 1.5,
+                "spread_s": 2.0,
+                "calibrated": True,
+            },
+            "2": {
+                "geometry_wkt": self._GEOM_WKT,
+                "full_street_name": "LEGACY ST",
+                # NONE of the calibration keys — must default safely.
+            },
+        }
+
+    def test_nearest_populates_calibration_and_legacy_defaults(self) -> None:
+        idx = _make_loader_index(self._segments())
+
+        by_id = {c.segment_id: c for c in idx.nearest(self._QX, self._QY)}
+
+        cal = by_id[1]
+        assert cal.calibrated is True
+        assert cal.center_offset_c == pytest.approx(-2.38)
+        assert cal.curb_width_ft == pytest.approx(32.0)
+        assert cal.spread_n == pytest.approx(1.5)
+        assert cal.spread_s == pytest.approx(2.0)
+
+        legacy = by_id[2]
+        assert legacy.calibrated is False
+        assert legacy.center_offset_c == 0.0
+        assert legacy.curb_width_ft is None
+        assert legacy.spread_n is None
+        assert legacy.spread_s is None
+
+    def test_query_radius_populates_calibration_and_legacy_defaults(self) -> None:
+        idx = _make_loader_index(self._segments())
+
+        by_id = {c.segment_id: c for c in idx.query_radius(self._QX, self._QY, 500.0)}
+
+        cal = by_id[1]
+        assert cal.calibrated is True
+        assert cal.center_offset_c == pytest.approx(-2.38)
+        assert cal.curb_width_ft == pytest.approx(32.0)
+
+        legacy = by_id[2]
+        assert legacy.calibrated is False
+        assert legacy.center_offset_c == 0.0
+        assert legacy.curb_width_ft is None
+        assert legacy.spread_n is None
+        assert legacy.spread_s is None
 
 
 def test_vendored_mirror_resolution_result_has_new_fields() -> None:
