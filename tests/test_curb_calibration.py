@@ -13,6 +13,7 @@ from shapely.geometry import LineString
 
 from gps2asp.resolver.curb_calibration import (
     CURB_SAMPLE_STEP_FT,
+    SPREAD_GATE_FT,
     SegmentCalibration,
     derive_segment_calibration,
 )
@@ -108,3 +109,48 @@ class TestDeriveIgnoresOutOfRange:
         assert cal.calibrated is False
         assert cal.center_offset_c == 0.0
         assert cal.curb_width_ft is None
+
+
+class TestSpreadGate:
+    """The mandatory >12 ft spread gate (spike 007) — the safety boundary.
+
+    Both flanks have samples in these cases, so the ONLY thing separating
+    calibrated from non-calibrated is the per-side spread. A widely scattered
+    curb (e.g. a divided road / median where two roadbeds' curbs get captured)
+    must self-flag as non-calibrated even though c/width are numerically
+    computable — that is exactly the geometry that produces a confident-wrong c.
+    """
+
+    def test_gate_constant_is_twelve_feet(self) -> None:
+        assert SPREAD_GATE_FT == pytest.approx(12.0)
+
+    def test_high_spread_north_curb_is_non_calibrated(self) -> None:
+        # A steeply diagonal north curb: sampled offsets sweep ~4..58 ft, giving
+        # a per-side pstdev well above 12 ft. Wide street so max_perp=60 keeps
+        # every sample (isolating the spread gate, not the range gate).
+        scattered_north = LineString([(0.0, 4.0), (300.0, 58.0)])
+        tight_south = LineString([(0.0, -16.0), (300.0, -16.0)])
+        cal = derive_segment_calibration(
+            CENTERLINE, [scattered_north, tight_south], cscl_width_ft=40.0
+        )
+        assert cal.calibrated is False
+        # c blanked despite both buckets being non-empty (do not trust it)
+        assert cal.center_offset_c == 0.0
+        assert cal.curb_width_ft is None
+        # spreads ARE reported (rejection reason stays inspectable) and the
+        # north spread is what tripped the gate
+        assert cal.spread_n is not None and cal.spread_n > SPREAD_GATE_FT
+        assert cal.spread_s is not None
+
+    def test_tight_spread_is_calibrated(self) -> None:
+        # Same flanks, but straight (near-zero spread) -> calibrated True.
+        tight_north = LineString([(0.0, 18.0), (300.0, 18.0)])
+        tight_south = LineString([(0.0, -16.0), (300.0, -16.0)])
+        cal = derive_segment_calibration(
+            CENTERLINE, [tight_north, tight_south], cscl_width_ft=40.0
+        )
+        assert cal.calibrated is True
+        assert cal.center_offset_c == pytest.approx(1.0)
+        assert cal.curb_width_ft == pytest.approx(34.0)
+        assert cal.spread_n is not None and cal.spread_n <= SPREAD_GATE_FT
+        assert cal.spread_s is not None and cal.spread_s <= SPREAD_GATE_FT
