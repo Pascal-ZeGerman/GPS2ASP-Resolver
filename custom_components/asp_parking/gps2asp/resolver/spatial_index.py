@@ -200,6 +200,25 @@ class SpatialIndex:
                         has_asp_left=bool(seg_data.get("has_asp_left", False)),
                         has_asp_right=bool(seg_data.get("has_asp_right", False)),
                         distance_ft=distance_ft,
+                        center_offset_c=float(
+                            seg_data.get("center_offset_c", 0.0) or 0.0
+                        ),
+                        curb_width_ft=(
+                            float(seg_data["curb_width_ft"])
+                            if seg_data.get("curb_width_ft") is not None
+                            else None
+                        ),
+                        spread_n=(
+                            float(seg_data["spread_n"])
+                            if seg_data.get("spread_n") is not None
+                            else None
+                        ),
+                        spread_s=(
+                            float(seg_data["spread_s"])
+                            if seg_data.get("spread_s") is not None
+                            else None
+                        ),
+                        calibrated=bool(seg_data.get("calibrated", False)),
                     )
                 )
 
@@ -268,6 +287,25 @@ class SpatialIndex:
                         has_asp_left=bool(seg_data.get("has_asp_left", False)),
                         has_asp_right=bool(seg_data.get("has_asp_right", False)),
                         distance_ft=distance_ft,
+                        center_offset_c=float(
+                            seg_data.get("center_offset_c", 0.0) or 0.0
+                        ),
+                        curb_width_ft=(
+                            float(seg_data["curb_width_ft"])
+                            if seg_data.get("curb_width_ft") is not None
+                            else None
+                        ),
+                        spread_n=(
+                            float(seg_data["spread_n"])
+                            if seg_data.get("spread_n") is not None
+                            else None
+                        ),
+                        spread_s=(
+                            float(seg_data["spread_s"])
+                            if seg_data.get("spread_s") is not None
+                            else None
+                        ),
+                        calibrated=bool(seg_data.get("calibrated", False)),
                     )
                 )
 

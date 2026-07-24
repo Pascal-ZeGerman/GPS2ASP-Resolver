@@ -18,22 +18,84 @@ from typing import Literal
 from shapely.geometry import LineString, Point
 
 
+def signed_offset(
+    point_x: float,
+    point_y: float,
+    segment: LineString,
+) -> float:
+    """Perpendicular signed distance (feet) from a point to a directed segment.
+
+    Uses the SAME projection + local-tangent-epsilon logic as
+    :func:`determine_side`, then normalises the cross product by the direction
+    vector's magnitude so the result is an actual distance in feet rather than a
+    raw (unnormalised) cross product.
+
+    The sign convention matches ``determine_side``'s internal cross product:
+    positive = the point lies to the LEFT of the directed segment (= North for
+    an East-running block). This is the reusable geometry primitive shared by the
+    confidence model (40-02/40-06) and the build-time curb core (40-05).
+
+    Args:
+        point_x: State Plane X coordinate of the point (feet).
+        point_y: State Plane Y coordinate of the point (feet).
+        segment: Shapely LineString of the street centerline (State Plane).
+
+    Returns:
+        Signed perpendicular distance in feet. ``+ve`` = LEFT/North of the
+        directed segment, ``-ve`` = RIGHT/South.
+
+    Raises:
+        ValueError: If ``segment`` is a zero-length LineString (degenerate
+            geometry); mirrors ``determine_side``'s BUG-R-004 hard-fail rather
+            than silently returning 0.0.
+    """
+    point = Point(point_x, point_y)
+
+    # Project point onto segment to find the closest point on the line.
+    dist_along = segment.project(point)
+    nearest_pt = segment.interpolate(dist_along)
+
+    length = segment.length
+    if length == 0.0:
+        raise ValueError(
+            f"signed_offset received zero-length segment at point "
+            f"({point_x}, {point_y}); cannot determine offset without "
+            f"direction vector (BUG-R-004)"
+        )
+
+    # Local direction vector using a small epsilon around the projection point
+    # (handles curved segments -- local tangent, not endpoint-to-endpoint).
+    eps = min(1.0, length * 0.01)  # 1% of length or 1 foot, whichever is smaller
+    p1 = segment.interpolate(max(0.0, dist_along - eps))
+    p2 = segment.interpolate(min(length, dist_along + eps))
+
+    dx = p2.x - p1.x
+    dy = p2.y - p1.y
+    n = math.hypot(dx, dy) or 1.0
+
+    # Normalised cross product: (dir_hat) x (point - nearest). +ve = LEFT.
+    return (dx / n) * (point_y - nearest_pt.y) - (dy / n) * (point_x - nearest_pt.x)
+
+
 def determine_side(
     point_x: float,
     point_y: float,
     segment: LineString,
     nominaldir: str,
+    *,
+    center_offset: float = 0.0,
 ) -> Literal["N", "S", "E", "W"]:
     """Determine the compass side (N/S/E/W) of a point relative to a street segment.
 
     Algorithm:
-    1. Project the point onto the segment to find the nearest point on the line.
-    2. Compute the local direction vector at the projection point using a small
-       epsilon (handles curved blocks correctly).
-    3. Compute the 2D cross product of (direction vector) x (point vector).
-       Positive = point is to the LEFT of the directed segment.
-       Negative = point is to the RIGHT.
-    4. Map left/right to compass direction based on the segment's actual angle:
+    1. Compute the perpendicular signed distance from the point to the directed
+       segment via :func:`signed_offset` (+ve = LEFT of the directed segment).
+    2. The point is on the LEFT of the *fitted road centre* when its signed
+       offset exceeds ``center_offset`` (the fitted centre ``c``), rather than
+       simply exceeding 0. This is the SC-2 boundary move: the CSCL centerline
+       sits a median ~2 ft off the true road centre, so splitting at 0 mis-assigns
+       one side; splitting at ``c`` restores the margin.
+    3. Map left/right to compass direction based on the segment's actual angle:
        - East-running (315-45 deg): left=N, right=S
        - North-running (45-135 deg): left=W, right=E
        - West-running (135-225 deg): left=S, right=N
@@ -44,8 +106,13 @@ def determine_side(
         point_y: State Plane Y coordinate of the GPS point (feet).
         segment: Shapely LineString of the street centerline (State Plane).
         nominaldir: Nominal compass direction from CSCL data. Currently not used
-            in the computation — the geometry cross-product is the sole determinant.
+            in the computation — the geometry offset is the sole determinant.
             The parameter is retained in the signature for future use as a tiebreaker.
+        center_offset: Keyword-only. The fitted road centre ``c`` (signed feet,
+            +ve = LEFT/N) that the N/S decision splits on. The default ``0.0``
+            reproduces the CSCL-centerline behaviour exactly (a behavioural no-op
+            for non-calibrated segments); calibrated segments pass their
+            index-derived ``c`` here (wired in 40-06).
 
     Returns:
         Compass direction side: "N", "S", "E", or "W".
@@ -57,58 +124,46 @@ def determine_side(
             zero-length segments upstream or treat the raise as a hard
             data-integrity signal.
     """
-    _ = nominaldir  # not currently used; geometry cross-product is sole determinant
-    point = Point(point_x, point_y)
+    _ = nominaldir  # not currently used; geometry offset is sole determinant
 
-    # Project point onto segment to find the closest point on the line
-    dist_along = segment.project(point)
-    nearest_pt = segment.interpolate(dist_along)
+    # Perpendicular signed distance (+ve = LEFT of the directed segment). This
+    # raises ValueError on a zero-length segment (BUG-R-004 hard-fail preserved).
+    offset = signed_offset(point_x, point_y, segment)
 
-    # Compute local direction vector using small epsilon around projection point.
-    # This handles curved segments correctly -- we use the local tangent direction,
-    # not the endpoint-to-endpoint direction.
+    # Local direction vector (for the compass-quadrant mapping only). Reuses the
+    # same projection + local-tangent-epsilon logic as signed_offset.
     length = segment.length
-    if length == 0.0:
-        raise ValueError(
-            f"determine_side received zero-length segment at point "
-            f"({point_x}, {point_y}); cannot determine side without "
-            f"direction vector (BUG-R-004)"
-        )
+    dist_along = segment.project(Point(point_x, point_y))
     eps = min(1.0, length * 0.01)  # 1% of length or 1 foot, whichever is smaller
     p1 = segment.interpolate(max(0.0, dist_along - eps))
     p2 = segment.interpolate(min(length, dist_along + eps))
-
-    # Direction vector of the segment at this point
     dx = p2.x - p1.x
     dy = p2.y - p1.y
 
-    # Vector from nearest point on segment to the GPS point
-    px = point_x - nearest_pt.x
-    py = point_y - nearest_pt.y
-
-    # 2D cross product: positive = left of direction, negative = right
-    cross = dx * py - dy * px
+    # Split at the fitted road centre `c` (center_offset), not at 0. With the
+    # default center_offset=0.0 this is byte-identical to the legacy `cross > 0`.
+    is_left = offset > center_offset
 
     # Compute segment angle in degrees (0=East, 90=North, 180=West, 270=South)
     angle = math.degrees(math.atan2(dy, dx)) % 360
 
-    # Map cross product sign to compass direction based on segment orientation.
-    # cross == 0: point is exactly on centerline; side is arbitrary here.
-    # The caller's confidence scoring returns 0.0 in this case and raises
-    # AmbiguousResolutionError upstream, so this code path is not reachable
-    # in normal operation.
+    # Map left/right to compass direction based on segment orientation.
+    # offset == center_offset: point is exactly on the fitted centre; side is
+    # arbitrary here. The caller's confidence scoring returns 0.0 in this case
+    # and raises AmbiguousResolutionError upstream, so this code path is not
+    # reachable in normal operation.
     if 315 <= angle or angle < 45:
         # Segment runs roughly East: left=N, right=S
-        return "N" if cross > 0 else "S"
+        return "N" if is_left else "S"
     elif angle < 135:
         # Segment runs roughly North: left=W, right=E
-        return "W" if cross > 0 else "E"
+        return "W" if is_left else "E"
     elif angle < 225:
         # Segment runs roughly West: left=S, right=N
-        return "S" if cross > 0 else "N"
+        return "S" if is_left else "N"
     else:  # 225 <= angle < 315
         # Segment runs roughly South: left=E, right=W
-        return "E" if cross > 0 else "W"
+        return "E" if is_left else "W"
 
 
 def compute_perpendicular_distance(
