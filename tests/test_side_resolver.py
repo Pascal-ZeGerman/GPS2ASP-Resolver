@@ -85,6 +85,40 @@ class TestDetermineSide:
         assert result == "E"
 
 
+class TestCenterOffsetSplit:
+    """determine_side splits N/S at the fitted centre `c` (center_offset), not at 0."""
+
+    def test_default_center_offset_is_legacy_south(self):
+        """center_offset=0.0 reproduces the CSCL-centerline behaviour exactly."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert determine_side(50, -1, segment, "E", center_offset=0.0) == "S"
+
+    def test_center_offset_flips_side_at_fitted_centre(self):
+        """A point 1 ft south of the CSCL line is NORTH of a centre 2.38 ft south."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert determine_side(50, -1, segment, "E", center_offset=-2.38) == "N"
+
+    def test_center_offset_defaults_to_zero_when_omitted(self):
+        """Omitting center_offset is identical to passing 0.0 (no-op default)."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert determine_side(50, -1, segment, "E") == "S"
+
+    def test_all_legacy_cases_pass_with_default(self):
+        """Every pre-existing quadrant case is unchanged under the default center_offset."""
+        ew = LineString([(0, 0), (100, 0)])
+        ns = LineString([(0, 0), (0, 100)])
+        west = LineString([(100, 0), (0, 0)])
+        south = LineString([(0, 100), (0, 0)])
+        assert determine_side(50, 10, ew, "E") == "N"
+        assert determine_side(50, -10, ew, "E") == "S"
+        assert determine_side(10, 50, ns, "N") == "E"
+        assert determine_side(-10, 50, ns, "N") == "W"
+        assert determine_side(50, 10, west, "W") == "N"
+        assert determine_side(50, -10, west, "W") == "S"
+        assert determine_side(10, 50, south, "S") == "E"
+        assert determine_side(-10, 50, south, "S") == "W"
+
+
 class TestSignedOffset:
     """signed_offset() — perpendicular signed distance, +ve = LEFT/N of the directed segment."""
 
