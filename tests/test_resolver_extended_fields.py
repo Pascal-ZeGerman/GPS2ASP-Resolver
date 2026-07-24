@@ -137,6 +137,55 @@ async def test_resolve_segment_populates_new_fields_from_best_candidate() -> Non
     assert result.perpendicular_distance_ft == pytest.approx(round(expected_perp, 2))
 
 
+class TestSegmentCandidateCalibrationFields:
+    """Phase 40 Plan 04: per-segment calibration fields on SegmentCandidate.
+
+    Five defaulted fields are appended AFTER ``distance_ft`` so existing
+    positional/keyword construction sites keep working. When absent, the
+    candidate is EXPLICITLY non-calibrated (``calibrated=False``,
+    ``center_offset_c=0.0``) -> resolver uses c=0 / plain CSCL fallback.
+    """
+
+    def test_defaults_to_non_calibrated(self) -> None:
+        """Built without calibration args: calibrated False, c=0.0, spreads None."""
+        candidate = _make_segment_candidate()
+
+        assert candidate.calibrated is False
+        assert candidate.center_offset_c == 0.0
+        assert candidate.curb_width_ft is None
+        assert candidate.spread_n is None
+        assert candidate.spread_s is None
+
+    def test_accepts_explicit_calibration_values(self) -> None:
+        """Passing calibration fields explicitly round-trips the values."""
+        candidate = SegmentCandidate(
+            segment_id=42,
+            geometry=LineString([(987600.0, 178432.0), (987800.0, 178432.0)]),
+            full_street_name="PROSPECT PL",
+            from_street="VANDERBILT AVE",
+            to_street="CARLTON AVE",
+            trafdir="TW",
+            nominaldir="E",
+            rw_type=1,
+            streetwidth=30.0,
+            borocode="3",
+            has_asp_left=True,
+            has_asp_right=True,
+            distance_ft=5.0,
+            center_offset_c=-2.38,
+            curb_width_ft=32.0,
+            spread_n=1.5,
+            spread_s=2.0,
+            calibrated=True,
+        )
+
+        assert candidate.center_offset_c == pytest.approx(-2.38)
+        assert candidate.curb_width_ft == pytest.approx(32.0)
+        assert candidate.spread_n == pytest.approx(1.5)
+        assert candidate.spread_s == pytest.approx(2.0)
+        assert candidate.calibrated is True
+
+
 def test_vendored_mirror_resolution_result_has_new_fields() -> None:
     """Vendored mirror exposes the same four optional fields with None defaults."""
     from custom_components.asp_parking.gps2asp.resolver.models import (
