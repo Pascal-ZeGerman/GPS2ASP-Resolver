@@ -38,6 +38,14 @@ _NEAR_INTERSECTION_THRESHOLD_FT: float = 30.0  # ~10m: block-face ambiguity zone
 # rejecting near-centerline (0.0) and near-intersection (0.0) ambiguous cases.
 DEFAULT_CONFIDENCE_THRESHOLD = 0.33
 
+# --- Lane-snap geometry (spike 004a) ------------------------------------------
+# Two lane centres sit at c +/- p, where p is the lane half-width. When true curb
+# width is unknown, p defaults to ~9.7 ft: half a typical NYC curb-to-curb width
+# (~25 ft) minus roughly half a car width. See side-calibration-algorithm.md §3.
+DEFAULT_LANE_HALF_P: float = 9.7  # default lane half-width when curb width unknown
+HALF_CAR_WIDTH_FT: float = 3.0  # ~half a car width, subtracted from curb-to-curb/2
+MIN_LANE_HALF_P: float = 6.0  # floor for p on very narrow streets
+
 # CSCL rw_type -> approximate paved width in feet
 # NYC-informed estimates; code constant (not runtime-configurable) per user decision.
 # rw_type meanings from CSCL data dictionary (VEHICULAR_RW_TYPES = {1,2,3,4,5})
@@ -83,6 +91,25 @@ def resolve_effective_width(
         segment_id,
     )
     return fallback
+
+
+def lane_half_from_width(curb_width_ft: float | None) -> float:
+    """Derive the lane half-width `p` (feet) from the true curb-to-curb width.
+
+    Two lane centres are placed at `c +/- p` by the lane-snap model
+    (spike 004a). `p` is half the curb-to-curb width minus roughly half a car
+    width, floored at MIN_LANE_HALF_P so very narrow streets keep a usable band.
+
+    Args:
+        curb_width_ft: True curb-to-curb width in feet. When None, <= 0, or NaN
+            (curb data missing/complex), the default DEFAULT_LANE_HALF_P is used.
+
+    Returns:
+        Lane half-width `p` in feet.
+    """
+    if curb_width_ft is None or curb_width_ft <= 0 or math.isnan(curb_width_ft):
+        return DEFAULT_LANE_HALF_P
+    return max(curb_width_ft / 2.0 - HALF_CAR_WIDTH_FT, MIN_LANE_HALF_P)
 
 
 def compute_confidence(
