@@ -57,6 +57,14 @@ class SegmentCandidate:
         streetwidth: Paved width in feet.
         borocode: Borough code as string ("1"=Manhattan, "2"=Bronx, "3"=Brooklyn, "4"=Queens, "5"=Staten Island).
         distance_ft: Distance from the query point to the segment centerline in feet.
+        center_offset_c: Fitted centre offset vs the CSCL centerline, in feet.
+            0.0 when non-calibrated. When ``calibrated=False`` the resolver uses
+            c=0 / plain CSCL fallback (never silently miscalibrated).
+        curb_width_ft: True curb-to-curb width in feet, or None when non-calibrated.
+        spread_n: Per-side (north) curb-sample stdev in feet, or None when non-calibrated.
+        spread_s: Per-side (south) curb-sample stdev in feet, or None when non-calibrated.
+        calibrated: True only when curb-derived AND spread-gated (set at build time
+            in Plan 40-08). False means "use c=0 / plain CSCL fallback".
     """
 
     segment_id: int
@@ -72,6 +80,11 @@ class SegmentCandidate:
     has_asp_left: bool
     has_asp_right: bool
     distance_ft: float
+    center_offset_c: float = 0.0
+    curb_width_ft: float | None = None
+    spread_n: float | None = None
+    spread_s: float | None = None
+    calibrated: bool = False
 
 
 @dataclass(frozen=True)
