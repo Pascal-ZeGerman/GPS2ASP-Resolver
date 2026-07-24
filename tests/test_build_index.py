@@ -486,7 +486,9 @@ class TestCurbCalibration:
         import geopandas as gpd
         from shapely.geometry import box
 
-        pavement = box(self._X0 - 10, self._Y0 - 14, self._X0 + self._LEN + 10, self._Y0 + 16)
+        pavement = box(
+            self._X0 - 10, self._Y0 - 14, self._X0 + self._LEN + 10, self._Y0 + 16
+        )
         return gpd.GeoDataFrame(geometry=[pavement], crs="EPSG:2263")
 
     def _patch_downloads(self, monkeypatch, *, curbs=True):
@@ -496,7 +498,9 @@ class TestCurbCalibration:
         monkeypatch.setattr(build_index, "_fetch_asp_signs", lambda: set())
         if curbs:
             monkeypatch.setattr(
-                build_index, "_download_curbs", lambda cache_path=None: self._make_curb_gdf()
+                build_index,
+                "_download_curbs",
+                lambda cache_path=None: self._make_curb_gdf(),
             )
             monkeypatch.setattr(
                 build_index,

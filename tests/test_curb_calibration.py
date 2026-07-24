@@ -30,9 +30,7 @@ class TestDeriveCleanGeometry:
     def test_clean_flanking_curbs_give_c_and_width(self) -> None:
         north = LineString([(0.0, 16.0), (300.0, 16.0)])
         south = LineString([(0.0, -14.0), (300.0, -14.0)])
-        cal = derive_segment_calibration(
-            CENTERLINE, [north, south], cscl_width_ft=30.0
-        )
+        cal = derive_segment_calibration(CENTERLINE, [north, south], cscl_width_ft=30.0)
         assert cal.calibrated is True
         # c = (median(N) + median(S)) / 2 = (16 + -14) / 2 = +1.0
         assert cal.center_offset_c == pytest.approx(1.0)
@@ -45,9 +43,7 @@ class TestDeriveCleanGeometry:
     def test_returns_frozen_segment_calibration(self) -> None:
         north = LineString([(0.0, 16.0), (300.0, 16.0)])
         south = LineString([(0.0, -14.0), (300.0, -14.0)])
-        cal = derive_segment_calibration(
-            CENTERLINE, [north, south], cscl_width_ft=30.0
-        )
+        cal = derive_segment_calibration(CENTERLINE, [north, south], cscl_width_ft=30.0)
         assert isinstance(cal, SegmentCalibration)
         with pytest.raises((AttributeError, Exception)):
             cal.center_offset_c = 99.0  # type: ignore[misc]
@@ -103,9 +99,7 @@ class TestDeriveIgnoresOutOfRange:
         # A lone far-away curb contributes nothing -> both buckets empty ->
         # the missing-side path (not a computed c).
         stray = LineString([(0.0, 80.0), (300.0, 80.0)])
-        cal = derive_segment_calibration(
-            CENTERLINE, [stray], cscl_width_ft=30.0
-        )
+        cal = derive_segment_calibration(CENTERLINE, [stray], cscl_width_ft=30.0)
         assert cal.calibrated is False
         assert cal.center_offset_c == 0.0
         assert cal.curb_width_ft is None

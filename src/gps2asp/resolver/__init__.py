@@ -246,9 +246,7 @@ async def resolve_segment(
         # The N/S boundary splits at the fitted centre `c` (SC-2), not 0.
         side: str | None
         if is_confident(confidence, confidence_threshold):
-            side = determine_side(
-                x, y, best.geometry, best.nominaldir, center_offset=c
-            )
+            side = determine_side(x, y, best.geometry, best.nominaldir, center_offset=c)
         else:
             side = None
 
