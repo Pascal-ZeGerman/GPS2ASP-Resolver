@@ -37,8 +37,15 @@ jobs:
           exit_zero: true # optional, default is DEFAULT
           # Github token of the repository (automatically created by Github)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Needed to get PR information.
-          # File or directory to run bandit on
-          # path: # optional, default is .
+          # File or directory to run bandit on. Listing the real source directories
+          # (rather than scanning "." and excluding tests/) because bandit's
+          # -x/--exclude glob matching against this action's `-r .` invocation does not
+          # reliably exclude nested paths -- excluded_paths: "tests" left 1750+
+          # B101/B105/B106/B110 findings in tests/ open even after being set. tests/ is
+          # pytest code: assert (B101), mock credentials in fixtures (B106), and stub
+          # try/except helpers (B105/B110) are idiomatic there, not vulnerabilities, so
+          # it's left out of the scanned path list here.
+          path: "src custom_components scripts"
           # Report only issues of a given severity level or higher. Can be LOW, MEDIUM or HIGH. Default is UNDEFINED (everything)
           # level: # optional, default is UNDEFINED
           # Report only issues of a given confidence level or higher. Can be LOW, MEDIUM or HIGH. Default is UNDEFINED (everything)
