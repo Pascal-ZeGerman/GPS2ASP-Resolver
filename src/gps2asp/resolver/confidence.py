@@ -168,6 +168,58 @@ def compute_confidence(
     return distance_conf * intersection_conf
 
 
+def compute_lane_snap_confidence(
+    signed_offset_ft: float,
+    center_offset_c: float,
+    lane_half_p: float,
+    distance_to_nearest_intersection_ft: float,
+) -> float:
+    """Lane-snap (spike 004a) side confidence with an UPPER plausibility bound.
+
+    Two lane centres sit at `center_offset_c +/- lane_half_p`. The fix is snapped
+    to the nearer lane and scored by its *margin* — 1.0 when the fix lands exactly
+    on a lane centre, 0.0 at the midpoint `c` between the two lanes.
+
+    Unlike the legacy `compute_confidence` (monotonically increasing in offset,
+    which scored a 89ft-from-a-40ft-street fix at 1.0), this has a real UPPER
+    bound: a fix further than one lane-width `lane_half_p` outside the nearer lane
+    centre cannot be a parked car on this street and scores 0.0. Plausibility is
+    judged relative to the fitted centre `center_offset_c`, never to 0. This is
+    what fixes the confidence-1.0-at-89ft defect (SC-3).
+
+    Returns a MARGIN score in [0.0, 1.0]. 0.0 means implausible (beyond the
+    band) or ambiguous (near an intersection); it is NOT a probability.
+
+    Args:
+        signed_offset_ft: Signed perpendicular distance of the fix from the CSCL
+            centerline, in feet (+ve = left/N), from `signed_offset()`.
+        center_offset_c: Fitted road centre offset `c`, in feet, relative to the
+            CSCL centerline. The two lane centres are `c +/- lane_half_p`.
+        lane_half_p: Lane half-width `p` in feet (see `lane_half_from_width`).
+        distance_to_nearest_intersection_ft: Distance from the fix to the nearest
+            segment endpoint (intersection) in feet.
+
+    Returns:
+        Margin confidence from 0.0 (implausible/ambiguous) to 1.0 (on a lane centre).
+    """
+    d_low = abs(signed_offset_ft - (center_offset_c - lane_half_p))
+    d_high = abs(signed_offset_ft - (center_offset_c + lane_half_p))
+    d_near = min(d_low, d_high)
+    d_far = max(d_low, d_high)
+
+    # Upper plausibility bound (relative to c): a fix further than one lane-width
+    # outside the nearer lane centre cannot be a parked car on this street.
+    if d_near > lane_half_p:
+        return 0.0
+    # Near-intersection: block-face side is ambiguous (could be either cross street).
+    if distance_to_nearest_intersection_ft < _NEAR_INTERSECTION_THRESHOLD_FT:
+        return 0.0
+
+    # Margin-based: 1.0 exactly on a lane centre, 0.0 at the midpoint c.
+    denom = d_far + d_near
+    return (d_far - d_near) / denom if denom else 0.0
+
+
 def is_confident(
     confidence: float,
     threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
