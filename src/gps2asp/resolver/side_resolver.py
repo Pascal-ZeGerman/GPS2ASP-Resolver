@@ -18,6 +18,65 @@ from typing import Literal
 from shapely.geometry import LineString, Point
 
 
+def signed_offset(
+    point_x: float,
+    point_y: float,
+    segment: LineString,
+) -> float:
+    """Perpendicular signed distance (feet) from a point to a directed segment.
+
+    Uses the SAME projection + local-tangent-epsilon logic as
+    :func:`determine_side`, then normalises the cross product by the direction
+    vector's magnitude so the result is an actual distance in feet rather than a
+    raw (unnormalised) cross product.
+
+    The sign convention matches ``determine_side``'s internal cross product:
+    positive = the point lies to the LEFT of the directed segment (= North for
+    an East-running block). This is the reusable geometry primitive shared by the
+    confidence model (40-02/40-06) and the build-time curb core (40-05).
+
+    Args:
+        point_x: State Plane X coordinate of the point (feet).
+        point_y: State Plane Y coordinate of the point (feet).
+        segment: Shapely LineString of the street centerline (State Plane).
+
+    Returns:
+        Signed perpendicular distance in feet. ``+ve`` = LEFT/North of the
+        directed segment, ``-ve`` = RIGHT/South.
+
+    Raises:
+        ValueError: If ``segment`` is a zero-length LineString (degenerate
+            geometry); mirrors ``determine_side``'s BUG-R-004 hard-fail rather
+            than silently returning 0.0.
+    """
+    point = Point(point_x, point_y)
+
+    # Project point onto segment to find the closest point on the line.
+    dist_along = segment.project(point)
+    nearest_pt = segment.interpolate(dist_along)
+
+    length = segment.length
+    if length == 0.0:
+        raise ValueError(
+            f"signed_offset received zero-length segment at point "
+            f"({point_x}, {point_y}); cannot determine offset without "
+            f"direction vector (BUG-R-004)"
+        )
+
+    # Local direction vector using a small epsilon around the projection point
+    # (handles curved segments -- local tangent, not endpoint-to-endpoint).
+    eps = min(1.0, length * 0.01)  # 1% of length or 1 foot, whichever is smaller
+    p1 = segment.interpolate(max(0.0, dist_along - eps))
+    p2 = segment.interpolate(min(length, dist_along + eps))
+
+    dx = p2.x - p1.x
+    dy = p2.y - p1.y
+    n = math.hypot(dx, dy) or 1.0
+
+    # Normalised cross product: (dir_hat) x (point - nearest). +ve = LEFT.
+    return (dx / n) * (point_y - nearest_pt.y) - (dy / n) * (point_x - nearest_pt.x)
+
+
 def determine_side(
     point_x: float,
     point_y: float,
