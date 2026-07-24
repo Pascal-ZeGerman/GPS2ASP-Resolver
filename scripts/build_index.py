@@ -1464,6 +1464,8 @@ def build_index(
         "cscl_row_count": total_cscl_rows,
         "filtered_count": stats["filtered_count"],
         "asp_segments_count": stats["asp_segments_count"],
+        "calibrated_count": stats["calibrated_count"],
+        "non_calibrated_count": stats["non_calibrated_count"],
         "index_file_sizes": stats["index_file_sizes"],
         "build_duration_seconds": round(elapsed, 1),
         "propagation_stats": propagation_stats,
