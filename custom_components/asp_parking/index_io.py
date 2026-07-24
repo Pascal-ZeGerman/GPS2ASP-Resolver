@@ -1002,6 +1002,22 @@ def _sync_build_from_source(index_dir: Path) -> None:
     ``build_info.json``. The caller is responsible for calling
     ``_sync_atomic_swap(index_dir)`` afterwards to promote the tmp directory.
 
+    Non-calibration (Phase 40, SC-4 — "no segment silently miscalibrated"):
+      This from-source path INTENTIONALLY omits per-segment curb calibration.
+      It does NOT bulk-download the citywide NYC curb/roadbed layer — that heavy
+      ~105k-segment ingest lives ONLY in the offline ``scripts/build_index.py``
+      build (Phase 40 Plan 08), deliberately kept out of the Home Assistant
+      process (the exact heaviness Phases 33/38 refused to import into HA). The
+      ``segments.json`` this writes therefore carries none of the calibration
+      keys (``center_offset_c``, ``curb_width_ft``, ``spread_n``, ``spread_s``,
+      ``calibrated``). The resolver loader (Plan 04) defaults those absent keys
+      to the safe non-calibrated candidate — ``calibrated=False`` and
+      ``center_offset_c=0.0`` (the documented plain-CSCL / c=0 fallback), never a
+      silently-wrong calibration. To make that intent EXPLICIT rather than
+      implicit, ``build_info.json`` also records ``"calibrated": false`` at the
+      index level. Full per-segment curb calibration is delivered instead via the
+      fast-path download of the offline-built release index — NOT this path.
+
     Behavior summary (IDX-06):
       * CSCL HTTP failures propagate (fail-hard).
       * SODA HTTP failures are logged + swallowed (fail-soft); resulting
@@ -1011,6 +1027,8 @@ def _sync_build_from_source(index_dir: Path) -> None:
         ``X-App-Token`` header to BOTH endpoints.
       * ``build_info.json["source"] = "cscl_api"`` records provenance so the
         coordinator (Plan 02) can distinguish CSCL builds from release pulls.
+      * ``build_info.json["calibrated"] = False`` records that a from-source
+        index carries no per-segment curb calibration (Phase 40 SC-4).
       * The function is sync; the executor dispatch happens at the caller via
         ``hass.async_add_executor_job``.
 
@@ -1062,6 +1080,11 @@ def _sync_build_from_source(index_dir: Path) -> None:
     build_info = {
         "build_timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "cscl_api",
+        # Phase 40 SC-4: a from-source rebuild carries NO per-segment curb
+        # calibration (no citywide curb bulk-ingest happens in-HA). Segments
+        # load as calibrated=False / c=0 (documented plain-CSCL fallback);
+        # calibration ships via the offline-built release index instead.
+        "calibrated": False,
         "filtered_count": insert_count,
         "build_duration_seconds": elapsed,
         "graph_segment_count": graph_segment_count,

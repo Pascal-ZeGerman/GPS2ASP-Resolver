@@ -21,6 +21,7 @@ import json
 import logging
 import math
 import os
+import statistics
 import sys
 import time
 from collections import Counter, deque
@@ -30,7 +31,15 @@ import geopandas as gpd
 import requests
 import zstandard
 from rtree import index as rtree_index
+from shapely.geometry import LineString, box
+from shapely.ops import unary_union
+from shapely.strtree import STRtree
 
+from gps2asp.resolver.curb_calibration import (
+    SegmentCalibration,
+    derive_segment_calibration,
+)
+from gps2asp.resolver.side_resolver import signed_offset
 from gps2asp.signs.normalize import normalize_to_soda
 
 logger = logging.getLogger("gps2asp.build")
@@ -43,12 +52,38 @@ CSCL_METADATA_URL = "https://data.cityofnewyork.us/api/views/3mf9-qshr.json"
 
 PARKING_SIGNS_SODA_URL = "https://data.cityofnewyork.us/resource/nfid-uabd.json"
 
+# NYC planimetric curb + roadbed layers for per-segment side-of-street
+# calibration (SC-1/SC-5). Both are BULK-downloaded ONCE at build time and
+# processed offline -- never queried per-segment at runtime.
+#
+# Curbs live in the backing view 5xvt-8cbk (the public map view ikvd-dex8 has
+# no queryable columns); .geojson (NOT .json) returns real geometry. Only
+# feat_code 2250 rows are true curb lines. Roadbed i36f-5ih7 is a build-time
+# cross-validator polygon layer (an independent second source): a segment whose
+# curb-derived c disagrees with the roadbed-derived c beyond
+# ROADBED_DISAGREEMENT_FT is downgraded to non-calibrated.
+CURB_GEOJSON_URL = "https://data.cityofnewyork.us/resource/5xvt-8cbk.geojson"
+ROADBED_GEOJSON_URL = "https://data.cityofnewyork.us/resource/i36f-5ih7.geojson"
+CURB_FEAT_CODE = "2250"
+ROADBED_DISAGREEMENT_FT = 4.0
+
 # Vehicular road types to include
 VEHICULAR_RW_TYPES = {1, 2, 3, 4, 5}
 
 # SODA API batch sizes for pagination
 CSCL_BATCH_SIZE = 10000
 SIGNS_BATCH_SIZE = 50000
+
+# Pagination batch size + hard page cap for the curb/roadbed GeoJSON downloads.
+# The page cap bounds a runaway or adversarial endpoint (T-40-08-02 DoS) so the
+# one-time bulk download cannot spin forever.
+GEOJSON_PAGE_SIZE = 10000
+MAX_GEOJSON_PAGES = 500
+
+# Bbox padding (feet) when querying the roadbed STRtree for a segment's flanking
+# pavement. ~260 m (spike 007 roadbed radius); the skill requires >=150 m so the
+# block's (large, sparse) polygon is captured. NY State Plane is US survey feet.
+ROADBED_QUERY_PAD_FT = 850.0
 
 
 def _normalize_street_name(name: str) -> str:
@@ -202,6 +237,208 @@ def _filter_and_reproject(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     )
 
     return gdf
+
+
+def _paginate_geojson(
+    url: str,
+    page_size: int = GEOJSON_PAGE_SIZE,
+    page_cap: int = MAX_GEOJSON_PAGES,
+) -> list[dict]:
+    """Bulk-download a SODA GeoJSON layer via $limit/$offset pagination.
+
+    Mirrors _download_cscl_geojson's pagination (headers via _get_headers so an
+    optional X-App-Token from the environment lifts throttling). The download is
+    bounded by ``page_cap`` pages so a runaway/adversarial endpoint cannot spin
+    forever (T-40-08-02).
+
+    Args:
+        url: The .geojson resource endpoint.
+        page_size: Rows per page ($limit).
+        page_cap: Maximum number of pages to fetch (hard bound).
+
+    Returns:
+        List of GeoJSON feature dicts with non-null geometry.
+    """
+    headers = _get_headers()
+    all_features: list[dict] = []
+    offset = 0
+
+    for page in range(page_cap):
+        params = {"$limit": str(page_size), "$offset": str(offset)}
+        response = requests.get(url, params=params, headers=headers, timeout=120)
+        response.raise_for_status()
+
+        data = response.json()
+        features = data.get("features", [])
+        valid = [f for f in features if f.get("geometry") is not None]
+        all_features.extend(valid)
+
+        logger.info(
+            "Downloaded %d features from %s (page=%d, offset=%d, total=%d)",
+            len(features),
+            url.rsplit("/", 1)[-1],
+            page,
+            offset,
+            len(all_features),
+        )
+
+        if len(features) < page_size:
+            break
+        offset += page_size
+    else:
+        logger.warning(
+            "Hit page cap (%d) downloading %s -- stopping pagination",
+            page_cap,
+            url,
+        )
+
+    return all_features
+
+
+def _load_geojson_features(cache_path: Path) -> list[dict]:
+    """Load GeoJSON features from a local cache file.
+
+    Accepts either a FeatureCollection dict (``{"features": [...]}``) or a bare
+    list of features. Used so an offline / re-runnable build can reuse a
+    previously-downloaded layer instead of re-fetching hundreds of MB.
+    """
+    with open(cache_path) as f:
+        data = json.load(f)
+    if isinstance(data, list):
+        return data
+    return data.get("features", [])
+
+
+def _write_geojson_cache(cache_path: Path, features: list[dict]) -> None:
+    """Persist downloaded features to a local cache for re-runnable builds."""
+    cache_path = Path(cache_path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(cache_path, "w") as f:
+        json.dump({"type": "FeatureCollection", "features": features}, f)
+
+
+def _features_to_gdf_2263(features: list[dict]) -> gpd.GeoDataFrame:
+    """Build an EPSG:2263 GeoDataFrame from WGS84 GeoJSON features.
+
+    SODA .geojson endpoints serve geometry in WGS84 regardless of the stored
+    CRS, so we tag the frame EPSG:4326 and reproject to EPSG:2263 (mirror
+    _filter_and_reproject), dropping null/empty geometry.
+    """
+    if not features:
+        return gpd.GeoDataFrame(geometry=[], crs="EPSG:2263")
+    gdf = gpd.GeoDataFrame.from_features(
+        {"type": "FeatureCollection", "features": features},
+        crs="EPSG:4326",
+    )
+    gdf = gdf[gdf.geometry.notna()].copy()
+    gdf = gdf[~gdf.geometry.is_empty].copy()
+    gdf = gdf.to_crs(epsg=2263)
+    return gdf
+
+
+def _download_curbs(cache_path: Path | None = None) -> gpd.GeoDataFrame:
+    """Bulk-download the NYC curb layer (5xvt-8cbk), feat_code 2250, EPSG:2263.
+
+    This is a ONE-TIME bulk download of the whole curb layer -- NOT a per-segment
+    within_circle query (that pattern is fine for spikes but does not scale to a
+    ~105k-segment build). If ``cache_path`` exists it is loaded instead of
+    hitting the network; if it is provided but absent, the freshly-downloaded raw
+    features are written to it so subsequent builds re-run without re-fetching.
+
+    Args:
+        cache_path: Optional local GeoJSON cache path.
+
+    Returns:
+        GeoDataFrame of curb LineStrings (feat_code 2250) in EPSG:2263.
+    """
+    if cache_path is not None and Path(cache_path).exists():
+        logger.info("Loading curb layer from cache %s", cache_path)
+        features = _load_geojson_features(Path(cache_path))
+    else:
+        logger.info("Bulk-downloading curb layer (dataset 5xvt-8cbk)...")
+        features = _paginate_geojson(CURB_GEOJSON_URL)
+        if cache_path is not None:
+            _write_geojson_cache(Path(cache_path), features)
+
+    # Keep only true curb lines (feat_code 2250); the layer also carries other
+    # planimetric edge types.
+    curb_features = [
+        f
+        for f in features
+        if str((f.get("properties") or {}).get("feat_code")) == CURB_FEAT_CODE
+    ]
+    logger.info(
+        "Curb layer: %d features, %d are curb lines (feat_code %s)",
+        len(features),
+        len(curb_features),
+        CURB_FEAT_CODE,
+    )
+    return _features_to_gdf_2263(curb_features)
+
+
+def _download_roadbed(cache_path: Path | None = None) -> gpd.GeoDataFrame:
+    """Bulk-download the NYC roadbed polygon layer (i36f-5ih7), EPSG:2263.
+
+    Build-time cross-validator only (never read at runtime). Same cache
+    semantics as :func:`_download_curbs`.
+
+    Returns:
+        GeoDataFrame of roadbed polygons in EPSG:2263.
+    """
+    if cache_path is not None and Path(cache_path).exists():
+        logger.info("Loading roadbed layer from cache %s", cache_path)
+        features = _load_geojson_features(Path(cache_path))
+    else:
+        logger.info("Bulk-downloading roadbed layer (dataset i36f-5ih7)...")
+        features = _paginate_geojson(ROADBED_GEOJSON_URL)
+        if cache_path is not None:
+            _write_geojson_cache(Path(cache_path), features)
+
+    logger.info("Roadbed layer: %d polygon features", len(features))
+    return _features_to_gdf_2263(features)
+
+
+def _build_curb_strtree(
+    curbs: gpd.GeoDataFrame,
+) -> tuple[STRtree, list[LineString]]:
+    """Build an STRtree of curb LineStrings for flanking-curb bbox queries.
+
+    MultiLineStrings are exploded into their constituent LineStrings so each
+    curb segment is independently query-able.
+
+    Returns:
+        (STRtree, lines) where lines[i] corresponds to STRtree query index i.
+    """
+    lines: list[LineString] = []
+    for geom in curbs.geometry:
+        if geom is None or geom.is_empty:
+            continue
+        if geom.geom_type == "MultiLineString":
+            lines.extend(g for g in geom.geoms)
+        elif geom.geom_type == "LineString":
+            lines.append(geom)
+    return STRtree(lines), lines
+
+
+def _build_roadbed_strtree(
+    roadbed: gpd.GeoDataFrame,
+) -> tuple[STRtree, list]:
+    """Build an STRtree of roadbed polygons for per-segment pavement queries.
+
+    MultiPolygons are exploded into constituent Polygons.
+
+    Returns:
+        (STRtree, polys) where polys[i] corresponds to STRtree query index i.
+    """
+    polys: list = []
+    for geom in roadbed.geometry:
+        if geom is None or geom.is_empty:
+            continue
+        if geom.geom_type == "MultiPolygon":
+            polys.extend(g for g in geom.geoms)
+        elif geom.geom_type == "Polygon":
+            polys.append(geom)
+    return STRtree(polys), polys
 
 
 def _build_node_lookup(
@@ -719,11 +956,126 @@ def _check_has_asp(
     return has_left, has_right
 
 
+def _roadbed_center_offset(
+    centerline: LineString,
+    roadbed_tree: STRtree,
+    roadbed_polys: list,
+) -> float | None:
+    """Independent roadbed-derived centre offset ``c`` (build-time cross-check).
+
+    Ports spike 007's ``roadbed_c``: cast a perpendicular transect at each of 39
+    interior samples along the centerline, clip it to the flanking pavement
+    polygon, take the signed offset of each clipped mid-span, and return the
+    median. This is a SECOND authoritative source, independent of the curb lines;
+    the caller downgrades a segment whose curb ``c`` disagrees with this value by
+    more than ``ROADBED_DISAGREEMENT_FT``.
+
+    Args:
+        centerline: CSCL segment centerline (EPSG:2263).
+        roadbed_tree: STRtree of roadbed polygons.
+        roadbed_polys: Polygon list aligned with ``roadbed_tree`` query indices.
+
+    Returns:
+        Median roadbed centre offset (feet, same sign convention as the curb
+        ``c``), or ``None`` when the pavement is absent/too thin to trust.
+    """
+    minx, miny, maxx, maxy = centerline.bounds
+    qbox = box(
+        minx - ROADBED_QUERY_PAD_FT,
+        miny - ROADBED_QUERY_PAD_FT,
+        maxx + ROADBED_QUERY_PAD_FT,
+        maxy + ROADBED_QUERY_PAD_FT,
+    )
+    idxs = roadbed_tree.query(qbox)
+    polys = [roadbed_polys[i] for i in idxs]
+    if not polys:
+        return None
+
+    pavement = unary_union(polys)
+    length = centerline.length
+    mids: list[float] = []
+    for i in range(1, 40):
+        frac = i / 40.0
+        cp = centerline.interpolate(frac, normalized=True)
+        a = centerline.interpolate(max(0.0, frac * length - 1.0))
+        b = centerline.interpolate(min(length, frac * length + 1.0))
+        tx, ty = b.x - a.x, b.y - a.y
+        tn = math.hypot(tx, ty) or 1.0
+        px, py = -ty / tn, tx / tn
+        transect = LineString(
+            [(cp.x - px * 80, cp.y - py * 80), (cp.x + px * 80, cp.y + py * 80)]
+        )
+        clip = transect.intersection(pavement)
+        if clip.is_empty or clip.length < 8:
+            continue
+        mids.append(signed_offset(clip.centroid.x, clip.centroid.y, centerline))
+
+    if len(mids) < 5:
+        return None
+    return round(statistics.median(mids), 2)
+
+
+def _derive_segment_fields(
+    geom: LineString,
+    cscl_width_ft: float,
+    curb_tree: STRtree,
+    curb_lines: list[LineString],
+    roadbed_tree: STRtree,
+    roadbed_polys: list,
+) -> SegmentCalibration:
+    """Derive one segment's calibration, spread-gated and roadbed-cross-checked.
+
+    1. Query the curb STRtree for lines within a bbox of ``max(160, width*4)`` ft
+       around the segment.
+    2. Derive ``c`` / width / spreads via :func:`derive_segment_calibration`
+       (spread gate applied inside).
+    3. For a calibrated result, compute an independent roadbed ``c`` and DOWNGRADE
+       to non-calibrated when the two authoritative sources disagree by more than
+       ``ROADBED_DISAGREEMENT_FT`` (the measured spreads are retained so the
+       rejection reason stays inspectable).
+
+    Returns:
+        A :class:`SegmentCalibration` (calibrated flag drives the runtime fallback
+        chain).
+    """
+    query_pad = max(160.0, cscl_width_ft * 4.0)
+    minx, miny, maxx, maxy = geom.bounds
+    qbox = box(minx - query_pad, miny - query_pad, maxx + query_pad, maxy + query_pad)
+    flanking = [curb_lines[i] for i in curb_tree.query(qbox)]
+
+    cal = derive_segment_calibration(geom, flanking, cscl_width_ft)
+    if not cal.calibrated:
+        return cal
+
+    roadbed_c = _roadbed_center_offset(geom, roadbed_tree, roadbed_polys)
+    if (
+        roadbed_c is not None
+        and abs(cal.center_offset_c - roadbed_c) > ROADBED_DISAGREEMENT_FT
+    ):
+        # Two authoritative sources disagree -> do not trust c. Downgrade to
+        # non-calibrated (plain-CSCL fallback) but keep the measured spreads.
+        return SegmentCalibration(
+            center_offset_c=0.0,
+            curb_width_ft=None,
+            spread_n=cal.spread_n,
+            spread_s=cal.spread_s,
+            calibrated=False,
+        )
+
+    return cal
+
+
 def _build_rtree_and_metadata(
     gdf: gpd.GeoDataFrame,
     cross_streets: dict[int, tuple[str, str]],
     asp_lookup: set[tuple[str, str, str, str]],
     output_dir: Path,
+    *,
+    curb_calibration_enabled: bool = False,
+    curb_tree: STRtree | None = None,
+    curb_lines: list[LineString] | None = None,
+    roadbed_tree: STRtree | None = None,
+    roadbed_polys: list | None = None,
 ) -> dict:
     """Build the R-tree index and save segment metadata.
 
@@ -735,12 +1087,31 @@ def _build_rtree_and_metadata(
         cross_streets: Pre-computed cross streets mapping.
         asp_lookup: ASP sign tuples for has_asp flagging.
         output_dir: Directory to write index files.
+        curb_calibration_enabled: When True (and the curb/roadbed trees are
+            provided), derive per-segment calibration and write the five
+            calibration keys with measured values; otherwise write the
+            non-calibrated defaults.
+        curb_tree: STRtree of curb LineStrings (flanking-curb bbox queries).
+        curb_lines: Curb LineString list aligned with ``curb_tree`` indices.
+        roadbed_tree: STRtree of roadbed polygons (build-time cross-validator).
+        roadbed_polys: Roadbed polygon list aligned with ``roadbed_tree`` indices.
 
     Returns:
-        Build statistics dict.
+        Build statistics dict (includes calibrated_count / non_calibrated_count).
     """
     logger.info("Building R-tree index...")
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    calibrate = bool(
+        curb_calibration_enabled
+        and curb_tree is not None
+        and curb_lines is not None
+        and roadbed_tree is not None
+        and roadbed_polys is not None
+    )
+    logger.info(
+        "Per-segment curb calibration: %s", "ENABLED" if calibrate else "disabled"
+    )
 
     index_path = str(output_dir / "segments")
 
@@ -753,6 +1124,8 @@ def _build_rtree_and_metadata(
     asp_count = 0
     insert_count = 0
     skipped = 0
+    calibrated_count = 0
+    non_calibrated_count = 0
 
     for _, row in gdf.iterrows():
         geom = row.geometry
@@ -795,6 +1168,32 @@ def _build_rtree_and_metadata(
         except (ValueError, TypeError):
             streetwidth = 0.0
 
+        # Per-segment curb calibration (SC-1/SC-5). Derive c/width from flanking
+        # curbs, spread-gated (40-05) and roadbed-cross-checked; fall back to the
+        # non-calibrated defaults when disabled, geometry is missing, or the two
+        # sources disagree. The five keys use the EXACT 40-04 name contract.
+        if calibrate and geom.geom_type == "LineString":
+            cal = _derive_segment_fields(
+                geom,
+                streetwidth if streetwidth > 0 else 30.0,
+                curb_tree,
+                curb_lines,
+                roadbed_tree,
+                roadbed_polys,
+            )
+        else:
+            cal = SegmentCalibration(
+                center_offset_c=0.0,
+                curb_width_ft=None,
+                spread_n=None,
+                spread_s=None,
+                calibrated=False,
+            )
+        if cal.calibrated:
+            calibrated_count += 1
+        else:
+            non_calibrated_count += 1
+
         # Build segment metadata
         segments[str(pid)] = {
             "geometry_wkt": geom.wkt,
@@ -808,6 +1207,11 @@ def _build_rtree_and_metadata(
             "borocode": str(row.get("boroughcode", row.get("borocode", ""))),
             "has_asp_left": has_asp_left,
             "has_asp_right": has_asp_right,
+            "center_offset_c": cal.center_offset_c,
+            "curb_width_ft": cal.curb_width_ft,
+            "spread_n": cal.spread_n,
+            "spread_s": cal.spread_s,
+            "calibrated": cal.calibrated,
         }
 
     # Flush and close the R-tree index to ensure files are written
@@ -816,6 +1220,11 @@ def _build_rtree_and_metadata(
         "R-tree index built with %d segments (skipped %d)",
         insert_count,
         skipped,
+    )
+    logger.info(
+        "Curb calibration: %d calibrated, %d non-calibrated",
+        calibrated_count,
+        non_calibrated_count,
     )
 
     # Save segment metadata as JSON
@@ -839,6 +1248,8 @@ def _build_rtree_and_metadata(
     return {
         "filtered_count": insert_count,
         "asp_segments_count": asp_count,
+        "calibrated_count": calibrated_count,
+        "non_calibrated_count": non_calibrated_count,
         "index_file_sizes": {
             "segments.idx": idx_size,
             "segments.dat": dat_size,
@@ -870,16 +1281,33 @@ def _filter_2hop_neighborhood(
     return retained
 
 
-def build_index(output_dir: Path | None = None) -> None:
+def build_index(
+    output_dir: Path | None = None,
+    *,
+    no_curb_calibration: bool = False,
+    curb_cache: Path | None = None,
+    roadbed_cache: Path | None = None,
+) -> None:
     """Build the spatial index from NYC CSCL data.
 
     Downloads CSCL data via the SODA GeoJSON API, filters to vehicular
     streets, pre-computes cross streets and ASP flags, builds the R-tree
     index, and saves all metadata.
 
+    When curb calibration is enabled (the default) the build ALSO bulk-downloads
+    the NYC curb + roadbed planimetric layers ONCE, derives each segment's centre
+    offset ``c`` / true width via :func:`derive_segment_calibration`, cross-checks
+    ``c`` against the roadbed polygon, and writes the calibration fields into
+    ``segments.json`` (SC-1/SC-5).
+
     Args:
         output_dir: Output directory for index files. Defaults to
             src/gps2asp/data/index/ relative to the project root.
+        no_curb_calibration: When True, skip the curb/roadbed download and write
+            the non-calibrated defaults for every segment (calibration-free
+            index).
+        curb_cache: Optional local GeoJSON cache for the curb layer.
+        roadbed_cache: Optional local GeoJSON cache for the roadbed layer.
     """
     _setup_logging()
 
@@ -902,6 +1330,23 @@ def build_index(output_dir: Path | None = None) -> None:
 
     # Step D: Fetch ASP signs
     asp_lookup = _fetch_asp_signs()
+
+    # Step D1: Bulk-download the curb + roadbed planimetric layers ONCE and build
+    # the spatial-lookup trees. Skipped entirely when --no-curb-calibration is
+    # set (calibration-free index). Roadbed is a build-time cross-validator only.
+    curb_tree: STRtree | None = None
+    curb_lines: list[LineString] | None = None
+    roadbed_tree: STRtree | None = None
+    roadbed_polys: list | None = None
+    if not no_curb_calibration:
+        curbs = _download_curbs(curb_cache)
+        curb_tree, curb_lines = _build_curb_strtree(curbs)
+        logger.info("Curb STRtree built with %d curb lines", len(curb_lines))
+        roadbed = _download_roadbed(roadbed_cache)
+        roadbed_tree, roadbed_polys = _build_roadbed_strtree(roadbed)
+        logger.info("Roadbed STRtree built with %d polygons", len(roadbed_polys))
+    else:
+        logger.info("Curb calibration DISABLED (--no-curb-calibration)")
 
     # Step D2: Build graph and propagate ASP flags to interior blocks
     logger.info("Building street adjacency graph...")
@@ -933,6 +1378,11 @@ def build_index(output_dir: Path | None = None) -> None:
         cross_streets,
         asp_lookup,
         output_dir,
+        curb_calibration_enabled=not no_curb_calibration,
+        curb_tree=curb_tree,
+        curb_lines=curb_lines,
+        roadbed_tree=roadbed_tree,
+        roadbed_polys=roadbed_polys,
     )
 
     # Step F2: Write graph.json.zst (2-hop filtered + zstandard compressed)
@@ -1014,6 +1464,8 @@ def build_index(output_dir: Path | None = None) -> None:
         "cscl_row_count": total_cscl_rows,
         "filtered_count": stats["filtered_count"],
         "asp_segments_count": stats["asp_segments_count"],
+        "calibrated_count": stats["calibrated_count"],
+        "non_calibrated_count": stats["non_calibrated_count"],
         "index_file_sizes": stats["index_file_sizes"],
         "build_duration_seconds": round(elapsed, 1),
         "propagation_stats": propagation_stats,
@@ -1046,6 +1498,38 @@ if __name__ == "__main__":
         default=None,
         help=("Output directory for index files (default: src/gps2asp/data/index/)"),
     )
+    parser.add_argument(
+        "--no-curb-calibration",
+        action="store_true",
+        help=(
+            "Skip the curb/roadbed bulk download and build a calibration-free "
+            "index (all segments written as non-calibrated, center_offset_c=0)."
+        ),
+    )
+    parser.add_argument(
+        "--curb-cache",
+        type=Path,
+        default=None,
+        help=(
+            "Local GeoJSON cache for the curb layer (5xvt-8cbk). Loaded if it "
+            "exists; otherwise the download is written to it for re-runnable "
+            "offline builds."
+        ),
+    )
+    parser.add_argument(
+        "--roadbed-cache",
+        type=Path,
+        default=None,
+        help=(
+            "Local GeoJSON cache for the roadbed layer (i36f-5ih7). Same "
+            "load/write semantics as --curb-cache."
+        ),
+    )
     args = parser.parse_args()
 
-    build_index(output_dir=args.output_dir)
+    build_index(
+        output_dir=args.output_dir,
+        no_curb_calibration=args.no_curb_calibration,
+        curb_cache=args.curb_cache,
+        roadbed_cache=args.roadbed_cache,
+    )

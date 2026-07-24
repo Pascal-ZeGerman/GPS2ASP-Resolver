@@ -7,6 +7,7 @@ from gps2asp.resolver.side_resolver import (
     compute_distance_to_endpoints,
     compute_perpendicular_distance,
     determine_side,
+    signed_offset,
 )
 
 
@@ -82,6 +83,75 @@ class TestDetermineSide:
         # Point near the north-running part, to the right -> E
         result = determine_side(60, 25, segment, nominaldir="N")
         assert result == "E"
+
+
+class TestCenterOffsetSplit:
+    """determine_side splits N/S at the fitted centre `c` (center_offset), not at 0."""
+
+    def test_default_center_offset_is_legacy_south(self):
+        """center_offset=0.0 reproduces the CSCL-centerline behaviour exactly."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert determine_side(50, -1, segment, "E", center_offset=0.0) == "S"
+
+    def test_center_offset_flips_side_at_fitted_centre(self):
+        """A point 1 ft south of the CSCL line is NORTH of a centre 2.38 ft south."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert determine_side(50, -1, segment, "E", center_offset=-2.38) == "N"
+
+    def test_center_offset_defaults_to_zero_when_omitted(self):
+        """Omitting center_offset is identical to passing 0.0 (no-op default)."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert determine_side(50, -1, segment, "E") == "S"
+
+    def test_all_legacy_cases_pass_with_default(self):
+        """Every pre-existing quadrant case is unchanged under the default center_offset."""
+        ew = LineString([(0, 0), (100, 0)])
+        ns = LineString([(0, 0), (0, 100)])
+        west = LineString([(100, 0), (0, 0)])
+        south = LineString([(0, 100), (0, 0)])
+        assert determine_side(50, 10, ew, "E") == "N"
+        assert determine_side(50, -10, ew, "E") == "S"
+        assert determine_side(10, 50, ns, "N") == "E"
+        assert determine_side(-10, 50, ns, "N") == "W"
+        assert determine_side(50, 10, west, "W") == "N"
+        assert determine_side(50, -10, west, "W") == "S"
+        assert determine_side(10, 50, south, "S") == "E"
+        assert determine_side(-10, 50, south, "S") == "W"
+
+
+class TestSignedOffset:
+    """signed_offset() — perpendicular signed distance, +ve = LEFT/N of the directed segment."""
+
+    def test_point_north_of_east_running_is_positive(self):
+        """Point 10 ft LEFT/North of an East-running segment returns ~+10.0."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert signed_offset(50, 10, segment) == pytest.approx(10.0)
+
+    def test_point_south_of_east_running_is_negative(self):
+        """Point 10 ft RIGHT/South of an East-running segment returns ~-10.0."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert signed_offset(50, -10, segment) == pytest.approx(-10.0)
+
+    def test_point_on_centerline_is_zero(self):
+        """Point exactly on the segment returns ~0.0."""
+        segment = LineString([(0, 0), (100, 0)])
+        assert signed_offset(50, 0, segment) == pytest.approx(0.0, abs=1e-9)
+
+    def test_sign_agrees_with_determine_side_convention(self):
+        """A point determine_side calls 'N' on an East-running block has a positive offset."""
+        segment = LineString([(0, 0), (100, 0)])
+        # North point -> determine_side 'N', signed_offset > 0
+        assert determine_side(50, 10, segment, nominaldir="E") == "N"
+        assert signed_offset(50, 10, segment) > 0
+        # South point -> determine_side 'S', signed_offset < 0
+        assert determine_side(50, -10, segment, nominaldir="E") == "S"
+        assert signed_offset(50, -10, segment) < 0
+
+    def test_zero_length_segment_raises_value_error(self):
+        """Degenerate zero-length LineString must raise ValueError (BUG-R-004 style)."""
+        seg = LineString([(100, 200), (100, 200)])
+        with pytest.raises(ValueError, match="zero-length"):
+            signed_offset(100.0, 200.0, seg)
 
 
 class TestPerpendicularDistance:

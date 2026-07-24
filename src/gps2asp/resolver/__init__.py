@@ -25,8 +25,9 @@ from __future__ import annotations
 from gps2asp.resolver.confidence import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     _NEAR_INTERSECTION_THRESHOLD_FT,
-    compute_confidence,
+    compute_lane_snap_confidence,
     is_confident,
+    lane_half_from_width,
     resolve_effective_width,
 )
 from gps2asp.resolver.converter import convert
@@ -46,6 +47,7 @@ from gps2asp.resolver.side_resolver import (
     compute_distance_to_endpoints,
     compute_perpendicular_distance,
     determine_side,
+    signed_offset,
 )
 from gps2asp.resolver.spatial_index import SpatialIndex
 
@@ -69,6 +71,7 @@ async def resolve(
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
     index_dir: str | None = None,
     parking_lane_fraction: float = 0.33,
+    learned_center_offset: float | None = None,
 ) -> ResolutionResult:
     """Resolve GPS coordinates to a street segment and side of street.
 
@@ -87,10 +90,16 @@ async def resolve(
         lon: Longitude in WGS84 (e.g., -73.9690).
         confidence_threshold: Minimum confidence to accept (default 0.33).
         index_dir: Optional path to the spatial index directory.
-        parking_lane_fraction: Fraction of street width considered the
-            near-centerline ambiguous zone (default 0.33). Points within
-            (effective_width * parking_lane_fraction / 2) feet of center
-            return confidence=0.0.
+        parking_lane_fraction: Retained for backward-compatible API shape only.
+            The lane-snap confidence model (40-06) judges plausibility relative
+            to the fitted centre ``c`` and no longer uses a width-relative
+            near-centerline zone, so this argument is now inert. Kept in the
+            signature so existing callers do not break.
+        learned_center_offset: Optional parking-history cluster-mean centre
+            offset ``c`` (feet) used as fallback TIER 2 when the matched segment
+            is NOT curb-calibrated. Ignored for calibrated segments (curb ``c``
+            wins) and defaults to plain CSCL (``c=0``) when None. See the SC-4
+            fallback chain in resolve_segment().
 
     Returns:
         ResolutionResult with on_street, from_street, to_street,
@@ -115,6 +124,7 @@ async def resolve(
         parking_lane_fraction=parking_lane_fraction,
         input_lat=lat,
         input_lon=lon,
+        learned_center_offset=learned_center_offset,
     )
 
 
@@ -126,6 +136,7 @@ async def resolve_segment(
     parking_lane_fraction: float = 0.33,
     input_lat: float | None = None,
     input_lon: float | None = None,
+    learned_center_offset: float | None = None,
 ) -> ResolutionResult:
     """Resolve State Plane coordinates to a street segment and side.
 
@@ -138,12 +149,22 @@ async def resolve_segment(
         y: State Plane Y coordinate (US survey feet).
         confidence_threshold: Minimum confidence to accept (default 0.33).
         index_dir: Optional path to the spatial index directory.
-        parking_lane_fraction: Fraction of street width considered the
-            near-centerline ambiguous zone (default 0.33). Passed through
-            to compute_confidence().
+        parking_lane_fraction: Retained for backward-compatible API shape only.
+            The lane-snap confidence model (40-06) judges plausibility relative
+            to the fitted centre ``c`` and no longer uses a width-relative
+            near-centerline zone, so this argument is now inert. Kept in the
+            signature so existing callers do not break.
         input_lat: Original latitude (for debug logging). Pass when calling
             from resolve() or the pipeline so logs contain GPS coordinates.
         input_lon: Original longitude (for debug logging).
+        learned_center_offset: Optional parking-history cluster-mean centre
+            offset ``c`` (feet), used as fallback TIER 2 of the SC-4 chain
+            (curb ``c`` -> learned ``c`` -> 0). Consulted ONLY when the matched
+            candidate is non-calibrated; ignored when the candidate is
+            curb-calibrated (its own ``center_offset_c`` wins). None -> plain
+            CSCL (``c=0``). Supplying it is a follow-on integration: the
+            collection/persistence of per-segment settled offsets is out of
+            scope for this plan (only the estimator unit exists, 40-03).
 
     Returns:
         ResolutionResult with street segment and side information.
@@ -177,27 +198,55 @@ async def resolve_segment(
         # Step 3: Compute geometry metrics
         perp_distance = compute_perpendicular_distance(x, y, best.geometry)
         dist_to_endpoints = compute_distance_to_endpoints(x, y, best.geometry)
+        # Signed perpendicular offset (+ve = LEFT/N of the directed segment).
+        # Same primitive the N/S split and the lane-snap model both consume, so
+        # the boundary and the confidence agree by construction.
+        so = signed_offset(x, y, best.geometry)
 
-        # Step 4: Compute effective width (post-fallback) and confidence FIRST.
-        # BUG-R-003: side determination is meaningless at zero confidence
-        # (near-centerline or near-intersection) and the cross-product would
-        # yield an arbitrary value. Defer determine_side until after the
-        # confidence gate so we don't compute (and log) a misleading side.
+        # Resolve the fitted road centre `c` via the SC-4 fallback chain:
+        #   TIER 1  curb-calibrated segment -> its index-derived center_offset_c
+        #   TIER 2  else a learned parking-history cluster-mean (when supplied)
+        #   TIER 3  else plain CSCL (c=0) -- production-equivalent to today.
+        # `calibrated` is the single authoritative gate (40-04): a non-calibrated
+        # candidate is never silently miscalibrated.
+        if best.calibrated:
+            c = best.center_offset_c
+        elif learned_center_offset is not None:
+            c = learned_center_offset
+        else:
+            c = 0.0
+
+        # Lane half-width `p`: derived from the true curb width only for a
+        # calibrated candidate; otherwise the default lane half (via None).
+        p = lane_half_from_width(best.curb_width_ft if best.calibrated else None)
+
+        # Effective width is retained purely for the debug record /
+        # ResolutionResult.street_width_ft (unchanged); the confidence model no
+        # longer uses it.
         effective_width = resolve_effective_width(
             best.streetwidth, best.rw_type, segment_id=best.segment_id
         )
-        confidence = compute_confidence(
-            perp_distance_ft=perp_distance,
-            effective_width_ft=effective_width,
+
+        # Step 4: Lane-snap confidence with an UPPER plausibility bound judged
+        # relative to `c` (not 0). A fix more than one lane-width outside the
+        # nearer lane centre scores 0.0 -- this is the SC-3 fix for the
+        # confidence-1.0-at-89ft defect.
+        # BUG-R-003: side determination is meaningless at zero confidence
+        # (implausible or near-intersection). Defer determine_side until after
+        # the confidence gate so we don't compute (and log) a misleading side.
+        confidence = compute_lane_snap_confidence(
+            signed_offset_ft=so,
+            center_offset_c=c,
+            lane_half_p=p,
             distance_to_nearest_intersection_ft=dist_to_endpoints,
-            parking_lane_fraction=parking_lane_fraction,
         )
 
         # Step 5: Determine side of street only when confidence will be
         # accepted; otherwise leave side=None in the debug record (BUG-R-003).
+        # The N/S boundary splits at the fitted centre `c` (SC-2), not 0.
         side: str | None
         if is_confident(confidence, confidence_threshold):
-            side = determine_side(x, y, best.geometry, best.nominaldir)
+            side = determine_side(x, y, best.geometry, best.nominaldir, center_offset=c)
         else:
             side = None
 

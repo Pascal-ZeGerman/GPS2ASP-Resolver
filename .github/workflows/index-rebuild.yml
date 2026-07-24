@@ -1,0 +1,63 @@
+name: Rebuild Spatial Index
+
+# Rebuilds the calibrated spatial index from fresh NYC geometry and publishes
+# it to the rolling `index-v1` release the HA fast-path downloader consumes.
+# This is a SIBLING of release.yml (which owns the v* code-release cadence) —
+# NOT an edit to it: NYC curb geometry changes independently of code tags, so
+# the index rebuild must be decoupled from code releases (locked decision #4).
+on:
+  # Monthly cadence (SEED-001): 06:00 UTC on the 1st of each month.
+  schedule:
+    - cron: "0 6 1 * *"
+  # On-demand manual rebuild. No `push:` trigger — the citywide build is heavy
+  # and must not run per-commit (locked decision #7).
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# A manual dispatch must not collide with a scheduled run.
+concurrency:
+  group: index-rebuild
+  cancel-in-progress: false
+
+jobs:
+  rebuild-index:
+    name: Rebuild + publish calibrated index
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install package + build deps
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e ".[build]"
+
+      - name: Build calibrated spatial index
+        env:
+          NYC_OPEN_DATA_APP_TOKEN: ${{ secrets.NYC_OPEN_DATA_APP_TOKEN }}
+        run: |
+          rm -rf dist/index && mkdir -p dist/index
+          .venv/bin/python scripts/build_index.py --output-dir dist/index
+
+      - name: Package + fail-closed calibration gate
+        run: |
+          .venv/bin/python scripts/package_index_release.py \
+            --index-dir dist/index --out dist/index.zip
+
+      - name: Publish to rolling index-v1 release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: index-v1
+          name: Spatial Index (rolling)
+          files: dist/index.zip
+          make_latest: false
+          body: |
+            Rolling spatial index rebuilt from NYC CSCL centerlines plus
+            planimetric curb (5xvt-8cbk) and roadbed (i36f-5ih7) geometry,
+            with per-segment side-of-street calibration (center offset +
+            curb width) precomputed at build time.
+
+            This release channel is decoupled from the code `v*` releases and
+            is auto-downloaded by the Home Assistant integration's fast path.

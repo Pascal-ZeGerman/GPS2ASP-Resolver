@@ -12,6 +12,7 @@ Tests for:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -22,6 +23,7 @@ pytest.importorskip("geopandas")
 # Add scripts/ to sys.path so we can import build_index
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
+import build_index
 from build_index import (
     _bfs_between,
     _build_intersection_index,
@@ -430,6 +432,151 @@ class TestPropagateAspToInteriorBlocks:
             "South side should not be added when only North side is in asp_lookup"
         )
         assert "N" in sides_in_expanded
+
+
+class TestCurbCalibration:
+    """Offline synthetic-curb tests for per-segment calibration (SC-1/SC-5).
+
+    A tiny index is built over ONE East-running CSCL segment with synthetic
+    flanking curb + roadbed geometry, monkeypatching the three network download
+    helpers. All geometry is in EPSG:2263 (State Plane feet); the CSCL frame is
+    tagged EPSG:2263 so _filter_and_reproject's to_crs is a no-op and coordinates
+    are preserved through the build.
+    """
+
+    # East-running segment on y=0-line, 300 ft long, at a State-Plane origin.
+    _X0 = 1_000_000.0
+    _Y0 = 200_000.0
+    _LEN = 300.0
+
+    def _make_cscl_gdf(self):
+        import geopandas as gpd
+        from shapely.geometry import LineString
+
+        seg = LineString([(self._X0, self._Y0), (self._X0 + self._LEN, self._Y0)])
+        return gpd.GeoDataFrame(
+            {
+                "physicalid": [1],
+                "full_street_name": ["TEST STREET"],
+                "rw_type": [1],
+                "trafdir": ["TW"],
+                "streetwidth": [34.0],
+                "nominaldir": [""],
+                "boroughcode": ["1"],
+                "geometry": [seg],
+            },
+            crs="EPSG:2263",
+        )
+
+    def _make_curb_gdf(self):
+        """North curb at +16 ft, South curb at -14 ft -> c=+1.0, width=30.0."""
+        import geopandas as gpd
+        from shapely.geometry import LineString
+
+        north = LineString(
+            [(self._X0, self._Y0 + 16), (self._X0 + self._LEN, self._Y0 + 16)]
+        )
+        south = LineString(
+            [(self._X0, self._Y0 - 14), (self._X0 + self._LEN, self._Y0 - 14)]
+        )
+        return gpd.GeoDataFrame(geometry=[north, south], crs="EPSG:2263")
+
+    def _make_roadbed_gdf(self):
+        """Pavement polygon spanning y in [-14, +16] -> roadbed c ~= +1.0 (agrees)."""
+        import geopandas as gpd
+        from shapely.geometry import box
+
+        pavement = box(
+            self._X0 - 10, self._Y0 - 14, self._X0 + self._LEN + 10, self._Y0 + 16
+        )
+        return gpd.GeoDataFrame(geometry=[pavement], crs="EPSG:2263")
+
+    def _patch_downloads(self, monkeypatch, *, curbs=True):
+        monkeypatch.setattr(
+            build_index, "_download_cscl_geojson", lambda: self._make_cscl_gdf()
+        )
+        monkeypatch.setattr(build_index, "_fetch_asp_signs", lambda: set())
+        if curbs:
+            monkeypatch.setattr(
+                build_index,
+                "_download_curbs",
+                lambda cache_path=None: self._make_curb_gdf(),
+            )
+            monkeypatch.setattr(
+                build_index,
+                "_download_roadbed",
+                lambda cache_path=None: self._make_roadbed_gdf(),
+            )
+
+    def _load_segments(self, output_dir):
+        with open(output_dir / "segments.json") as f:
+            return json.load(f)
+
+    def _load_build_info(self, output_dir):
+        with open(output_dir / "build_info.json") as f:
+            return json.load(f)
+
+    def test_calibration_fields_written_on_clean_curbs(self, tmp_path, monkeypatch):
+        """Clean synthetic curbs -> segment record carries all five keys, calibrated."""
+        self._patch_downloads(monkeypatch)
+        build_index.build_index(output_dir=tmp_path)
+
+        segments = self._load_segments(tmp_path)
+        assert "1" in segments, "synthetic segment should be indexed"
+        rec = segments["1"]
+
+        for key in (
+            "center_offset_c",
+            "curb_width_ft",
+            "spread_n",
+            "spread_s",
+            "calibrated",
+        ):
+            assert key in rec, f"segment record missing calibration key {key!r}"
+
+        assert rec["calibrated"] is True, "clean synthetic curbs should calibrate"
+        # North +16, South -14 -> c = (16 + -14)/2 = +1.0, width = 30.0
+        assert rec["center_offset_c"] == pytest.approx(1.0, abs=0.5)
+        assert rec["curb_width_ft"] == pytest.approx(30.0, abs=1.0)
+        assert rec["spread_n"] is not None
+        assert rec["spread_s"] is not None
+
+    def test_build_info_has_calibration_counts(self, tmp_path, monkeypatch):
+        """build_info.json records calibrated_count and non_calibrated_count."""
+        self._patch_downloads(monkeypatch)
+        build_index.build_index(output_dir=tmp_path)
+
+        info = self._load_build_info(tmp_path)
+        assert "calibrated_count" in info
+        assert "non_calibrated_count" in info
+        assert info["calibrated_count"] == 1
+        assert info["non_calibrated_count"] == 0
+
+    def test_no_curb_calibration_writes_non_calibrated_defaults(
+        self, tmp_path, monkeypatch
+    ):
+        """--no-curb-calibration -> five keys as non-calibrated defaults."""
+        # Curb/roadbed helpers are NOT patched: they must never be called.
+        self._patch_downloads(monkeypatch, curbs=False)
+
+        def _boom(cache_path=None):
+            raise AssertionError("curb/roadbed download must not run when disabled")
+
+        monkeypatch.setattr(build_index, "_download_curbs", _boom)
+        monkeypatch.setattr(build_index, "_download_roadbed", _boom)
+
+        build_index.build_index(output_dir=tmp_path, no_curb_calibration=True)
+
+        rec = self._load_segments(tmp_path)["1"]
+        assert rec["calibrated"] is False
+        assert rec["center_offset_c"] == 0.0
+        assert rec["curb_width_ft"] is None
+        assert rec["spread_n"] is None
+        assert rec["spread_s"] is None
+
+        info = self._load_build_info(tmp_path)
+        assert info["calibrated_count"] == 0
+        assert info["non_calibrated_count"] == 1
 
 
 class TestGraphJson:

@@ -5,8 +5,11 @@ from __future__ import annotations
 
 from gps2asp.resolver.confidence import (
     DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_LANE_HALF_P,
     compute_confidence,
+    compute_lane_snap_confidence,
     is_confident,
+    lane_half_from_width,
     resolve_effective_width,
 )
 
@@ -211,6 +214,73 @@ class TestComputeConfidence:
         )
         assert result_passes > 0.0
         assert result_zero == 0.0
+
+
+class TestLaneHalfFromWidth:
+    """Test the lane-half-width derivation helper (spike 004a: p ~= 9.7 ft)."""
+
+    def test_none_width_returns_default(self):
+        """Unknown curb width -> DEFAULT_LANE_HALF_P (9.7 ft)."""
+        assert lane_half_from_width(None) == DEFAULT_LANE_HALF_P
+        assert lane_half_from_width(None) == 9.7
+
+    def test_wide_street_derives_from_width(self):
+        """40ft curb-to-curb -> 40/2 - 3.0 = 17.0 ft lane half."""
+        assert lane_half_from_width(40.0) == 17.0
+
+    def test_narrow_street_floored_at_min(self):
+        """14ft street: 14/2 - 3 = 4 < MIN_LANE_HALF_P -> floored at 6.0 ft."""
+        assert lane_half_from_width(14.0) == 6.0
+
+
+class TestLaneSnapConfidence:
+    """Test the lane-snap (spike 004a) margin confidence with an upper bound."""
+
+    def test_on_lane_centre_scores_one(self):
+        """A fix exactly on the nearer lane centre (c - p) scores 1.0."""
+        result = compute_lane_snap_confidence(
+            signed_offset_ft=-19.0,  # c - p = -2.0 - 17.0
+            center_offset_c=-2.0,
+            lane_half_p=17.0,
+            distance_to_nearest_intersection_ft=100.0,
+        )
+        assert result == 1.0
+
+    def test_midpoint_between_lanes_scores_zero(self):
+        """A fix at the road centre c (midpoint of the two lanes) scores 0.0."""
+        result = compute_lane_snap_confidence(
+            signed_offset_ft=-2.0,  # == center_offset_c
+            center_offset_c=-2.0,
+            lane_half_p=17.0,
+            distance_to_nearest_intersection_ft=100.0,
+        )
+        assert result == 0.0
+
+    def test_89ft_regression_upper_bound(self):
+        """The 89ft-on-a-40ft-street fix scores 0.0 (upper plausibility bound).
+
+        d_near = |89 - (c + p)| = |89 - 15| = 74 > p=17 -> implausible -> 0.0.
+        This is the confidence-1.0-at-89ft defect; the new bound puts it below
+        DEFAULT_CONFIDENCE_THRESHOLD so the resolver's gate refuses it.
+        """
+        result = compute_lane_snap_confidence(
+            signed_offset_ft=89.0,
+            center_offset_c=-2.0,
+            lane_half_p=17.0,
+            distance_to_nearest_intersection_ft=100.0,
+        )
+        assert result == 0.0
+        assert result < DEFAULT_CONFIDENCE_THRESHOLD
+
+    def test_plausible_but_near_intersection_scores_zero(self):
+        """A fix on the lane centre but inside the near-intersection zone -> 0.0."""
+        result = compute_lane_snap_confidence(
+            signed_offset_ft=-19.0,  # on the nearer lane centre (would be 1.0)
+            center_offset_c=-2.0,
+            lane_half_p=17.0,
+            distance_to_nearest_intersection_ft=20.0,  # < 30ft near-intersection
+        )
+        assert result == 0.0
 
 
 class TestIsConfident:
