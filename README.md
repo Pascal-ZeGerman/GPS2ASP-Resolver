@@ -90,6 +90,8 @@ The next move time sensor also carries rich attributes including `schedule_summa
 
 Eleven additional **diagnostic sensors** are created automatically: car name, VIN, latitude, longitude, resolved street, resolution status, confidence score, SODA level, last resolved timestamp, last error, and index last rebuilt. These are hidden from the default dashboard but available for advanced automations and troubleshooting.
 
+Two additional diagnostic binary sensors track background health: **Index rebuilding** (ON while a spatial-index rebuild is in progress) and **GPS pipeline healthy** (ON while the resolution pipeline is functioning normally). A **Rebuild index** button is also available for triggering an on-demand index rebuild.
+
 ---
 
 ## Dashboard
@@ -166,7 +168,7 @@ The "Today" gate now compares the move's local date against Home Assistant's con
 
 ## Known Limitations
 
-**Coverage varies by borough.** ASP Parking matches your GPS location against NYC's official sign database. As of the current index build, approximate borough coverage is: Brooklyn ~47.9%, Manhattan ~29.5%, Bronx ~28.6%, Queens ~18.1%, Staten Island ~0%. The integration uses graph-based BFS matching to improve coverage for mid-block locations that fall in the middle of a sign record rather than at its boundary cross-streets.
+**Coverage varies by borough.** ASP Parking matches your GPS location against NYC's official sign database. Based on the initial index build, approximate borough coverage was: Brooklyn ~47.9%, Manhattan ~29.5%, Bronx ~28.6%, Queens ~18.1%, Staten Island ~0%. The index now rebuilds automatically on a monthly schedule, so actual coverage may have improved since; these figures are a rough baseline rather than a live measurement. The integration uses graph-based BFS matching to improve coverage for mid-block locations that fall in the middle of a sign record rather than at its boundary cross-streets.
 
 **Staten Island** has very limited data in the city's sign database. Most Staten Island locations will show "no schedule found" through no fault of the integration.
 
