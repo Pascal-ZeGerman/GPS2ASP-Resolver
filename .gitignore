@@ -19,7 +19,6 @@ __pycache__/
 *.egg-info/
 .venv/
 
-# graphify local/regenerable state (machine-specific paths + extraction cache)
-graphify-out/.graphify_python
-graphify-out/.graphify_root
-graphify-out/cache/
+# graphify output (regenerable; manifest.json collides with hassfest's HA-integration
+# manifest scan, so the whole directory is untracked rather than partially excluded)
+graphify-out/
