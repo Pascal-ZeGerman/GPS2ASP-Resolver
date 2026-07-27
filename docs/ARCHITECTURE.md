@@ -18,6 +18,7 @@ Home Assistant integration, spatial index, configuration, and developer setup.
 4. [Suspension Calendar Subsystem](#4-suspension-calendar-subsystem-suspension)
 5. [Home Assistant Integration](#5-home-assistant-integration-custom_componentsasp_parking)
 6. [Spatial Index](#6-spatial-index)
+   - [Index Lifecycle: Automated Rebuild Pipeline](#index-lifecycle-automated-rebuild-pipeline)
 7. [Configuration Reference](#7-configuration-reference)
    - [Environment Variables](#71-environment-variables)
    - [Home Assistant Config Flow](#72-home-assistant-config-flow)
@@ -304,6 +305,10 @@ beyond the configured movement threshold, plus a periodic forced refresh.
 | `sensor.asp_longitude` | `sensor` (diagnostic) | Last resolved longitude |
 | `sensor.asp_car_name` | `sensor` (diagnostic) | Device tracker friendly name |
 | `sensor.asp_vin` | `sensor` (diagnostic) | VIN from vehicle integration (if available) |
+| `sensor.asp_index_last_rebuilt` | `sensor` (diagnostic) | Timestamp of the last successful spatial-index rebuild |
+| `binary_sensor.asp_index_rebuilding` | `binary_sensor` (diagnostic) | `true` while a spatial-index rebuild is in progress |
+| `binary_sensor.asp_gps_pipeline_healthy` | `binary_sensor` (diagnostic) | `true` when GPS is recent and the last pipeline run did not error |
+| `button.asp_rebuild_index` | `button` (config) | Triggers an on-demand spatial-index rebuild |
 
 **Diagnostics support:** `diagnostics.py` implements `async_get_config_entry_diagnostics()`
 for the HA Diagnostics viewer. Sensitive fields (`parking_lat`, `parking_lon`,
@@ -359,7 +364,7 @@ the resolver can run.
 | `data/index/segments.idx` + `segments.dat` | R-tree binary index files (rtree library format) |
 | `data/index/segments.json` | Segment attributes: geometry WKT, street names, ASP presence flags, `streetwidth`, `borocode` |
 | `data/index/graph.json.zst` | Street adjacency graph for mid-span BFS, zstandard-compressed (used by `signs/graph.py`) |
-| `data/index/build_info.json` | Build timestamp and per-borough coverage statistics |
+| `data/index/build_info.json` | Build timestamp, CSCL/ASP/calibration row counts, propagation stats, file sizes, and build duration (no per-borough breakdown) |
 
 Index files are gitignored. Each developer must build locally or download from the
 release. Override the index path with the `GPS2ASP_INDEX_DIR` environment variable or
@@ -375,7 +380,7 @@ by passing `index_dir=` to `SpatialIndex`.
 | 4 | Queens |
 | 5 | Staten Island |
 
-**Known coverage (Phase 9 index build):**
+**Known coverage (Phase 9 index build — baseline, not live):**
 
 | Borough | Coverage |
 |---|---|
@@ -385,9 +390,41 @@ by passing `index_dir=` to `SpatialIndex`.
 | Queens | 18.1% |
 | Staten Island | ~0% (no SODA data) |
 
+These figures date to the Phase 9 build. The index now rebuilds automatically every month
+(see [Index Lifecycle](#index-lifecycle-automated-rebuild-pipeline) below), but
+`build_info.json` does not recompute or store a per-borough breakdown, so there is no way
+to verify current coverage from the repository — treat this table as a rough historical
+baseline rather than a live figure.
+
 Mid-span blocks — blocks that fall inside a SODA sign record rather than at its boundary
 cross-streets — return `no_match` at Levels 1–3. The Level 4 BFS traversal via
 `StreetGraph` (Phase 11) addresses this gap.
+
+### Index Lifecycle: Automated Rebuild Pipeline
+
+The spatial index is rebuilt and republished automatically on a rolling GitHub release,
+decoupled from code releases:
+
+- **`.github/workflows/index-rebuild.yml`** — runs on a self-hosted runner on a monthly
+  cron schedule (`0 6 1 * *` UTC) or via manual `workflow_dispatch`. It rebuilds the index
+  with `scripts/build_index.py`, packages it with `scripts/package_index_release.py`, and
+  publishes the result to the rolling `index-v1` GitHub release. This workflow is a
+  deliberate sibling of `release.yml` (which owns the `v*` code-release cadence): NYC curb
+  geometry changes independently of code, so the two cadences are kept decoupled by design.
+  There is no `push:` trigger — the citywide build is too heavy to run per-commit.
+- **`scripts/package_index_release.py`** — a fail-closed packager. It reads the freshly
+  built `build_info.json` and refuses to publish (non-zero exit) if `calibrated_count`
+  doesn't clear its gate, preventing a degraded index from ever reaching the rolling
+  release.
+- **`scripts/update_checker.py`** — compares the local index's `build_timestamp` (from
+  `build_info.json`) against the published release to detect whether a newer index is
+  available.
+- **Manual on-demand rebuild** — pressing the `button.asp_rebuild_index` entity calls
+  `coordinator.async_request_rebuild()`, which performs the same fire-and-forget
+  download/extract/atomic-swap sequence as the automated first-run download. The
+  coordinator's `_is_rebuilding` flag and `_rebuild_lock` prevent concurrent rebuilds from
+  overlapping; `binary_sensor.asp_index_rebuilding` mirrors `_is_rebuilding` live, and
+  `sensor.asp_index_last_rebuilt` records the timestamp once the rebuild completes.
 
 ---
 
