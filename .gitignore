@@ -18,3 +18,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 .venv/
+
+# graphify output (regenerable; manifest.json collides with hassfest's HA-integration
+# manifest scan, so the whole directory is untracked rather than partially excluded)
+graphify-out/
