@@ -1,0 +1,26 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -73.968860697581,
+            40.677672850892
+          ],
+          [
+            -73.96597578634801,
+            40.677068229625
+          ]
+        ]
+      },
+      "properties": {
+        "point_key": "prospect_pl",
+        "segment_id": 39223,
+        "on_street": "PROSPECT PL"
+      }
+    }
+  ]
+}
