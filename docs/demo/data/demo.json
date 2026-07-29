@@ -1,0 +1,192 @@
+{
+  "generation_date": "2026-07-28",
+  "profiles": {
+    "A": {
+      "label": "Car A",
+      "point_key": "prospect_pl"
+    },
+    "B": {
+      "label": "Car B",
+      "point_key": "east_village"
+    }
+  },
+  "points": {
+    "prospect_pl": {
+      "lat": 40.677629,
+      "lon": -73.968527,
+      "status": "schedule_found",
+      "on_street": "PROSPECT PL",
+      "from_street": "VANDERBILT AVE",
+      "to_street": "UNDERHILL AVE",
+      "side_of_street": "N",
+      "side_label": "North side",
+      "confidence": 0.9445,
+      "borocode": "3",
+      "borough": "Brooklyn",
+      "segment_id": 39223,
+      "soda_level": 3,
+      "summary": "MON & THU 8:30 - 10 AM",
+      "weekly": [
+        {
+          "day": 0,
+          "start": "08:30",
+          "end": "10:00",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 8:30AM-10AM <-> (SUPERSEDES SP-369C)"
+        },
+        {
+          "day": 3,
+          "start": "08:30",
+          "end": "10:00",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 8:30AM-10AM <-> (SUPERSEDES SP-369C)"
+        }
+      ],
+      "sensors": {
+        "next_move": {
+          "entity_id": "sensor.asp_parking_monitor_next_move_time",
+          "attributes": {
+            "cleaning_days": [
+              "Monday",
+              "Thursday"
+            ],
+            "schedule_summary": "MON & THU 8:30 - 10 AM",
+            "street_name": "PROSPECT PL",
+            "cross_streets": "VANDERBILT AVE to UNDERHILL AVE",
+            "side_of_street": "N",
+            "side_label": "North side",
+            "confidence_score": 0.9445,
+            "borough": "Brooklyn",
+            "soda_level": 3
+          }
+        },
+        "resolved_street": {
+          "entity_id": "sensor.asp_parking_monitor_resolved_street",
+          "attributes": {
+            "from_street": "VANDERBILT AVE",
+            "to_street": "UNDERHILL AVE",
+            "side_of_street": "N",
+            "confidence_score": 0.9445,
+            "borough": "Brooklyn",
+            "distance_ft": 9.16,
+            "street_width_ft": 30.0,
+            "segment_id": 39223,
+            "side_label": "North side"
+          }
+        }
+      }
+    },
+    "east_village": {
+      "lat": 40.726379,
+      "lon": -73.981583,
+      "status": "NoSegmentFoundError",
+      "error": "No street segment found within 164 ft of State Plane point (989354.7, 203916.5)"
+    },
+    "upper_west_side": {
+      "lat": 40.785091,
+      "lon": -73.975502,
+      "status": "resolution_failed",
+      "on_street": null,
+      "from_street": null,
+      "to_street": null,
+      "side_of_street": null,
+      "side_label": null,
+      "confidence": 0.0,
+      "borocode": null,
+      "borough": null,
+      "segment_id": null,
+      "soda_level": 0,
+      "summary": null,
+      "weekly": [],
+      "sensors": {
+        "next_move": {
+          "entity_id": "sensor.asp_parking_monitor_next_move_time",
+          "attributes": {
+            "confidence_score": 0.0,
+            "soda_level": 0
+          }
+        },
+        "resolved_street": {
+          "entity_id": "sensor.asp_parking_monitor_resolved_street",
+          "attributes": {
+            "confidence_score": 0.0
+          }
+        }
+      }
+    },
+    "astoria": {
+      "lat": 40.76213,
+      "lon": -73.923462,
+      "status": "resolution_failed",
+      "on_street": null,
+      "from_street": null,
+      "to_street": null,
+      "side_of_street": null,
+      "side_label": null,
+      "confidence": 0.0,
+      "borocode": null,
+      "borough": null,
+      "segment_id": null,
+      "soda_level": 0,
+      "summary": null,
+      "weekly": [],
+      "sensors": {
+        "next_move": {
+          "entity_id": "sensor.asp_parking_monitor_next_move_time",
+          "attributes": {
+            "confidence_score": 0.0,
+            "soda_level": 0
+          }
+        },
+        "resolved_street": {
+          "entity_id": "sensor.asp_parking_monitor_resolved_street",
+          "attributes": {
+            "confidence_score": 0.0
+          }
+        }
+      }
+    },
+    "bronx_grand_concourse": {
+      "lat": 40.83099,
+      "lon": -73.91803,
+      "status": "resolution_failed",
+      "on_street": null,
+      "from_street": null,
+      "to_street": null,
+      "side_of_street": null,
+      "side_label": null,
+      "confidence": 0.0,
+      "borocode": null,
+      "borough": null,
+      "segment_id": null,
+      "soda_level": 0,
+      "summary": null,
+      "weekly": [],
+      "sensors": {
+        "next_move": {
+          "entity_id": "sensor.asp_parking_monitor_next_move_time",
+          "attributes": {
+            "confidence_score": 0.0,
+            "soda_level": 0
+          }
+        },
+        "resolved_street": {
+          "entity_id": "sensor.asp_parking_monitor_resolved_street",
+          "attributes": {
+            "confidence_score": 0.0
+          }
+        }
+      }
+    },
+    "central_park_no_restrictions": {
+      "lat": 40.782864,
+      "lon": -73.965355,
+      "status": "NoSegmentFoundError",
+      "error": "No street segment found within 164 ft of State Plane point (993844.5, 224497.2)"
+    },
+    "outside_coverage": {
+      "lat": 40.912,
+      "lon": -73.7,
+      "status": "NoSegmentFoundError",
+      "error": "No street segment found within 164 ft of State Plane point (1067169.6, 271686.5)"
+    }
+  }
+}
