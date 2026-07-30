@@ -25,12 +25,14 @@ from __future__ import annotations
 
 import importlib.util
 import re
-from datetime import time
+from datetime import datetime, time
 from pathlib import Path
 
 from gps2asp.api_models import ASPDebugResult
 from gps2asp.schedule.models import (
+    ASPActiveNow,
     ASPDay,
+    CleaningWindow,
     NoMatchSchedule,
     ScheduleFound,
     TimeWindow,
@@ -119,6 +121,26 @@ def _make_schedule_found() -> ScheduleFound:
         source_signs=["NO PARKING TUE 11:30AM-1PM STREET CLEANING"],
         summary="TUE & FRI 11:30 AM - 1:00 PM",
         parse_failures=[],
+    )
+
+
+def _make_asp_active_now() -> ASPActiveNow:
+    return ASPActiveNow(
+        status="asp_active_now",
+        active_window=CleaningWindow(
+            day=ASPDay.THURSDAY,
+            start_time=time(11, 0),
+            end_time=time(14, 0),
+            start_datetime=datetime(2026, 7, 30, 11, 0),
+            end_datetime=datetime(2026, 7, 30, 14, 0),
+            source_signs=["NO PARKING THU 11AM-2PM STREET CLEANING"],
+        ),
+        on_street="ORIENTAL BLVD",
+        from_street="",
+        to_street="DECATUR AVE",
+        side_of_street="N",
+        source_signs=["NO PARKING THU 11AM-2PM STREET CLEANING"],
+        summary="MON & THU 11 AM - 2 PM",
     )
 
 
@@ -256,3 +278,34 @@ def test_dataset_completeness_and_status():
         assert "lat" in entry
         assert "lon" in entry
         assert "status" in entry
+
+
+# --- test_asp_active_now_populates_weekly ------------------------------------
+
+
+def test_asp_active_now_populates_weekly():
+    """Regression test: ASPActiveNow must populate weekly/summary like ScheduleFound.
+
+    app.js's hasSchedule() treats 'asp_active_now' as a schedule-bearing status
+    and renders the calendar from `weekly` — an empty weekly array here would
+    have shipped a broken calendar for any point currently mid-cleaning-window
+    (found via code review on the committed dataset, see 41-02-SUMMARY.md).
+    """
+    entry = dumper.build_point_entry(
+        _make_debug_result(_make_asp_active_now()), 40.578552, -73.934903
+    )
+
+    assert entry["status"] == "asp_active_now"
+    assert entry["summary"] == "MON & THU 11 AM - 2 PM"
+    assert isinstance(entry["weekly"], list) and entry["weekly"]
+    window = entry["weekly"][0]
+    assert window["day"] == ASPDay.THURSDAY.value
+    assert window["start"] == "11:00"
+    assert window["end"] == "14:00"
+    assert "NO PARKING" in window["sign"]
+
+    # build_sensor_shapes()/_cleaning_day_names() had the identical ScheduleFound-
+    # only gap — cleaning_days/schedule_summary must also populate for asp_active_now.
+    next_move_attrs = entry["sensors"]["next_move"]["attributes"]
+    assert next_move_attrs["cleaning_days"] == ["Thursday"]
+    assert next_move_attrs["schedule_summary"] == "MON & THU 11 AM - 2 PM"

@@ -91,7 +91,7 @@ DEMO_POINTS: list[dict] = [
     {"key": "astoria", "lat": 40.761897, "lon": -73.925232},
     {"key": "bronx_grand_concourse", "lat": 40.831258, "lon": -73.926617},
     {"key": "staten_island_no_match", "lat": 40.626511, "lon": -74.077902},
-    {"key": "oriental_blvd_active_now", "lat": 40.578552, "lon": -73.934903},
+    {"key": "oriental_blvd", "lat": 40.578552, "lon": -73.934903},
     {"key": "outside_coverage", "lat": 40.912000, "lon": -73.700000},
 ]
 
@@ -129,12 +129,16 @@ def _borough_name(borocode: str | None) -> str | None:
 
 
 def _cleaning_day_names(result) -> list[str]:
-    """Ordered unique cleaning-day names from a ScheduleFound weekly pattern."""
+    """Ordered unique cleaning-day names from a ScheduleFound/ASPActiveNow schedule."""
     schedule = result.schedule
-    if not isinstance(schedule, ScheduleFound):
+    if isinstance(schedule, ScheduleFound):
+        windows = schedule.weekly_schedule.windows
+    elif isinstance(schedule, ASPActiveNow):
+        windows = [schedule.active_window]
+    else:
         return []
     seen: list[str] = []
-    for window in schedule.weekly_schedule.windows:
+    for window in windows:
         name = window.day.name.title()
         if name not in seen:
             seen.append(name)
@@ -160,7 +164,7 @@ def build_sensor_shapes(result) -> dict:
     cleaning_days = _cleaning_day_names(result)
     if cleaning_days:
         next_move_attrs["cleaning_days"] = cleaning_days
-    if isinstance(result.schedule, ScheduleFound):
+    if isinstance(result.schedule, (ScheduleFound, ASPActiveNow)):
         next_move_attrs["schedule_summary"] = result.schedule.summary
     if result.on_street is not None:
         next_move_attrs["street_name"] = result.on_street
@@ -384,13 +388,17 @@ def main(argv: list[str] | None = None) -> int:
         point_key = profile["point_key"]
         entry = resolved.get(point_key, {}).get("entry")
         if entry is None:
-            broken_profiles.append((profile_key, point_key, "point_key not in resolved set"))
+            broken_profiles.append(
+                (profile_key, point_key, "point_key not in resolved set")
+            )
             continue
         status = entry.get("status")
         if status in ("NoSegmentFoundError", "resolution_failed", "unknown"):
             broken_profiles.append((profile_key, point_key, f"status={status}"))
     if broken_profiles:
-        details = "; ".join(f"{pk} ({key}): {reason}" for pk, key, reason in broken_profiles)
+        details = "; ".join(
+            f"{pk} ({key}): {reason}" for pk, key, reason in broken_profiles
+        )
         print(
             f"build_demo_dataset: ERROR — {len(broken_profiles)} DEMO_PROFILES "
             f"target(s) failed to resolve: {details}",

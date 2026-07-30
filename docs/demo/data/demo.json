@@ -308,10 +308,10 @@
         }
       }
     },
-    "oriental_blvd_active_now": {
+    "oriental_blvd": {
       "lat": 40.578552,
       "lon": -73.934903,
-      "status": "asp_active_now",
+      "status": "schedule_found",
       "on_street": "ORIENTAL BLVD",
       "from_street": "",
       "to_street": "DECATUR AVE",
@@ -325,6 +325,12 @@
       "summary": "MON & THU 11 AM - 2 PM",
       "weekly": [
         {
+          "day": 0,
+          "start": "11:00",
+          "end": "14:00",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 11AM-2PM <-> (SUPERSEDES R7-86R)"
+        },
+        {
           "day": 3,
           "start": "11:00",
           "end": "14:00",
@@ -335,6 +341,11 @@
         "next_move": {
           "entity_id": "sensor.asp_parking_monitor_next_move_time",
           "attributes": {
+            "cleaning_days": [
+              "Monday",
+              "Thursday"
+            ],
+            "schedule_summary": "MON & THU 11 AM - 2 PM",
             "street_name": "ORIENTAL BLVD",
             "cross_streets": " to DECATUR AVE",
             "side_of_street": "N",
