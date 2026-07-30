@@ -46,7 +46,7 @@ from gps2asp.resolver.exceptions import (
     NoSegmentFoundError,
     OutsideNYCError,
 )
-from gps2asp.schedule.models import ScheduleFound
+from gps2asp.schedule.models import ASPActiveNow, ScheduleFound
 from gps2asp.signs.exceptions import IncompleteResultsError, SODAAPIError
 
 # Reverse of resolver/converter.py's forward transform: EPSG:2263 -> WGS84.
@@ -87,18 +87,24 @@ _segments_cache: dict[str, str] | None = None
 # outside coverage to exercise the per-point failure path (Pitfall 4).
 DEMO_POINTS: list[dict] = [
     {"key": "prospect_pl", "lat": 40.677629, "lon": -73.968527},
-    {"key": "east_village", "lat": 40.726379, "lon": -73.981583},
-    {"key": "upper_west_side", "lat": 40.785091, "lon": -73.975502},
-    {"key": "astoria", "lat": 40.762130, "lon": -73.923462},
-    {"key": "bronx_grand_concourse", "lat": 40.830990, "lon": -73.918030},
-    {"key": "central_park_no_restrictions", "lat": 40.782864, "lon": -73.965355},
+    {"key": "williamsburg", "lat": 40.714606, "lon": -73.961216},
+    {"key": "astoria", "lat": 40.761897, "lon": -73.925232},
+    {"key": "bronx_grand_concourse", "lat": 40.831258, "lon": -73.926617},
+    {"key": "staten_island_no_match", "lat": 40.626511, "lon": -74.077902},
+    {"key": "oriental_blvd_active_now", "lat": 40.578552, "lon": -73.934903},
     {"key": "outside_coverage", "lat": 40.912000, "lon": -73.700000},
 ]
 
 # Sample car/profile assignments demonstrating results vary by location.
+# NOTE: every point above (except outside_coverage, which is deliberately
+# outside NYC bounds) was verified to actually resolve against the live index
+# + SODA API before being committed here — see 41-02-SUMMARY.md's gap-closure
+# note for the probe that replaced the original speculative coordinates, three
+# of which (east_village, upper_west_side, central_park_no_restrictions) failed
+# outright because they weren't actually close enough to an indexed segment.
 DEMO_PROFILES: dict[str, dict] = {
     "A": {"label": "Car A", "point_key": "prospect_pl"},
-    "B": {"label": "Car B", "point_key": "east_village"},
+    "B": {"label": "Car B", "point_key": "williamsburg"},
 }
 
 
@@ -229,6 +235,21 @@ def build_point_entry(result, lat: float, lon: float) -> dict:
             }
             for window in schedule.weekly_schedule.windows
         ]
+    elif isinstance(schedule, ASPActiveNow):
+        # The car is parked during an active cleaning window right now — there is
+        # no weekly_schedule (only the single active_window), but app.js's
+        # hasSchedule() treats "asp_active_now" as a schedule-bearing status, so
+        # summary/weekly must still be populated or the calendar renders empty.
+        summary = schedule.summary
+        window = schedule.active_window
+        weekly = [
+            {
+                "day": window.day.value,
+                "start": window.start_time.strftime("%H:%M"),
+                "end": window.end_time.strftime("%H:%M"),
+                "sign": "; ".join(window.source_signs),
+            }
+        ]
 
     side = result.side_of_street
     return {
@@ -352,6 +373,35 @@ def main(argv: list[str] | None = None) -> int:
 
     points = _read_points(args.points)
     resolved = asyncio.run(_run(points))
+
+    # Build-time self-check: every DEMO_PROFILES target must have actually
+    # resolved to a real, renderable status. Without this check a broken
+    # profile point (e.g. a coordinate too far from any indexed segment)
+    # silently ships and only surfaces as a dead "Car B" toggle in the
+    # browser — this is exactly the class of bug this check exists to catch.
+    broken_profiles = []
+    for profile_key, profile in DEMO_PROFILES.items():
+        point_key = profile["point_key"]
+        entry = resolved.get(point_key, {}).get("entry")
+        if entry is None:
+            broken_profiles.append((profile_key, point_key, "point_key not in resolved set"))
+            continue
+        status = entry.get("status")
+        if status in ("NoSegmentFoundError", "resolution_failed", "unknown"):
+            broken_profiles.append((profile_key, point_key, f"status={status}"))
+    if broken_profiles:
+        details = "; ".join(f"{pk} ({key}): {reason}" for pk, key, reason in broken_profiles)
+        print(
+            f"build_demo_dataset: ERROR — {len(broken_profiles)} DEMO_PROFILES "
+            f"target(s) failed to resolve: {details}",
+            file=sys.stderr,
+        )
+        print(
+            "  Fix: pick a different coordinate for the affected point_key(s) in "
+            "DEMO_POINTS and re-run.",
+            file=sys.stderr,
+        )
+        return 1
 
     # Assemble the committed demo.json (weekly patterns only; no absolute dates).
     dataset = {
