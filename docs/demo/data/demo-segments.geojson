@@ -1,0 +1,131 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -73.968860697581,
+            40.677672850892
+          ],
+          [
+            -73.96597578634801,
+            40.677068229625
+          ]
+        ]
+      },
+      "properties": {
+        "point_key": "prospect_pl",
+        "segment_id": 39223,
+        "on_street": "PROSPECT PL"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -73.960881990961,
+            40.71490038496098
+          ],
+          [
+            -73.961288482966,
+            40.714510538502
+          ]
+        ]
+      },
+      "properties": {
+        "point_key": "williamsburg",
+        "segment_id": 38282,
+        "on_street": "BEDFORD AVE"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -73.925381429661,
+            40.761977944394005
+          ],
+          [
+            -73.924589562397,
+            40.76160860040002
+          ]
+        ]
+      },
+      "properties": {
+        "point_key": "astoria",
+        "segment_id": 22626,
+        "on_street": "BROADWAY"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -73.926807153064,
+            40.831043832253
+          ],
+          [
+            -73.926426279446,
+            40.83142918710699
+          ]
+        ]
+      },
+      "properties": {
+        "point_key": "bronx_grand_concourse",
+        "segment_id": 122911,
+        "on_street": "JEROME AVE"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -74.077617255752,
+            40.62651432275901
+          ],
+          [
+            -74.078034813873,
+            40.62648356627201
+          ]
+        ]
+      },
+      "properties": {
+        "point_key": "staten_island_no_match",
+        "segment_id": 67901,
+        "on_street": "CANAL ST"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -73.935740430243,
+            40.57848228816201
+          ],
+          [
+            -73.934061160218,
+            40.57853871134199
+          ]
+        ]
+      },
+      "properties": {
+        "point_key": "oriental_blvd",
+        "segment_id": 48185,
+        "on_street": "ORIENTAL BLVD"
+      }
+    }
+  ]
+}

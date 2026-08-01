@@ -1,0 +1,381 @@
+{
+  "generation_date": "2026-07-30",
+  "profiles": {
+    "A": {
+      "label": "Car A",
+      "point_key": "prospect_pl"
+    },
+    "B": {
+      "label": "Car B",
+      "point_key": "williamsburg"
+    }
+  },
+  "points": {
+    "prospect_pl": {
+      "lat": 40.677629,
+      "lon": -73.968527,
+      "status": "schedule_found",
+      "on_street": "PROSPECT PL",
+      "from_street": "VANDERBILT AVE",
+      "to_street": "UNDERHILL AVE",
+      "side_of_street": "N",
+      "side_label": "North side",
+      "confidence": 0.9445,
+      "borocode": "3",
+      "borough": "Brooklyn",
+      "segment_id": 39223,
+      "soda_level": 3,
+      "summary": "MON & THU 8:30 - 10 AM",
+      "weekly": [
+        {
+          "day": 0,
+          "start": "08:30",
+          "end": "10:00",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 8:30AM-10AM <-> (SUPERSEDES SP-369C)"
+        },
+        {
+          "day": 3,
+          "start": "08:30",
+          "end": "10:00",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 8:30AM-10AM <-> (SUPERSEDES SP-369C)"
+        }
+      ],
+      "sensors": {
+        "next_move": {
+          "entity_id": "sensor.asp_parking_monitor_next_move_time",
+          "attributes": {
+            "cleaning_days": [
+              "Monday",
+              "Thursday"
+            ],
+            "schedule_summary": "MON & THU 8:30 - 10 AM",
+            "street_name": "PROSPECT PL",
+            "cross_streets": "VANDERBILT AVE to UNDERHILL AVE",
+            "side_of_street": "N",
+            "side_label": "North side",
+            "confidence_score": 0.9445,
+            "borough": "Brooklyn",
+            "soda_level": 3
+          }
+        },
+        "resolved_street": {
+          "entity_id": "sensor.asp_parking_monitor_resolved_street",
+          "attributes": {
+            "from_street": "VANDERBILT AVE",
+            "to_street": "UNDERHILL AVE",
+            "side_of_street": "N",
+            "confidence_score": 0.9445,
+            "borough": "Brooklyn",
+            "distance_ft": 9.16,
+            "street_width_ft": 30.0,
+            "segment_id": 39223,
+            "side_label": "North side"
+          }
+        }
+      }
+    },
+    "williamsburg": {
+      "lat": 40.714606,
+      "lon": -73.961216,
+      "status": "schedule_found",
+      "on_street": "BEDFORD AVE",
+      "from_street": "N  1 ST",
+      "to_street": "GRAND ST",
+      "side_of_street": "W",
+      "side_label": "West side",
+      "confidence": 0.6057,
+      "borocode": "3",
+      "borough": "Brooklyn",
+      "segment_id": 38282,
+      "soda_level": 3,
+      "summary": "MON & THU 8 - 9:30 AM",
+      "weekly": [
+        {
+          "day": 0,
+          "start": "08:00",
+          "end": "09:30",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 8AM-9:30AM <-> (SUPERSEDES SP-412C)"
+        },
+        {
+          "day": 3,
+          "start": "08:00",
+          "end": "09:30",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 8AM-9:30AM <-> (SUPERSEDES SP-412C)"
+        }
+      ],
+      "sensors": {
+        "next_move": {
+          "entity_id": "sensor.asp_parking_monitor_next_move_time",
+          "attributes": {
+            "cleaning_days": [
+              "Monday",
+              "Thursday"
+            ],
+            "schedule_summary": "MON & THU 8 - 9:30 AM",
+            "street_name": "BEDFORD AVE",
+            "cross_streets": "N  1 ST to GRAND ST",
+            "side_of_street": "W",
+            "side_label": "West side",
+            "confidence_score": 0.6057,
+            "borough": "Brooklyn",
+            "soda_level": 3
+          }
+        },
+        "resolved_street": {
+          "entity_id": "sensor.asp_parking_monitor_resolved_street",
+          "attributes": {
+            "from_street": "N  1 ST",
+            "to_street": "GRAND ST",
+            "side_of_street": "W",
+            "confidence_score": 0.6057,
+            "borough": "Brooklyn",
+            "distance_ft": 5.88,
+            "street_width_ft": 30.0,
+            "segment_id": 38282,
+            "side_label": "West side"
+          }
+        }
+      }
+    },
+    "astoria": {
+      "lat": 40.761897,
+      "lon": -73.925232,
+      "status": "schedule_found",
+      "on_street": "BROADWAY",
+      "from_street": "31 ST",
+      "to_street": "32 ST",
+      "side_of_street": "S",
+      "side_label": "South side",
+      "confidence": 0.3601,
+      "borocode": "4",
+      "borough": "Queens",
+      "segment_id": 22626,
+      "soda_level": 4,
+      "summary": "TUE & FRI 11:30 AM - 1 PM",
+      "weekly": [
+        {
+          "day": 1,
+          "start": "11:30",
+          "end": "13:00",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY 11:30AM-1PM <-> (SUPERSEDES SP-361C); NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY 11:30AM-1PM --> (SUPERSEDES SP-361CA)"
+        },
+        {
+          "day": 4,
+          "start": "11:30",
+          "end": "13:00",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY 11:30AM-1PM <-> (SUPERSEDES SP-361C); NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY 11:30AM-1PM --> (SUPERSEDES SP-361CA)"
+        }
+      ],
+      "sensors": {
+        "next_move": {
+          "entity_id": "sensor.asp_parking_monitor_next_move_time",
+          "attributes": {
+            "cleaning_days": [
+              "Tuesday",
+              "Friday"
+            ],
+            "schedule_summary": "TUE & FRI 11:30 AM - 1 PM",
+            "street_name": "BROADWAY",
+            "cross_streets": "31 ST to 32 ST",
+            "side_of_street": "S",
+            "side_label": "South side",
+            "confidence_score": 0.3601,
+            "borough": "Queens",
+            "soda_level": 4
+          }
+        },
+        "resolved_street": {
+          "entity_id": "sensor.asp_parking_monitor_resolved_street",
+          "attributes": {
+            "from_street": "31 ST",
+            "to_street": "32 ST",
+            "side_of_street": "S",
+            "confidence_score": 0.3601,
+            "borough": "Queens",
+            "distance_ft": 3.49,
+            "street_width_ft": 42.0,
+            "segment_id": 22626,
+            "side_label": "South side"
+          }
+        }
+      }
+    },
+    "bronx_grand_concourse": {
+      "lat": 40.831258,
+      "lon": -73.926617,
+      "status": "schedule_found",
+      "on_street": "JEROME AVE",
+      "from_street": "",
+      "to_street": "E  164 ST",
+      "side_of_street": "W",
+      "side_label": "West side",
+      "confidence": 0.4911,
+      "borocode": "2",
+      "borough": "Bronx",
+      "segment_id": 122911,
+      "soda_level": 4,
+      "summary": "MON & THU 11:30 AM - 1 PM",
+      "weekly": [
+        {
+          "day": 0,
+          "start": "11:30",
+          "end": "13:00",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 11:30AM-1PM <-> (SUPERSEDES SP-850C); NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 11:30AM-1PM --> (SUPERSEDES SP-850CA)"
+        },
+        {
+          "day": 3,
+          "start": "11:30",
+          "end": "13:00",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 11:30AM-1PM <-> (SUPERSEDES SP-850C); NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 11:30AM-1PM --> (SUPERSEDES SP-850CA)"
+        }
+      ],
+      "sensors": {
+        "next_move": {
+          "entity_id": "sensor.asp_parking_monitor_next_move_time",
+          "attributes": {
+            "cleaning_days": [
+              "Monday",
+              "Thursday"
+            ],
+            "schedule_summary": "MON & THU 11:30 AM - 1 PM",
+            "street_name": "JEROME AVE",
+            "cross_streets": " to E  164 ST",
+            "side_of_street": "W",
+            "side_label": "West side",
+            "confidence_score": 0.4911,
+            "borough": "Bronx",
+            "soda_level": 4
+          }
+        },
+        "resolved_street": {
+          "entity_id": "sensor.asp_parking_monitor_resolved_street",
+          "attributes": {
+            "from_street": "",
+            "to_street": "E  164 ST",
+            "side_of_street": "W",
+            "confidence_score": 0.4911,
+            "borough": "Bronx",
+            "distance_ft": 4.76,
+            "street_width_ft": 60.0,
+            "segment_id": 122911,
+            "side_label": "West side"
+          }
+        }
+      }
+    },
+    "staten_island_no_match": {
+      "lat": 40.626511,
+      "lon": -74.077902,
+      "status": "no_match",
+      "on_street": "CANAL ST",
+      "from_street": "WRIGHT ST",
+      "to_street": "",
+      "side_of_street": "N",
+      "side_label": "North side",
+      "confidence": 0.6599,
+      "borocode": "5",
+      "borough": "Staten Island",
+      "segment_id": 67901,
+      "soda_level": 0,
+      "summary": null,
+      "weekly": [],
+      "sensors": {
+        "next_move": {
+          "entity_id": "sensor.asp_parking_monitor_next_move_time",
+          "attributes": {
+            "street_name": "CANAL ST",
+            "cross_streets": "WRIGHT ST to ",
+            "side_of_street": "N",
+            "side_label": "North side",
+            "confidence_score": 0.6599,
+            "borough": "Staten Island",
+            "soda_level": 0
+          }
+        },
+        "resolved_street": {
+          "entity_id": "sensor.asp_parking_monitor_resolved_street",
+          "attributes": {
+            "from_street": "WRIGHT ST",
+            "to_street": "",
+            "side_of_street": "N",
+            "confidence_score": 0.6599,
+            "borough": "Staten Island",
+            "distance_ft": 6.4,
+            "street_width_ft": 36.0,
+            "segment_id": 67901,
+            "side_label": "North side"
+          }
+        }
+      }
+    },
+    "oriental_blvd": {
+      "lat": 40.578552,
+      "lon": -73.934903,
+      "status": "schedule_found",
+      "on_street": "ORIENTAL BLVD",
+      "from_street": "",
+      "to_street": "DECATUR AVE",
+      "side_of_street": "N",
+      "side_label": "North side",
+      "confidence": 0.6411,
+      "borocode": "3",
+      "borough": "Brooklyn",
+      "segment_id": 48185,
+      "soda_level": 4,
+      "summary": "MON & THU 11 AM - 2 PM",
+      "weekly": [
+        {
+          "day": 0,
+          "start": "11:00",
+          "end": "14:00",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 11AM-2PM <-> (SUPERSEDES R7-86R)"
+        },
+        {
+          "day": 3,
+          "start": "11:00",
+          "end": "14:00",
+          "sign": "NO PARKING (SANITATION BROOM SYMBOL) MONDAY THURSDAY 11AM-2PM <-> (SUPERSEDES R7-86R)"
+        }
+      ],
+      "sensors": {
+        "next_move": {
+          "entity_id": "sensor.asp_parking_monitor_next_move_time",
+          "attributes": {
+            "cleaning_days": [
+              "Monday",
+              "Thursday"
+            ],
+            "schedule_summary": "MON & THU 11 AM - 2 PM",
+            "street_name": "ORIENTAL BLVD",
+            "cross_streets": " to DECATUR AVE",
+            "side_of_street": "N",
+            "side_label": "North side",
+            "confidence_score": 0.6411,
+            "borough": "Brooklyn",
+            "soda_level": 4
+          }
+        },
+        "resolved_street": {
+          "entity_id": "sensor.asp_parking_monitor_resolved_street",
+          "attributes": {
+            "from_street": "",
+            "to_street": "DECATUR AVE",
+            "side_of_street": "N",
+            "confidence_score": 0.6411,
+            "borough": "Brooklyn",
+            "distance_ft": 15.13,
+            "street_width_ft": 24.0,
+            "segment_id": 48185,
+            "side_label": "North side"
+          }
+        }
+      }
+    },
+    "outside_coverage": {
+      "lat": 40.912,
+      "lon": -73.7,
+      "status": "NoSegmentFoundError",
+      "error": "No street segment found within 164 ft of State Plane point (1067169.6, 271686.5)"
+    }
+  }
+}

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>See exactly when to move your car — ASP Parking demo</title>
+  <meta name="description" content="Click a block on the map to see its alternate-side parking rule, the next time you'd need to move your car, and the exact Home Assistant sensors this integration creates.">
+
+  <!-- Leaflet 1.9.4 — pinned CDN with Subresource Integrity (RESEARCH §V14 / threat T-41-03) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- Client controller (created in Plan 41-04). Deferred so the DOM is parsed first. -->
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#map">Skip to the map</a>
+
+  <!-- ================= HERO ================= -->
+  <header class="hero">
+    <h1 class="display">See exactly when to move your car</h1>
+    <p class="hero-subhead body">Click a block on the map. This is the same result the Home Assistant integration puts on your dashboard — no install needed.</p>
+
+    <!-- Demo / Full-resolver mode switch (CONTEXT locked decision: expose both modes) -->
+    <div class="mode-switch">
+      <div id="mode-toggle" class="mode-toggle" role="radiogroup" aria-label="Data source mode">
+        <button id="mode-demo" type="button" class="mode-option" role="radio" aria-checked="true" data-mode="demo">Demo mode</button>
+        <button id="mode-full" type="button" class="mode-option" role="radio" aria-checked="false" data-mode="full">Full resolver</button>
+      </div>
+      <span id="mode-status" class="mode-status label" role="status" aria-live="polite"></span>
+    </div>
+  </header>
+
+  <!-- ================= MAIN: MAP + READOUT ================= -->
+  <main class="layout">
+
+    <!-- Surface 1 — Leaflet map -->
+    <section class="map-region" aria-label="Demo parking map">
+      <div id="map" role="application" aria-label="Interactive parking map. Select a highlighted block to see its parking rule."></div>
+      <p id="primary-cta" class="primary-cta label">Click a pin to check this block</p>
+    </section>
+
+    <!-- Right-hand panel: readout → HA card → calendar -->
+    <div class="panel">
+
+      <!-- Empty state (shown until a pin is picked) -->
+      <section id="empty-state" class="card empty-state" aria-live="polite">
+        <h2 class="heading">Pick a spot to see it in action</h2>
+        <p class="body">Click one of the highlighted demo blocks on the map to see its parking rule, the next time you'd need to move, and the exact Home Assistant sensors this integration creates.</p>
+      </section>
+
+      <!-- Surface 2 — Resolved-restriction readout + profile picker -->
+      <section id="readout" class="card readout" aria-label="Parking rule for the selected block" hidden>
+        <h2 class="heading">Parking rule for this block</h2>
+        <p id="restriction-summary" class="body restriction-summary"></p>
+        <p id="restriction-meta" class="label muted restriction-meta"></p>
+        <span id="state-chip" class="chip chip-neutral"></span>
+
+        <div class="profile-picker">
+          <span class="label muted">Try a different car:</span>
+          <div id="profile-toggle" class="profile-toggle" role="radiogroup" aria-label="Try a different car">
+            <button id="profile-a" type="button" class="profile-option" role="radio" aria-checked="true" data-profile="A">Car A</button>
+            <button id="profile-b" type="button" class="profile-option" role="radio" aria-checked="false" data-profile="B">Car B</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Surface 3 — Mock Home Assistant sensor card -->
+      <section id="ha-card" class="card ha-card" aria-label="Home Assistant sensors" hidden>
+        <h2 class="heading">Home Assistant sensors</h2>
+
+        <div class="sensor">
+          <div id="sensor-next-move-entity" class="mono sensor-entity">sensor.asp_parking_monitor_next_move_time</div>
+          <div id="sensor-next-move-state" class="heading sensor-state"></div>
+          <table class="attrs">
+            <tbody id="sensor-next-move-attrs"></tbody>
+          </table>
+        </div>
+
+        <div class="sensor">
+          <div id="sensor-resolved-entity" class="mono sensor-entity">sensor.asp_parking_monitor_resolved_street</div>
+          <table class="attrs">
+            <tbody id="sensor-resolved-attrs"></tbody>
+          </table>
+        </div>
+
+        <div class="copy-row">
+          <button id="copy-yaml" type="button" class="btn-copy">Copy Home Assistant YAML</button>
+          <span id="copy-status" class="label copy-status" role="status" aria-live="polite"></span>
+        </div>
+      </section>
+
+      <!-- Surface 4 — Calendar next-move animation -->
+      <section class="card calendar-card" aria-label="Next move calendar" hidden>
+        <h2 id="calendar-caption" class="heading">Next move (NYC time)</h2>
+        <div id="calendar" class="calendar"></div>
+      </section>
+
+      <!-- Error state (dataset fails to load) -->
+      <section id="error-state" class="card error-state" role="alert" hidden>
+        <p class="body">Demo data couldn't load. Refresh the page, or view the project on GitHub.</p>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- ================= FOOTER ================= -->
+  <footer class="site-footer">
+    <p id="data-freshness" class="label muted"></p>
+    <p class="label"><a href="https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver" rel="noopener">View the project on GitHub</a></p>
+  </footer>
+</body>
+</html>

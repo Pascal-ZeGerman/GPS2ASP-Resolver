@@ -10,6 +10,7 @@ Supports all five NYC boroughs. Data is fetched live from NYC Open Data.
 
 ## Table of Contents
 
+- [Live Demo](#live-demo)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Requirements](#requirements)
@@ -21,6 +22,57 @@ Supports all five NYC boroughs. Data is fetched live from NYC Open Data.
 - [Known Limitations](#known-limitations)
 - [FAQ](#faq)
 - [For Developers](#for-developers)
+
+---
+
+## Live Demo
+
+Want to see what the integration produces before installing anything? A self-contained
+demo page lives under [`docs/demo/`](docs/demo/). Open it in a browser, click a block on the
+Leaflet map, and you'll see exactly what ASP Parking resolves for that location: the parking
+rule for the block, the next time you'd need to move your car, the exact Home Assistant sensor
+entities and states it would create, and an animated calendar of the weekly cleaning windows.
+It's a plain HTML/CSS/JS page — no build step, no install, no server-side code.
+
+**Where the data comes from.** The demo does **not** call any live API from the browser.
+It reads a **dated snapshot** committed to the repo at
+[`docs/demo/data/demo.json`](docs/demo/data/demo.json) (snapshot date: **2026-07-28**),
+plus the matched segment geometries in `docs/demo/data/demo-segments.geojson`. The snapshot
+stores *weekly recurring patterns* rather than absolute datetimes, and the page recomputes the
+next move time in your browser at NYC time — so the "next move" stays correct even though the
+underlying data is frozen. Because it's a static snapshot, the demo works offline and never
+needs a token.
+
+**Regenerating the snapshot.** The dataset is produced offline (not in CI) by
+`scripts/build_demo_dataset.py`. From a checkout with the project installed:
+
+```bash
+.venv/bin/python scripts/build_demo_dataset.py --out-dir docs/demo/data
+```
+
+This requires two things the demo page itself does not: the **spatial index** must be present
+locally, and the script needs **network access to the NYC Open Data (SODA) API**. The index is
+gitignored (~95 MB), so build it once with `python scripts/build_index.py` **or** download the
+released `index-v1` asset from the [Releases page](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/releases).
+Setting a `NYC_OPEN_DATA_APP_TOKEN` environment variable is optional but helps avoid SODA rate
+limiting. The generated `demo.json`/`demo-segments.geojson` are the only files committed — the
+index never is.
+
+**Running it locally.** Serve the folder over HTTP (opening `index.html` via `file://` won't
+let the page `fetch()` its JSON):
+
+```bash
+python -m http.server --directory docs/demo 8000
+```
+
+Then visit <http://localhost:8000/>.
+
+**Hosting it.** The repo ships a [`.github/workflows/pages.yml`](.github/workflows/pages.yml)
+workflow that publishes the committed `docs/` tree to **GitHub Pages** on every push to `docs/`
+(and on demand via *workflow_dispatch*). The workflow publishes the snapshot as-is and never
+runs the precompute. A maintainer only needs to enable Pages once, under
+**Settings → Pages → Source: GitHub Actions**; after that the demo is reachable at the
+repository's GitHub Pages URL.
 
 ---
 
