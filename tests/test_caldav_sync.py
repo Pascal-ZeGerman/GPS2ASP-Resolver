@@ -2072,3 +2072,80 @@ async def test_write_or_update_event_include_location_false_omits_all_location_p
     assert "GEO:" not in unfolded
     assert "LOCATION:" not in unfolded
     assert "X-APPLE" not in unfolded
+
+
+# ---------------------------------------------------------------------------
+# _get_calendar — iCloud cross-host sharding fallback
+#
+# Reproduces the production bug: iCloud's login entry point
+# (caldav.icloud.com) differs from the per-account host that actually
+# hosts the calendar's data (e.g. p117-caldav.icloud.com). caldav 2.x's
+# Principal.calendar(cal_url=...) does a purely local URL.join() that
+# raises ValueError whenever the client's base host and cal_url's host
+# differ (caldav/lib/url.py). _get_calendar must fall back to scanning
+# principal.calendars() (a real network call that follows redirects) and
+# matching by URL path.
+# ---------------------------------------------------------------------------
+
+
+async def test_get_calendar_falls_back_to_calendars_on_cross_host_valueerror():
+    cs = _require_caldav_sync()
+
+    calendar_url = (
+        "https://p117-caldav.icloud.com:443/278773852/calendars/"
+        "3ca30c3e0ab029c8487d164bc55c62681c2ba700045366956d8e28dc8f826ccf/"
+    )
+    matching_cal = SimpleNamespace(url=calendar_url)
+    other_cal = SimpleNamespace(url="https://p117-caldav.icloud.com:443/278773852/calendars/other/")
+
+    def _raise_cross_host(cal_url: str) -> None:
+        raise ValueError(f"https://caldav.icloud.com/ can't be joined with {cal_url}")
+
+    principal = SimpleNamespace(
+        calendar=MagicMock(side_effect=_raise_cross_host),
+        calendars=AsyncMock(return_value=[other_cal, matching_cal]),
+    )
+    client = SimpleNamespace(get_principal=AsyncMock(return_value=principal))
+
+    result = await cs._get_calendar(client, calendar_url)
+
+    assert result is matching_cal
+    principal.calendars.assert_awaited_once()
+
+
+async def test_get_calendar_cross_host_valueerror_no_match_raises_write_error():
+    cs = _require_caldav_sync()
+
+    calendar_url = "https://p117-caldav.icloud.com:443/278773852/calendars/missing/"
+    other_cal = SimpleNamespace(url="https://p117-caldav.icloud.com:443/278773852/calendars/other/")
+
+    def _raise_cross_host(cal_url: str) -> None:
+        raise ValueError(f"https://caldav.icloud.com/ can't be joined with {cal_url}")
+
+    principal = SimpleNamespace(
+        calendar=MagicMock(side_effect=_raise_cross_host),
+        calendars=AsyncMock(return_value=[other_cal]),
+    )
+    client = SimpleNamespace(get_principal=AsyncMock(return_value=principal))
+
+    with pytest.raises(cs.CalDAVWriteError):
+        await cs._get_calendar(client, calendar_url)
+
+
+async def test_get_calendar_same_host_uses_cheap_local_join_no_network_call():
+    """Regression guard: same-host servers (Radicale/Nextcloud/Baikal) must NOT
+    pay the extra principal.calendars() network round-trip — the local join
+    still works fine when the hosts match."""
+    cs = _require_caldav_sync()
+
+    cal = SimpleNamespace(url="https://srv/cal/work/")
+    principal = SimpleNamespace(
+        calendar=MagicMock(return_value=cal),
+        calendars=AsyncMock(side_effect=AssertionError("must not be called on the fast path")),
+    )
+    client = SimpleNamespace(get_principal=AsyncMock(return_value=principal))
+
+    result = await cs._get_calendar(client, "https://srv/cal/work/")
+
+    assert result is cal
+    principal.calendars.assert_not_awaited()
