@@ -298,6 +298,111 @@ function buildPopup(point) {
 }
 
 /* ==========================================================================
+   Filters (four AND-composed controls) + no-results state
+   ========================================================================== */
+
+/**
+ * Compute the currently-visible subset from the plain points array using AND
+ * logic across the four controls, redraw that subset onto the shared canvas
+ * layer group, and toggle the #no-results state (R4).
+ */
+function applyFilters() {
+  const borough = el('filter-borough') ? el('filter-borough').value : '';
+  const tier = el('filter-tier') ? el('filter-tier').value : '';
+  const level = el('filter-level') ? el('filter-level').value : '';
+  const search = (el('filter-search') ? el('filter-search').value : '')
+    .trim().toLowerCase();
+
+  const visible = state.points.filter((p) => {
+    // Borough — match the resolved borough NAME (42-03's select uses names).
+    if (borough && boroughName(p.bc) !== borough) return false;
+    // Tier — the SAME tierForConfidence used by coloring and the popup label.
+    if (tier && tierForConfidence(p.cf) !== tier) return false;
+    // SODA level — literal 0|1|2|3 (Level 4 folded into 3 per Open-Q4 / D-18).
+    if (level !== '' && String(p.lv) !== String(level)) return false;
+    // Street search — case-insensitive substring on full_street_name (st).
+    if (search && !String(p.st || '').toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  state.visible = visible;
+  renderMarkers(visible);
+
+  const noResults = el('no-results');
+  if (visible.length === 0) show(noResults);
+  else hide(noResults);
+}
+
+/* ==========================================================================
+   GeoJSON export of the currently-visible set (R5)
+   ========================================================================== */
+
+/**
+ * PURE FeatureCollection builder (node-testable, no side effects). An empty
+ * `visible` yields a VALID empty FeatureCollection (features:[]) — never an
+ * error and never a silent fall back to the full set (R5).
+ */
+function buildFeatureCollection(visible) {
+  return {
+    type: 'FeatureCollection',
+    features: (visible || []).map((p) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+      properties: {
+        segment_id: p.id,
+        on_street: p.st,
+        from_street: p.fr,
+        to_street: p.to,
+        side: p.sd,
+        borocode: p.bc,
+        soda_level: p.lv,
+        confidence: p.cf,
+        status: p.status,
+      },
+    })),
+  };
+}
+
+/**
+ * Build the FeatureCollection for the visible set and, in a browser, trigger a
+ * client-side download via a Blob + object URL + temporary anchor (no server).
+ * Returns the FeatureCollection so the builder stays node-testable.
+ */
+function exportGeoJSON(visible) {
+  const fc = buildFeatureCollection(visible || []);
+  if (typeof document !== 'undefined'
+    && typeof Blob !== 'undefined'
+    && typeof URL !== 'undefined' && URL.createObjectURL) {
+    const blob = new Blob([JSON.stringify(fc, null, 2)], {
+      type: 'application/geo+json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'coverage-visible.geojson';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  return fc;
+}
+
+/** Wire filter controls and the export button to their handlers. */
+function wireControls() {
+  const search = el('filter-search');
+  if (search) search.addEventListener('input', applyFilters);
+  for (const id of ['filter-borough', 'filter-tier', 'filter-level']) {
+    const ctrl = el(id);
+    if (ctrl) ctrl.addEventListener('change', applyFilters);
+  }
+  const exportBtn = el('export-geojson');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', () => exportGeoJSON(state.visible));
+  }
+}
+
+/* ==========================================================================
    Bootstrap
    ========================================================================== */
 
@@ -324,8 +429,10 @@ async function init() {
   state.boroughByCode = state.data.boroughs || null;
 
   initMap();
-  renderMarkers(state.points);
-  state.visible = state.points;
+  wireControls();
+  // Initial render: empty filters match all, so this draws the full set and
+  // hides the no-results state, and seeds state.visible for export.
+  applyFilters();
 }
 
 if (typeof document !== 'undefined') {
@@ -340,5 +447,13 @@ if (typeof document !== 'undefined') {
    (module is undefined under the deferred <script> tag). Task 2 and Task 3
    extend this export set. */
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { tierForConfidence, colorForTier, radiusForTier, buildPopup };
+  module.exports = {
+    tierForConfidence,
+    colorForTier,
+    radiusForTier,
+    buildPopup,
+    applyFilters,
+    buildFeatureCollection,
+    exportGeoJSON,
+  };
 }
