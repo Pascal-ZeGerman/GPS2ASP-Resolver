@@ -21,6 +21,7 @@ These tests are pure (no network, no SODAClient, no 39 MB spatial index) so CI's
 from __future__ import annotations
 
 from scripts.build_coverage_dataset import (
+    build_coverage,
     confidence_for_level,
     derive_segment_sides,
     group_key,
@@ -33,6 +34,93 @@ from scripts.build_coverage_dataset import (
 #   N-S segment: runs vertically   (delta-x == 0) -> bearing 90 deg  -> {E, W}
 _EW_WKT = "LINESTRING (980000 200000, 980100 200000)"
 _NS_WKT = "LINESTRING (980000 200000, 980000 200100)"
+
+
+def _seg(street: str, from_street: str, to_street: str, *, wkt: str = _EW_WKT,
+         boro: str = "1") -> dict:
+    """Build a minimal in-memory segment record (whole-index build input shape)."""
+    return {
+        "full_street_name": street,
+        "from_street": from_street,
+        "to_street": to_street,
+        "borocode": boro,
+        "geometry_wkt": wkt,
+    }
+
+
+class _StubClient:
+    """Records every SODA call so tests can assert the grouped query count.
+
+    Mirrors the two SODAClient methods the build touches: the (sync) query
+    builder and the (async) fetch. No network, no token. ``records_by_query``
+    maps a built query string to canned records; ``default`` is returned for
+    any unlisted query.
+    """
+
+    def __init__(self, records_by_query: dict[str, list[dict]] | None = None,
+                 default: list[dict] | None = None) -> None:
+        self.calls: list[str] = []
+        self._records = records_by_query or {}
+        self._default = default if default is not None else []
+
+    def build_on_street_query(self, on_street: str, side: str) -> str:
+        return f"{on_street}|{side}"
+
+    async def fetch_signs(self, query: str) -> list[dict]:
+        self.calls.append(query)
+        return self._records.get(query, self._default)
+
+
+async def test_query_count_is_grouped():
+    """One SODA fetch per distinct (normalized street, side) group, not per segment."""
+    # 6 segments across 2 E-W streets (3 each) -> sides {N,S} per street ->
+    # 2 streets x 2 sides = 4 distinct groups. A per-segment resolve would issue
+    # up to 12 (6 segments x 2 sides); grouped resolve issues exactly 4.
+    segments = {
+        "1": _seg("BROADWAY", "1 ST", "2 ST"),
+        "2": _seg("BROADWAY", "2 ST", "3 ST"),
+        "3": _seg("BROADWAY", "3 ST", "4 ST"),
+        "4": _seg("5 AVENUE", "10 ST", "11 ST"),
+        "5": _seg("5 AVENUE", "11 ST", "12 ST"),
+        "6": _seg("5 AVENUE", "12 ST", "13 ST"),
+    }
+    client = _StubClient()  # every group returns []
+    dataset = await build_coverage(segments, client)
+
+    assert dataset["query_count"] == 4
+    assert len(client.calls) == 4
+    assert dataset["query_count"] < len(segments)
+
+
+async def test_every_segment_has_entry():
+    """Exactly one entry per input segment_id — never an omitted segment."""
+    segments = {
+        "1": _seg("BROADWAY", "1 ST", "2 ST"),
+        "2": _seg("BROADWAY", "2 ST", "3 ST"),
+        "3": _seg("5 AVENUE", "10 ST", "11 ST", wkt=_NS_WKT),
+        "42": _seg("W THAMES ST", "GREENWICH ST", "WASHINGTON ST"),
+    }
+    client = _StubClient()
+    dataset = await build_coverage(segments, client)
+
+    assert len(dataset["segments"]) == len(segments)
+    assert {entry["id"] for entry in dataset["segments"]} == set(segments.keys())
+
+
+async def test_zero_record_group_no_match():
+    """A group whose broad query returns [] still yields an explicit no-match entry."""
+    segments = {
+        "1": _seg("BROADWAY", "1 ST", "2 ST"),
+        "2": _seg("BROADWAY", "2 ST", "3 ST"),
+    }
+    client = _StubClient()  # all groups empty
+    dataset = await build_coverage(segments, client)
+
+    assert len(dataset["segments"]) == 2
+    for entry in dataset["segments"]:
+        assert entry["status"] == "no_match"
+        assert entry["lv"] == 0
+        assert entry["cf"] == 0.0
 
 
 def test_grouping_key_and_side_derivation():
