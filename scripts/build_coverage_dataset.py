@@ -578,7 +578,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         segments = _load_segment_records()
 
-    expected_count = len(segments) if args.limit is None else min(args.limit, len(segments))
+    expected_count = (
+        len(segments) if args.limit is None else min(args.limit, len(segments))
+    )
 
     client = SODAClient()
     dataset = asyncio.run(build_coverage(segments, client, limit=args.limit))
