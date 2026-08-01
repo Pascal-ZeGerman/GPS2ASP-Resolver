@@ -32,14 +32,38 @@ network resolve pipeline + main() land in 42-02.
 
 from __future__ import annotations
 
+import argparse
+import asyncio
 import json
+import logging
 import math
+import sys
+from datetime import date, datetime
 from pathlib import Path
 
 from pyproj import Transformer
 from shapely import wkt
 
+from gps2asp.schedule import (
+    ASPActiveNow,
+    ScheduleFound,
+    ScheduleResult,
+    compute_schedule,
+)
+from gps2asp.signs import _cross_streets_match, materialize_cached_records
+from gps2asp.signs.client import SODAClient
 from gps2asp.signs.normalize import normalize_to_soda
+
+logger = logging.getLogger("build_coverage_dataset")
+
+# Fixed build-time reference instant fed to compute_schedule. The committed
+# dataset stores only the WEEKLY pattern (never an absolute next-move date —
+# Pitfall 3), so this instant does not leak into the output; it exists solely to
+# make the run deterministic. 04:00 on a weekday sits outside every realistic ASP
+# cleaning window, so no block spuriously resolves to "asp_active_now" at build
+# time (the "resting" status is schedule_found). It is naive; the schedule layer
+# attaches America/New_York.
+_BUILD_REFERENCE_TIME = datetime(2025, 1, 1, 4, 0)
 
 # Reverse of resolver/converter.py's forward transform: EPSG:2263 -> WGS84.
 # always_xy=True yields (lon, lat) — exactly GeoJSON coordinate order.
@@ -216,16 +240,375 @@ def tier_for_confidence(v: float) -> str:
     return "unresolved"
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Network resolve pipeline + serialisation — implemented in plan 42-02.
+def _load_segment_records() -> dict[str, dict]:
+    """Load ``segments.json`` into a ``segment_id -> full record`` map.
 
-    This 42-01 plan locks only the deterministic, network-free core (grouping key
-    + tier partition) behind tests. The SODA-backed resolve/write path lands next.
+    Unlike ``_load_segments`` (which keeps only the geometry for reprojection),
+    the whole-index resolve needs each block's street identity too:
+    ``full_street_name``/``from_street``/``to_street``/``borocode`` plus the
+    ``geometry_wkt`` used for the map midpoint and the geometry-derived sides.
     """
-    raise NotImplementedError(
-        "build_coverage_dataset.main() is implemented in plan 42-02 "
-        "(SODA resolve pipeline + coverage.json writer)."
+    raw = json.loads(_SEGMENTS_PATH.read_text())
+    return {
+        str(seg_id): rec
+        for seg_id, rec in raw.items()
+        if isinstance(rec, dict) and "geometry_wkt" in rec
+    }
+
+
+async def resolve_group(
+    client: SODAClient,
+    normalized_street: str,
+    side: str,
+) -> list[dict]:
+    """Issue ONE broad SODA query for a whole ``(normalized street, side)`` group.
+
+    This is the R1 dedup primitive: instead of one exact block query per segment
+    (~105K calls), the build fetches every broom sign on a street+side ONCE, then
+    recovers per-block precision client-side via the cross-street filter. Mirrors
+    ``audit_queens_coverage.py``'s ``build_on_street_query`` + ``fetch_signs``
+    pattern.
+
+    Fail-soft (Pitfall 4): a failed group logs a WARNING and returns ``[]`` rather
+    than aborting the whole-index run — every segment in the group then degrades
+    to an explicit no-match entry (never a silent omission).
+
+    Args:
+        client: SODAClient (or a stub exposing the same two methods).
+        normalized_street: Canonical street key (already ``normalize_to_soda``d).
+        side: Compass side letter ("N", "S", "E", or "W").
+
+    Returns:
+        Raw SODA record dicts for the group, or ``[]`` on any query failure.
+    """
+    query = client.build_on_street_query(normalized_street, side)
+    try:
+        return await client.fetch_signs(query)
+    except Exception as exc:  # noqa: BLE001 — fail-soft per group (Pitfall 4)
+        logger.warning(
+            "resolve_group: SODA query failed for street=%r side=%r: %s — "
+            "treating group as empty",
+            normalized_street,
+            side,
+            exc,
+        )
+        return []
+
+
+def cross_streets_match(record: dict, from_street: str, to_street: str) -> bool:
+    """Whether a SODA record covers this block's cross streets.
+
+    Thin wrapper over the resolver's ``signs._cross_streets_match`` so the build
+    reuses its variant + swap + empty-field guard (BUG-S-003) instead of a naive
+    string compare (RESEARCH "Don't Hand-Roll").
+    """
+    return _cross_streets_match(record, from_street, to_street)
+
+
+def _exact_cross_match(record: dict, from_street: str, to_street: str) -> bool:
+    """Whether a record's cross streets match EXACTLY (no abbreviation variants).
+
+    Used to separate soda_level 1 (exact from/to or exact swap) from level 2
+    (matched only via an abbreviation variant). Compares the canonical
+    ``normalize_to_soda`` forms directly, without expanding ``name_variants``.
+    """
+    record_from = record.get("from_street", "")
+    record_to = record.get("to_street", "")
+    if not record_from or not record_to or not from_street or not to_street:
+        return False
+    rf = normalize_to_soda(record_from.upper().strip())
+    rt = normalize_to_soda(record_to.upper().strip())
+    ff = normalize_to_soda(from_street.upper().strip())
+    tt = normalize_to_soda(to_street.upper().strip())
+    return (rf == ff and rt == tt) or (rf == tt and rt == ff)
+
+
+def resolve_side(
+    group_records: list[dict],
+    on_street: str,
+    from_street: str,
+    to_street: str,
+    side: str,
+    now: datetime,
+) -> tuple[int, ScheduleResult]:
+    """Resolve ONE side of a block from its group's pre-fetched records.
+
+    Assigns ``soda_level`` by match precision (D-18 confidence follows):
+      * group empty (street absent from SODA) -> 0 (no-match)
+      * an exact from/to (or exact swap) match exists -> 1
+      * only abbreviation-variant matches exist -> 2
+      * the group has records but NONE match this block's cross streets -> 3
+
+    The filtered records are materialised into the resolver's ``SignRetrievalResult``
+    shape and run through ``compute_schedule`` (fixed ``now``) so status/summary/
+    weekly come from the SAME pipeline the live resolver uses. For levels 0 and 3
+    the filter is empty, so ``materialize_cached_records`` yields ``NoMatchFound``
+    -> a ``no_match`` schedule (still an explicit entry).
+
+    Returns:
+        ``(soda_level, schedule_result)``.
+    """
+    filtered = [
+        r for r in group_records if cross_streets_match(r, from_street, to_street)
+    ]
+    if not group_records:
+        soda_level = 0
+    elif any(_exact_cross_match(r, from_street, to_street) for r in filtered):
+        soda_level = 1
+    elif filtered:
+        soda_level = 2
+    else:
+        soda_level = 3
+
+    sign_result = materialize_cached_records(
+        filtered,
+        on_street,
+        from_street,
+        to_street,
+        side,
+        # For empty `filtered` this marker is unused (NoMatchFound short-circuits);
+        # clamp to a valid level>=1 for the success shape when records are present.
+        soda_level if soda_level >= 1 else 1,
     )
+    schedule = compute_schedule(sign_result, now=now)
+    return soda_level, schedule
+
+
+def _summary_and_weekly(
+    schedule: ScheduleResult,
+) -> tuple[str | None, list[dict]]:
+    """Extract ``(summary, weekly_pattern)`` from a schedule result.
+
+    The weekly pattern stores ``{d, s, e}`` = day value + start/end ``%H:%M``
+    ONLY — never an absolute date (Pitfall 3) and never the raw sign text (D-04,
+    unlike ``build_demo_dataset`` which keeps ``sign``). Non-schedule variants
+    (no_asp / no_match / all_unparseable) yield ``(None, [])``.
+    """
+    if isinstance(schedule, ScheduleFound):
+        weekly = [
+            {
+                "d": window.day.value,
+                "s": window.start_time.strftime("%H:%M"),
+                "e": window.end_time.strftime("%H:%M"),
+            }
+            for window in schedule.weekly_schedule.windows
+        ]
+        return schedule.summary, weekly
+    if isinstance(schedule, ASPActiveNow):
+        # No weekly_schedule on the active variant — only the single active
+        # window. Still surface it so the client renders a schedule (mirrors
+        # build_demo_dataset's asp_active_now handling).
+        window = schedule.active_window
+        weekly = [
+            {
+                "d": window.day.value,
+                "s": window.start_time.strftime("%H:%M"),
+                "e": window.end_time.strftime("%H:%M"),
+            }
+        ]
+        return schedule.summary, weekly
+    return None, []
+
+
+def build_segment_entry(
+    segment_id: str,
+    seg_record: dict,
+    side: str,
+    soda_level: int,
+    schedule: ScheduleResult,
+) -> dict:
+    """Assemble ONE canonical compact coverage.json segment entry (42-01 schema).
+
+    Emits EXACTLY the locked short keys and no others:
+    ``id, lat, lon, st, fr, to, sd, bc, lv, cf, status, sm, wk``. No credential
+    field, no raw sign text, no absolute date.
+
+    Args:
+        segment_id: The segment id (dataset ``id``).
+        seg_record: The raw segments.json record (street identity + geometry).
+        side: The worst-case side chosen for this segment (D-13).
+        soda_level: Match-precision level for the chosen side.
+        schedule: The chosen side's schedule result.
+    """
+    lat, lon = segment_midpoint_wgs84(seg_record["geometry_wkt"])
+    summary, weekly = _summary_and_weekly(schedule)
+    return {
+        "id": segment_id,
+        "lat": lat,
+        "lon": lon,
+        "st": seg_record.get("full_street_name"),
+        "fr": seg_record.get("from_street"),
+        "to": seg_record.get("to_street"),
+        "sd": side,
+        "bc": str(seg_record.get("borocode")),
+        "lv": soda_level,
+        "cf": confidence_for_level(soda_level),
+        "status": schedule.status,
+        "sm": summary,
+        "wk": weekly,
+    }
+
+
+async def build_coverage(
+    segments: dict[str, dict],
+    client: SODAClient,
+    *,
+    now: datetime = _BUILD_REFERENCE_TIME,
+    limit: int | None = None,
+) -> dict:
+    """Resolve the whole index deduped by ``(street, side)`` into the dataset dict.
+
+    Steps (R1):
+      1. For each segment, derive its two geometry-based sides and their two
+         ``group_key``s; collect the DISTINCT set of ``(normalized street, side)``
+         groups.
+      2. Issue exactly ONE ``resolve_group`` per distinct group, caching records
+         in memory — this is the dedup: SODA call count == distinct-group count,
+         far below the segment count.
+      3. For each segment, resolve BOTH sides against their group's records and
+         pick the WORST-CASE side (lower confidence; D-13). A segment is only
+         high-tier when both sides resolve well.
+      4. Build one compact entry per segment — never omit a segment.
+
+    Args:
+        segments: ``segment_id -> raw segments.json record`` (in-memory; tests
+            pass a tiny stub map, ``main`` passes the whole index).
+        client: SODAClient (or a stub exposing build_on_street_query/fetch_signs).
+        now: Fixed build-time instant for compute_schedule (determinism).
+        limit: If set, resolve only the first N segments (local smoke runs).
+
+    Returns:
+        The full dataset dict (``generation_date, boroughs, query_count,
+        segment_count, segments``).
+    """
+    items = list(segments.items())
+    if limit is not None:
+        items = items[:limit]
+
+    # ---- pass 1: derive per-segment sides + collect the distinct group set ----
+    # seg_plan[sid] = (on_street, from_street, to_street, [(side, group_key), ...])
+    seg_plan: dict[str, tuple[str, str, str, list[tuple[str, tuple[str, str]]]]] = {}
+    distinct_groups: dict[tuple[str, str], None] = {}
+    for sid, rec in items:
+        on_street = rec["full_street_name"]
+        from_street = rec["from_street"]
+        to_street = rec["to_street"]
+        sides = derive_segment_sides(rec["geometry_wkt"])
+        side_keys: list[tuple[str, tuple[str, str]]] = []
+        for side in sides:
+            gk = group_key(on_street, side)
+            distinct_groups[gk] = None
+            side_keys.append((side, gk))
+        seg_plan[sid] = (on_street, from_street, to_street, side_keys)
+
+    # ---- resolve each distinct group exactly once (the R1 dedup) ----
+    group_records: dict[tuple[str, str], list[dict]] = {}
+    for normalized_street, side in distinct_groups:
+        group_records[(normalized_street, side)] = await resolve_group(
+            client, normalized_street, side
+        )
+    query_count = len(distinct_groups)
+
+    # ---- pass 2: worst-case side per segment -> one entry each ----
+    segment_entries: list[dict] = []
+    for sid, rec in items:
+        on_street, from_street, to_street, side_keys = seg_plan[sid]
+        best: tuple[float, int, str, ScheduleResult] | None = None
+        for side, gk in side_keys:
+            soda_level, schedule = resolve_side(
+                group_records[gk], on_street, from_street, to_street, side, now
+            )
+            cf = confidence_for_level(soda_level)
+            # Worst-case = LOWER confidence (D-13); ties keep the first side.
+            if best is None or cf < best[0]:
+                best = (cf, soda_level, side, schedule)
+        assert best is not None  # every segment has at least one side
+        _, worst_level, worst_side, worst_schedule = best
+        segment_entries.append(
+            build_segment_entry(sid, rec, worst_side, worst_level, worst_schedule)
+        )
+
+    return {
+        "generation_date": date.today().isoformat(),
+        "boroughs": _BOROUGH_NAMES,
+        "query_count": query_count,
+        "segment_count": len(segment_entries),
+        "segments": segment_entries,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Whole-index SODA resolve + coverage.json writer (R1).
+
+    Reads the committed spatial-index segments (or a ``--segments`` override for
+    tests/smoke runs), resolves every segment deduped by ``(street, side)``, and
+    writes the canonical compact ``coverage.json``. The SODA app token is read
+    ONLY inside ``SODAClient`` (from the environment); this script never reads it
+    and never serialises any credential (T-42-01).
+    """
+    parser = argparse.ArgumentParser(
+        description=(
+            "Offline whole-index coverage dumper: grouped SODA resolve -> "
+            "coverage.json for the static street-sign coverage explorer."
+        ),
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("docs/explorer/data"),
+        help="Directory to write coverage.json into.",
+    )
+    parser.add_argument(
+        "--segments",
+        type=Path,
+        default=None,
+        help="Optional segments.json override (id -> record). Defaults to the "
+        "committed spatial index.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Resolve only the first N segments (local smoke runs).",
+    )
+    args = parser.parse_args(argv)
+
+    if args.segments is not None:
+        segments = json.loads(args.segments.read_text())
+    else:
+        segments = _load_segment_records()
+
+    expected_count = (
+        len(segments) if args.limit is None else min(args.limit, len(segments))
+    )
+
+    client = SODAClient()
+    dataset = asyncio.run(build_coverage(segments, client, limit=args.limit))
+
+    # Build-time self-check: fail loud if any segment was dropped (R1: never an
+    # omitted entry). The whole-index build has no per-point fallback, so a count
+    # mismatch is a hard bug, not a soft-degrade.
+    actual = len(dataset["segments"])
+    if actual != expected_count:
+        print(
+            f"build_coverage_dataset: ERROR — expected {expected_count} segment "
+            f"entries but produced {actual}; refusing to write a lossy dataset.",
+            file=sys.stderr,
+        )
+        return 1
+
+    out_dir: Path = args.out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "coverage.json"
+    out_path.write_text(json.dumps(dataset, indent=2) + "\n")
+
+    # R1 verifiability: the low-thousands query claim must be readable from the
+    # run output.
+    print(
+        f"build_coverage_dataset: issued {dataset['query_count']} SODA group "
+        f"queries for {actual} segments -> {out_path}"
+    )
+    return 0
 
 
 if __name__ == "__main__":
