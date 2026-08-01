@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign-coverage explorer — GPS2ASP-Resolver</title>
+  <meta name="description" content="A coverage-QA map that plots every NYC street segment's parsed alternate-side-parking coverage, colored by SODA-match confidence tier, so gaps and low-confidence matches are visible and navigable. Filter by borough, tier, SODA level, or street name, and export the visible set as GeoJSON.">
+
+  <!-- Leaflet 1.9.4 — pinned CDN with Subresource Integrity (RESEARCH §V14 / threat T-42-03). Copied verbatim from docs/demo/index.html. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- Client controller (created in Plan 42-04). Deferred so the DOM is parsed first. -->
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#map">Skip to the map</a>
+
+  <!-- ================= HERO (coverage-QA tool, NOT the demo's sales hero — D-15) ================= -->
+  <header class="hero">
+    <h1 class="display">Sign-coverage explorer</h1>
+    <p class="hero-subhead body">A maintainer QA tool. This map plots every NYC street segment's parsed alternate-side-parking coverage, colored by how confidently each block matched a SODA sign record — so coverage gaps and low-confidence matches are visible and navigable. This is not the onboarding demo; it's for finding and inspecting the holes in the data.</p>
+    <p class="hero-freshness label muted">Data as of <span id="data-freshness"></span></p>
+  </header>
+
+  <!-- ================= MAIN: MAP + LEGEND + FILTERS ================= -->
+  <main class="layout">
+
+    <!-- Left column — Leaflet map + always-visible legend -->
+    <section class="map-region" aria-label="Coverage map">
+      <div id="map" role="application" aria-label="Interactive coverage map. Every NYC street segment is a point colored by confidence tier; select a point to inspect its resolved schedule, confidence, and SODA level."></div>
+
+      <!--
+        Always-visible legend (D-16): NOT hidden and NOT behind a toggle. Each tier
+        pairs a color swatch with a text label so the tier is distinguishable
+        WITHOUT relying on hue (Prohibition 3 / T-42-05, colorblind second channel).
+        The 42-04 controller ALSO gives each tier a distinct marker radius (third
+        channel) per the convention documented in styles.css.
+      -->
+      <section id="legend" class="legend" aria-label="Confidence tier legend">
+        <h2 class="legend-title label">Confidence tiers</h2>
+        <ul class="legend-list">
+          <li class="legend-row">
+            <span class="legend-swatch legend-swatch--high" aria-hidden="true"></span>
+            <span class="legend-label">High — exact block match</span>
+          </li>
+          <li class="legend-row">
+            <span class="legend-swatch legend-swatch--medium" aria-hidden="true"></span>
+            <span class="legend-label">Medium — approximate match</span>
+          </li>
+          <li class="legend-row">
+            <span class="legend-swatch legend-swatch--low" aria-hidden="true"></span>
+            <span class="legend-label">Low — fuzzy or fallback match</span>
+          </li>
+          <li class="legend-row">
+            <span class="legend-swatch legend-swatch--unresolved" aria-hidden="true"></span>
+            <span class="legend-label">Unresolved — no SODA record</span>
+          </li>
+        </ul>
+      </section>
+    </section>
+
+    <!-- Right column — filter panel + states + export -->
+    <div class="panel">
+
+      <!--
+        Four independent, AND-composable filter controls (R4 / D-07).
+        NOTE: there is intentionally NO date filter and NO sign_type filter (D-08) —
+        ASP schedules are weekly-recurring (nothing date-based to filter) and this
+        codebase only parses ASP broom signs (no sign_type variance).
+      -->
+      <section id="filters" class="card filters" aria-label="Coverage filters">
+        <h2 class="heading">Filter the map</h2>
+
+        <div class="filter-row">
+          <label class="label" for="filter-borough">Borough</label>
+          <select id="filter-borough" class="filter-control">
+            <option value="">All boroughs</option>
+            <option value="Manhattan">Manhattan</option>
+            <option value="Bronx">Bronx</option>
+            <option value="Brooklyn">Brooklyn</option>
+            <option value="Queens">Queens</option>
+            <option value="Staten Island">Staten Island</option>
+          </select>
+        </div>
+
+        <div class="filter-row">
+          <label class="label" for="filter-tier">Confidence tier</label>
+          <select id="filter-tier" class="filter-control">
+            <option value="">All tiers</option>
+            <option value="high">High — exact block match</option>
+            <option value="medium">Medium — approximate match</option>
+            <option value="low">Low — fuzzy or fallback match</option>
+            <option value="unresolved">Unresolved — no SODA record</option>
+          </select>
+        </div>
+
+        <div class="filter-row">
+          <label class="label" for="filter-level">SODA fallback level</label>
+          <!--
+            SODA-level selector (R4). Level 4 is folded into the Level 3 bucket per
+            Open-Q4 / D-18 (D-18's 0.40 confidence bucket covers levels 3-4), so this
+            selector intentionally offers 0/1/2/3 and has NO separate '4' option.
+            SPEC R4's literal "1-4" is this documented fold, not a dropped requirement.
+          -->
+          <select id="filter-level" class="filter-control">
+            <option value="">All levels</option>
+            <option value="1">Level 1 — exact segment</option>
+            <option value="2">Level 2 — cross-street block</option>
+            <option value="3">Level 3 — on-street fallback (incl. L4)</option>
+            <option value="0">Level 0 — no match</option>
+          </select>
+        </div>
+
+        <div class="filter-row">
+          <label class="label" for="filter-search">Street name</label>
+          <input id="filter-search" class="filter-control" type="search"
+                 placeholder="Street name" autocomplete="off"
+                 aria-describedby="filter-search-hint">
+          <span id="filter-search-hint" class="label muted filter-hint">Case-insensitive substring match.</span>
+        </div>
+
+        <div class="filter-actions">
+          <button id="export-geojson" type="button" class="btn-export">Export visible as GeoJSON</button>
+        </div>
+      </section>
+
+      <!-- No-results state (shown when a filter combination matches zero points — R4) -->
+      <p id="no-results" class="card no-results body" role="status" hidden>
+        No segments match the current filters. Widen or clear a filter to see points again.
+      </p>
+
+      <!-- Error state (dataset fails to load — R2) -->
+      <section id="error-state" class="card error-state" role="alert" hidden>
+        <p class="body">Coverage data couldn't load. Refresh the page, or view the project on GitHub.</p>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- ================= FOOTER ================= -->
+  <footer class="site-footer">
+    <p class="label muted">Coverage-QA tool for GPS2ASP-Resolver — separate from the onboarding demo.</p>
+    <p class="label"><a href="https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver" rel="noopener">View the project on GitHub</a></p>
+  </footer>
+</body>
+</html>
