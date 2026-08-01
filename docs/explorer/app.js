@@ -166,8 +166,135 @@ function renderMarkers(points) {
       fillColor: color,
       fillOpacity: 0.85,
     });
+    // Build the popup lazily (function form) so its text stays textContent-rendered.
+    marker.bindPopup(() => buildPopup(p));
     state.markerLayer.addLayer(marker);
   }
+}
+
+/* ==========================================================================
+   Popup builder — fields, link-outs, explicit unresolved state
+   (textContent / DOM node creation ONLY; never an HTML-string assignment)
+   ========================================================================== */
+
+/** Whether a point carries a real weekly ASP schedule. */
+function hasSchedule(point) {
+  return point.status === 'schedule_found' || point.status === 'asp_active_now';
+}
+
+/** Build one <tr> with a key cell and a value cell, both textContent-set. */
+function attrRow(key, value) {
+  const tr = document.createElement('tr');
+  const tdKey = document.createElement('td');
+  const tdVal = document.createElement('td');
+  tdKey.textContent = key;
+  tdVal.textContent = value == null ? '' : String(value);
+  tr.appendChild(tdKey);
+  tr.appendChild(tdVal);
+  return tr;
+}
+
+/** Human "Mon 08:30–10:00" line for one weekly window ({d,s,e}). */
+function weeklyLine(w) {
+  const abbr = DAY_ABBR[Number(w.d)] || '?';
+  const start = w.s == null ? '' : String(w.s);
+  const end = w.e == null ? '' : String(w.e);
+  return `${abbr} ${start}–${end}`.trim();
+}
+
+/** Explicit, safety-correct status copy — NEVER a "confirmed clear" reading for
+    a gap / no-match (Prohibition 2 / T-42-04). */
+function statusCopy(point) {
+  switch (point.status) {
+    case 'schedule_found':
+    case 'asp_active_now':
+      return null; // schedule is shown in the attributes table instead
+    case 'no_asp':
+      return 'No ASP broom sign found on this block (SODA had records for this street).';
+    case 'no_match':
+    case 'resolution_failed':
+    case 'all_unparseable':
+    default:
+      return 'Unresolved — no SODA record for this block (coverage gap; not a confirmed clear street).';
+  }
+}
+
+/**
+ * Build a popup DOM node (NOT an HTML string) for one segment. All
+ * dataset-derived text is set via textContent only.
+ */
+function buildPopup(point) {
+  const root = document.createElement('div');
+  root.className = 'marker-popup';
+
+  // Street label + cross streets.
+  const title = document.createElement('p');
+  title.className = 'popup-street';
+  title.textContent = point.st == null ? '' : String(point.st);
+  root.appendChild(title);
+
+  if (point.fr && point.to) {
+    const cross = document.createElement('p');
+    cross.className = 'popup-cross';
+    cross.textContent = `${point.fr} to ${point.to}`;
+    root.appendChild(cross);
+  }
+
+  // Attributes table — confidence + tier label, SODA level, schedule summary.
+  const table = document.createElement('table');
+  table.className = 'popup-attrs';
+  const tbody = document.createElement('tbody');
+
+  const tier = tierForConfidence(point.cf);
+  const cfNum = Number(point.cf);
+  const cfText = Number.isFinite(cfNum) ? cfNum.toFixed(2) : '—';
+  tbody.appendChild(attrRow('Confidence', `${cfText} (${tier})`));
+
+  const lv = Number(point.lv);
+  tbody.appendChild(attrRow('SODA level', lv === 0 ? '0 (no match)' : String(point.lv)));
+
+  if (hasSchedule(point)) {
+    if (point.sm) tbody.appendChild(attrRow('Schedule', point.sm));
+    if (Array.isArray(point.wk) && point.wk.length > 0) {
+      tbody.appendChild(attrRow('Cleaning', point.wk.map(weeklyLine).join('; ')));
+    }
+  }
+
+  table.appendChild(tbody);
+  root.appendChild(table);
+
+  // Explicit status line for non-schedule states (unresolved / no_asp). NEVER
+  // renders "confirmed clear" copy for a gap (Prohibition 2 / T-42-04).
+  const copy = statusCopy(point);
+  if (copy) {
+    const note = document.createElement('p');
+    note.className = 'popup-status';
+    note.textContent = copy;
+    root.appendChild(note);
+  }
+
+  // Link-outs — Street View + FreeNYC. Both open a NEW TAB and carry
+  // target="_blank" + rel="noopener" (reverse-tabnabbing guard, T-42-06).
+  // The NYC DOT sign-lookup link is intentionally DROPPED (no stable URL, D-05).
+  const links = document.createElement('p');
+  links.className = 'popup-links';
+
+  const sv = document.createElement('a');
+  sv.textContent = 'Open in Street View';
+  sv.href = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${point.lat},${point.lon}`;
+  sv.setAttribute('target', '_blank');
+  sv.setAttribute('rel', 'noopener');
+  links.appendChild(sv);
+
+  const freenyc = document.createElement('a');
+  freenyc.textContent = 'Check FreeNYC';
+  freenyc.href = 'https://www.free.nyc/';
+  freenyc.setAttribute('target', '_blank');
+  freenyc.setAttribute('rel', 'noopener');
+  links.appendChild(freenyc);
+
+  root.appendChild(links);
+  return root;
 }
 
 /* ==========================================================================
@@ -213,5 +340,5 @@ if (typeof document !== 'undefined') {
    (module is undefined under the deferred <script> tag). Task 2 and Task 3
    extend this export set. */
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { tierForConfidence, colorForTier, radiusForTier };
+  module.exports = { tierForConfidence, colorForTier, radiusForTier, buildPopup };
 }
