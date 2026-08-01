@@ -2096,7 +2096,9 @@ async def test_get_calendar_falls_back_to_calendars_on_cross_host_valueerror():
         "3ca30c3e0ab029c8487d164bc55c62681c2ba700045366956d8e28dc8f826ccf/"
     )
     matching_cal = SimpleNamespace(url=calendar_url)
-    other_cal = SimpleNamespace(url="https://p117-caldav.icloud.com:443/278773852/calendars/other/")
+    other_cal = SimpleNamespace(
+        url="https://p117-caldav.icloud.com:443/278773852/calendars/other/"
+    )
 
     def _raise_cross_host(cal_url: str) -> None:
         raise ValueError(f"https://caldav.icloud.com/ can't be joined with {cal_url}")
@@ -2117,7 +2119,9 @@ async def test_get_calendar_cross_host_valueerror_no_match_raises_write_error():
     cs = _require_caldav_sync()
 
     calendar_url = "https://p117-caldav.icloud.com:443/278773852/calendars/missing/"
-    other_cal = SimpleNamespace(url="https://p117-caldav.icloud.com:443/278773852/calendars/other/")
+    other_cal = SimpleNamespace(
+        url="https://p117-caldav.icloud.com:443/278773852/calendars/other/"
+    )
 
     def _raise_cross_host(cal_url: str) -> None:
         raise ValueError(f"https://caldav.icloud.com/ can't be joined with {cal_url}")
@@ -2141,7 +2145,9 @@ async def test_get_calendar_same_host_uses_cheap_local_join_no_network_call():
     cal = SimpleNamespace(url="https://srv/cal/work/")
     principal = SimpleNamespace(
         calendar=MagicMock(return_value=cal),
-        calendars=AsyncMock(side_effect=AssertionError("must not be called on the fast path")),
+        calendars=AsyncMock(
+            side_effect=AssertionError("must not be called on the fast path")
+        ),
     )
     client = SimpleNamespace(get_principal=AsyncMock(return_value=principal))
 
@@ -2163,7 +2169,9 @@ async def test_get_calendar_unrelated_valueerror_propagates_without_fallback():
 
     principal = SimpleNamespace(
         calendar=MagicMock(side_effect=_raise_unrelated),
-        calendars=AsyncMock(side_effect=AssertionError("must not be called for unrelated ValueError")),
+        calendars=AsyncMock(
+            side_effect=AssertionError("must not be called for unrelated ValueError")
+        ),
     )
     client = SimpleNamespace(get_principal=AsyncMock(return_value=principal))
 
@@ -2179,8 +2187,12 @@ async def test_get_calendar_cross_host_valueerror_no_match_chains_original_excep
     cs = _require_caldav_sync()
 
     calendar_url = "https://p117-caldav.icloud.com:443/278773852/calendars/missing/"
-    other_cal = SimpleNamespace(url="https://p117-caldav.icloud.com:443/278773852/calendars/other/")
-    original_exc = ValueError("https://caldav.icloud.com/ can't be joined with " + calendar_url)
+    other_cal = SimpleNamespace(
+        url="https://p117-caldav.icloud.com:443/278773852/calendars/other/"
+    )
+    original_exc = ValueError(
+        "https://caldav.icloud.com/ can't be joined with " + calendar_url
+    )
 
     def _raise_cross_host(cal_url: str) -> None:
         raise original_exc
