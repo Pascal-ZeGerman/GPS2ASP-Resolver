@@ -570,6 +570,12 @@ async def _get_calendar(client: Any, calendar_url: str) -> Any:
     returned Calendar objects carry the correct host — and match by URL
     path, the one thing stable across iCloud's host sharding.
 
+    Only the specific ``URL.join`` cross-host failure triggers the
+    fallback — any other ``ValueError`` (e.g. a ``None`` client, or a
+    calendar_url containing spaces) is a genuine, unrelated bug and must
+    propagate unchanged rather than being misreported as "no calendar
+    found".
+
     Raises:
         CalDAVWriteError: if the fallback finds no calendar whose path
             matches ``calendar_url``.
@@ -577,7 +583,9 @@ async def _get_calendar(client: Any, calendar_url: str) -> Any:
     principal = await client.get_principal()
     try:
         return principal.calendar(cal_url=calendar_url)
-    except ValueError:
+    except ValueError as exc:
+        if "can't be joined with" not in str(exc):
+            raise
         target_path = urlparse(calendar_url).path.rstrip("/")
         calendars = await principal.calendars()
         for cal in calendars:
@@ -586,7 +594,7 @@ async def _get_calendar(client: Any, calendar_url: str) -> Any:
         raise CalDAVWriteError(
             f"No calendar found matching path {target_path!r} on this "
             f"principal (configured calendar_url={calendar_url!r})"
-        ) from None
+        ) from exc
 
 
 def _build_event_url(calendar_url: Any, uid: str) -> str:

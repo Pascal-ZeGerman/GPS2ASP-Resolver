@@ -2149,3 +2149,49 @@ async def test_get_calendar_same_host_uses_cheap_local_join_no_network_call():
 
     assert result is cal
     principal.calendars.assert_not_awaited()
+
+
+async def test_get_calendar_unrelated_valueerror_propagates_without_fallback():
+    """Only the cross-host URL.join failure should trigger the network
+    fallback — any other ValueError (e.g. a None client inside the caldav
+    library) is a genuine, unrelated bug and must propagate unchanged
+    rather than being misreported as "no calendar found"."""
+    cs = _require_caldav_sync()
+
+    def _raise_unrelated(cal_url: str) -> None:
+        raise ValueError("Unexpected value None for self.client")
+
+    principal = SimpleNamespace(
+        calendar=MagicMock(side_effect=_raise_unrelated),
+        calendars=AsyncMock(side_effect=AssertionError("must not be called for unrelated ValueError")),
+    )
+    client = SimpleNamespace(get_principal=AsyncMock(return_value=principal))
+
+    with pytest.raises(ValueError, match="Unexpected value None for self.client"):
+        await cs._get_calendar(client, "https://srv/cal/work/")
+
+    principal.calendars.assert_not_awaited()
+
+
+async def test_get_calendar_cross_host_valueerror_no_match_chains_original_exception():
+    """The raised CalDAVWriteError must chain the original ValueError (not
+    `from None`) so the real cause survives in the traceback for debugging."""
+    cs = _require_caldav_sync()
+
+    calendar_url = "https://p117-caldav.icloud.com:443/278773852/calendars/missing/"
+    other_cal = SimpleNamespace(url="https://p117-caldav.icloud.com:443/278773852/calendars/other/")
+    original_exc = ValueError("https://caldav.icloud.com/ can't be joined with " + calendar_url)
+
+    def _raise_cross_host(cal_url: str) -> None:
+        raise original_exc
+
+    principal = SimpleNamespace(
+        calendar=MagicMock(side_effect=_raise_cross_host),
+        calendars=AsyncMock(return_value=[other_cal]),
+    )
+    client = SimpleNamespace(get_principal=AsyncMock(return_value=principal))
+
+    with pytest.raises(cs.CalDAVWriteError) as excinfo:
+        await cs._get_calendar(client, calendar_url)
+
+    assert excinfo.value.__cause__ is original_exc
