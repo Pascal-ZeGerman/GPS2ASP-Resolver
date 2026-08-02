@@ -40,7 +40,7 @@ from pathlib import Path
 from shapely import wkt
 
 from gps2asp import resolve_asp
-from gps2asp.dataset_common import TO_WGS84
+from gps2asp.dataset_common import TO_WGS84, load_segment_records
 from gps2asp.dataset_common import borough_name as _borough_name
 from gps2asp.resolver.exceptions import (
     IndexNotFoundError,
@@ -60,14 +60,6 @@ _SIDE_LABELS: dict[str, str] = {
 }
 
 # Lazily-loaded segment geometry cache: str(segment_id) -> geometry_wkt.
-_SEGMENTS_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "gps2asp"
-    / "data"
-    / "index"
-    / "segments.json"
-)
 _segments_cache: dict[str, str] | None = None
 
 
@@ -259,14 +251,12 @@ def build_point_entry(result, lat: float, lon: float) -> dict:
 
 
 def _load_segments() -> dict[str, str]:
-    """Lazily load ``segments.json`` into a ``segment_id -> geometry_wkt`` map."""
+    """Lazily load ``segment_id -> geometry_wkt`` from the shared segments.json loader."""
     global _segments_cache
     if _segments_cache is None:
-        raw = json.loads(_SEGMENTS_PATH.read_text())
         _segments_cache = {
-            str(seg_id): rec["geometry_wkt"]
-            for seg_id, rec in raw.items()
-            if isinstance(rec, dict) and "geometry_wkt" in rec
+            seg_id: rec["geometry_wkt"]
+            for seg_id, rec in load_segment_records().items()
         }
     return _segments_cache
 
@@ -334,13 +324,24 @@ def _read_points(points_file: Path | None) -> list[dict]:
     return data
 
 
+# Bound on concurrent point resolves — each is an independent, I/O-bound
+# resolve_asp() call (its own SODA queries). DEMO_POINTS is small (a handful
+# of hand-picked coordinates), so this only needs to keep the build a good
+# citizen of the SODA rate limit, not dedup work like the coverage dumper's
+# per-group concurrency.
+_POINT_CONCURRENCY = 5
+
+
 async def _run(points: list[dict]) -> dict[str, dict]:
-    """Resolve every point, returning ``point_key -> {entry, coords}``."""
-    results: dict[str, dict] = {}
-    for point in points:
-        key = point["key"]
-        results[key] = await dump_point(point["lat"], point["lon"])
-    return results
+    """Resolve every point CONCURRENTLY (bounded), returning ``point_key -> {entry, coords}``."""
+    semaphore = asyncio.Semaphore(_POINT_CONCURRENCY)
+
+    async def _dump_bounded(point: dict) -> tuple[str, dict]:
+        async with semaphore:
+            return point["key"], await dump_point(point["lat"], point["lon"])
+
+    resolved = await asyncio.gather(*(_dump_bounded(point) for point in points))
+    return dict(resolved)
 
 
 def main(argv: list[str] | None = None) -> int:

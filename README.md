@@ -52,7 +52,7 @@ needs a token.
 
 This requires two things the demo page itself does not: the **spatial index** must be present
 locally, and the script needs **network access to the NYC Open Data (SODA) API**. The index is
-gitignored (~95 MB), so build it once with `python scripts/build_index.py` **or** download the
+gitignored (~95 MB), so build it once with `.venv/bin/python scripts/build_index.py` **or** download the
 released `index-v1` asset from the [Releases page](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/releases).
 Setting a `NYC_OPEN_DATA_APP_TOKEN` environment variable is optional but helps avoid SODA rate
 limiting. The generated `demo.json`/`demo-segments.geojson` are the only files committed — the
@@ -62,7 +62,7 @@ index never is.
 let the page `fetch()` its JSON):
 
 ```bash
-python -m http.server --directory docs/demo 8000
+.venv/bin/python -m http.server --directory docs/demo 8000
 ```
 
 Then visit <http://localhost:8000/>.

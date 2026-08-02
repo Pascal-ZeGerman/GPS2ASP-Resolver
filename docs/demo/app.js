@@ -156,6 +156,11 @@ function to12Hour(hhmm) {
 function relativeDayLabel(move) {
   if (move.isToday) return 'Today';
   if (move.offset === 1) return 'Tomorrow';
+  // offset === 7: a single-cleaning-day block whose window already passed
+  // this week, so the next occurrence wraps to next week (renderCalendar
+  // leaves every cell (0..6) unhighlighted for this case) — the qualifier
+  // keeps the state string from implying an imminent, same-week move.
+  if (move.offset === 7) return `${DAY_NAMES[move.day]} (next week)`;
   return DAY_NAMES[move.day];
 }
 
@@ -164,26 +169,20 @@ function hasSchedule(point) {
   return point.status === 'schedule_found' || point.status === 'asp_active_now';
 }
 
+/** Whether a point resolved to a real NYC street segment (confidence/borough/
+ * segment_id populated) even without a weekly schedule — e.g. status
+ * 'no_match' (SODA had no sign record for this block). Distinct from a point
+ * that never resolved at all (OutsideNYCError, IndexNotFoundError, etc.),
+ * whose entry never sets `segment_id` (see build_demo_dataset.py
+ * dump_point()'s exception path). */
+function isResolvedNoSchedule(point) {
+  return !hasSchedule(point) && point.status !== 'no_asp' && point.segment_id != null;
+}
+
 /* ==========================================================================
-   DOM helpers — text-only rendering (never the HTML-parsing sink)
+   DOM helpers — el/setText/show/hide live in ../common.js (shared with
+   docs/explorer/app.js), loaded before this script.
    ========================================================================== */
-
-function el(id) {
-  return document.getElementById(id);
-}
-
-function setText(id, text) {
-  const node = el(id);
-  if (node) node.textContent = text == null ? '' : String(text);
-}
-
-function show(node) {
-  if (node) node.hidden = false;
-}
-
-function hide(node) {
-  if (node) node.hidden = true;
-}
 
 /** Build an attributes <tbody> from a plain object using textContent only. */
 function renderAttrs(tbodyId, attributes) {
@@ -216,6 +215,9 @@ function renderReadout(point, move) {
     summary = point.summary || 'Alternate-side parking applies on this block.';
   } else if (point.status === 'no_asp') {
     summary = "No alternate-side rules on this block. The sensor reports 'No restrictions'.";
+  } else if (isResolvedNoSchedule(point)) {
+    summary = 'This block resolved to a real NYC street, but no SODA sign record exists '
+      + "for it yet. The sensor reports 'No sign on record' rather than a confirmed schedule.";
   } else {
     summary = 'This block is outside the demo dataset. In Home Assistant the '
       + "sensor reports 'Outside coverage area'.";
@@ -239,6 +241,9 @@ function renderReadout(point, move) {
     if (point.status === 'no_asp') {
       chipClass = 'chip-positive';
       chipText = 'No restrictions';
+    } else if (isResolvedNoSchedule(point)) {
+      chipClass = 'chip-neutral';
+      chipText = 'No sign on record';
     } else if (!hasSchedule(point)) {
       chipClass = 'chip-neutral';
       chipText = 'Outside coverage area';
@@ -335,9 +340,13 @@ function renderCalendar(point, move) {
       ? 'No upcoming move found in the next 8 days.'
       : 'No scheduled move for this block.';
     calendar.appendChild(note);
-    setText('sensor-next-move-state', point.status === 'no_asp'
-      ? 'No restrictions'
-      : 'Outside coverage area');
+    let stateText = 'Outside coverage area';
+    if (point.status === 'no_asp') {
+      stateText = 'No restrictions';
+    } else if (isResolvedNoSchedule(point)) {
+      stateText = 'No sign on record';
+    }
+    setText('sensor-next-move-state', stateText);
     return;
   }
 

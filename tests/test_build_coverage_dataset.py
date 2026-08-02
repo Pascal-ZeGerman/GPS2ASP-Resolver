@@ -224,9 +224,10 @@ async def test_resolve_group_tries_both_name_variants():
     # SODA-expanded form ("3 AVENUE") returns nothing, simulating a street
     # whose live SODA on_street field is stored in the unexpanded form.
     client = _StubClient(records_by_query={"3 AVE|N": [record]})
-    records = await resolve_group(client, "3 AVE", "N")
+    records, query_count = await resolve_group(client, "3 AVE", "N")
 
     assert records == [record]
+    assert query_count == 2  # one query per name_variants() form
     assert "3 AVE|N" in client.calls
     assert "3 AVENUE|N" in client.calls  # canonical form tried too, even if empty
 
@@ -278,10 +279,12 @@ def test_main_writes_canonical_coverage_json(tmp_path, monkeypatch):
     assert set(data) == {
         "generation_date",
         "boroughs",
+        "tier_bounds",
         "query_count",
         "segment_count",
         "segments",
     }
+    assert data["tier_bounds"] == [[lower, name] for lower, name in bcd.TIER_BOUNDS]
     assert data["segment_count"] == 2
     assert len(data["segments"]) == 2
     # query_count is the distinct-group count, strictly below the segment count.

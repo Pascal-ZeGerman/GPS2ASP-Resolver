@@ -1,0 +1,76 @@
+/* ==========================================================================
+   Shared design tokens + reset/base + typography roles for the static
+   docs/demo/ and docs/explorer/ pages, so the two read as one project.
+   Page-specific rules (layout, components, page-specific overrides) stay in
+   each page's own styles.css.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* --- Semantic palette (UI-SPEC Color, 60/30/10 over a dark base) --- */
+  --bg: #0f1115;          /* Dominant 60% — page + map frame */
+  --surface: #141824;     /* Secondary 30% — cards, panels */
+  --border: #262b38;      /* Card borders / dividers */
+  --fg: #e6e8ee;          /* Foreground text (AA on --bg) */
+  --muted: #9aa3b2;       /* Muted meta text (AA on --bg for its sizes) */
+  --accent: #4da3ff;      /* Accent 10% — reserved list only */
+  --warning: #f5a623;     /* Urgency amber — "move today" only */
+  --positive: #35d67f;    /* Safe green — "no restrictions" only */
+
+  /* --- Spacing scale (8-point, multiples of 4) --- */
+  --sp-xs: 4px;
+  --sp-sm: 8px;
+  --sp-md: 16px;
+  --sp-lg: 24px;
+  --sp-xl: 32px;
+  --sp-2xl: 48px;
+  --sp-3xl: 64px;
+
+  /* --- Type families --- */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius: 10px;
+}
+
+/* --- Reset / base --- */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  /* Body role: 16px / 400 / 1.5 */
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--surface);
+  color: var(--fg);
+  padding: var(--sp-sm) var(--sp-md);
+  border-radius: var(--radius);
+  z-index: 1000;
+}
+.skip-link:focus { left: var(--sp-md); }
+
+/* ==========================================================================
+   Typography roles (exactly 4 roles, 2 weights)
+   ========================================================================== */
+.display { font-size: 28px; font-weight: 600; line-height: 1.2; margin: 0; }
+.heading { font-size: 20px; font-weight: 600; line-height: 1.25; margin: 0 0 var(--sp-sm); }
+.body    { font-size: 16px; font-weight: 400; line-height: 1.5; }
+.label   { font-size: 14px; font-weight: 400; line-height: 1.5; }
+.mono    { font-family: var(--font-mono); font-size: 14px; font-weight: 400; line-height: 1.5; }
+.muted   { color: var(--muted); }

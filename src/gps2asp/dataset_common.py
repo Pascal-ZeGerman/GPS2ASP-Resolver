@@ -8,11 +8,34 @@ that shared, non-resolver-logic plumbing so the two dumpers never drift.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from pyproj import Transformer
 
 # Reverse of resolver/converter.py's forward transform: EPSG:2263 -> WGS84.
 # always_xy=True yields (lon, lat) — exactly GeoJSON coordinate order.
 TO_WGS84 = Transformer.from_crs("EPSG:2263", "EPSG:4326", always_xy=True)
+
+# Segment geometry lives in the committed spatial index. This module already
+# lives at src/gps2asp/, so its own parent directory IS src/gps2asp/.
+SEGMENTS_PATH = Path(__file__).resolve().parent / "data" / "index" / "segments.json"
+
+
+def load_segment_records(path: Path | None = None) -> dict[str, dict]:
+    """Load ``segments.json`` into a ``segment_id -> full record`` map.
+
+    Filters to dict records carrying ``geometry_wkt`` — the only records
+    either dumper can use (for a map midpoint/render or a schedule resolve).
+    Shared by both offline dataset dumpers so the loader and its filter never
+    drift between them.
+    """
+    raw = json.loads((path or SEGMENTS_PATH).read_text())
+    return {
+        str(seg_id): rec
+        for seg_id, rec in raw.items()
+        if isinstance(rec, dict) and "geometry_wkt" in rec
+    }
 
 # CSCL borough code -> human name (mirrors coordinator._BOROUGH_NAMES).
 BOROUGH_NAMES: dict[str, str] = {

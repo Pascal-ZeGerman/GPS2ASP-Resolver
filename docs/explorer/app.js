@@ -43,21 +43,31 @@ const BOROUGH_FALLBACK = {
 };
 
 /* --------------------------------------------------------------------------
-   Confidence-tier scale — VENDORED MIRROR of scripts/build_coverage_dataset.py
-   TIER_BOUNDS / tier_for_confidence (42-01). These half-open boundaries MUST
-   stay in sync with that Python source: it is the single authority and this is
-   its client-side mirror (vendored-mirror discipline). One rule, four tiers.
+   Confidence-tier scale (42-01). ``TIER_BOUNDS`` is overwritten from
+   coverage.json's own `tier_bounds` field at load time (see init()) so the
+   tier partition can never silently drift from scripts/build_coverage_
+   dataset.py's TIER_BOUNDS / tier_for_confidence — the dataset IS the single
+   authority. This literal is only the fallback for a dataset predating the
+   `tier_bounds` field. One rule, four tiers, ordered high -> low so the
+   first matching lower bound wins:
      [0.00, 0.33) -> 'unresolved'
      [0.33, 0.50) -> 'low'
      [0.50, 0.75) -> 'medium'
      [0.75, 1.00] -> 'high'
    -------------------------------------------------------------------------- */
+let TIER_BOUNDS = [
+  [0.75, 'high'],
+  [0.50, 'medium'],
+  [0.33, 'low'],
+  [0.00, 'unresolved'],
+];
+
 function tierForConfidence(v) {
   const n = Number(v);
   if (!(n >= 0)) return 'unresolved'; // NaN / negative -> treat as a gap
-  if (n >= 0.75) return 'high';
-  if (n >= 0.50) return 'medium';
-  if (n >= 0.33) return 'low';
+  for (const [lower, name] of TIER_BOUNDS) {
+    if (n >= lower) return name;
+  }
   return 'unresolved';
 }
 
@@ -95,26 +105,9 @@ const state = {
 };
 
 /* ==========================================================================
-   DOM helpers — text-only rendering (never the HTML-parsing sink)
-   (copied verbatim from docs/demo/app.js:171-186)
+   DOM helpers — el/setText/show/hide live in ../common.js (shared with
+   docs/demo/app.js), loaded before this script.
    ========================================================================== */
-
-function el(id) {
-  return document.getElementById(id);
-}
-
-function setText(id, text) {
-  const node = el(id);
-  if (node) node.textContent = text == null ? '' : String(text);
-}
-
-function show(node) {
-  if (node) node.hidden = false;
-}
-
-function hide(node) {
-  if (node) node.hidden = true;
-}
 
 /* ==========================================================================
    Map + render
@@ -453,6 +446,11 @@ async function init() {
 
   state.points = Array.isArray(state.data.segments) ? state.data.segments : [];
   state.boroughByCode = state.data.boroughs || null;
+  // The dataset is the single authority on the tier partition (see
+  // tierForConfidence above) — sync it before any marker/popup rendering.
+  if (Array.isArray(state.data.tier_bounds) && state.data.tier_bounds.length > 0) {
+    TIER_BOUNDS = state.data.tier_bounds;
+  }
 
   initMap();
   wireControls();

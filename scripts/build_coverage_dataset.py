@@ -49,7 +49,7 @@ from gps2asp.schedule import (
     ScheduleResult,
     compute_schedule,
 )
-from gps2asp.dataset_common import BOROUGH_NAMES, TO_WGS84
+from gps2asp.dataset_common import BOROUGH_NAMES, TO_WGS84, load_segment_records
 from gps2asp.schedule.next_move import NYC_TZ
 from gps2asp.signs import materialize_cached_records
 from gps2asp.signs.client import SODAClient
@@ -66,10 +66,12 @@ logger = logging.getLogger("build_coverage_dataset")
 # attaches America/New_York.
 _BUILD_REFERENCE_TIME = datetime(2025, 1, 1, 4, 0)
 
-# Bound on concurrent SODA group queries (R1's whole-index resolve issues one
-# query per distinct (street, side) group — low thousands for the full index).
-# Unbounded asyncio.gather would fire them all at once; this caps in-flight
-# requests so the build stays a good citizen of the SODA rate limit.
+# Bound on concurrent group RESOLUTIONS (R1's whole-index resolve dedups to one
+# in-flight resolve_group call per distinct (street, side) group — low
+# thousands for the full index; each resolve_group call issues 1-2 SODA
+# queries, one per name_variants form). Unbounded asyncio.gather would fire
+# them all at once; this caps in-flight requests so the build stays a good
+# citizen of the SODA rate limit.
 _GROUP_CONCURRENCY = 10
 
 # SODA fallback level -> confidence (D-18). Level 0 (street absent from SODA)
@@ -96,17 +98,6 @@ TIER_BOUNDS: tuple[tuple[float, str], ...] = (
     (0.33, "low"),
     (0.00, "unresolved"),
 )
-
-# Segment geometry lives in the committed spatial index.
-_SEGMENTS_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "gps2asp"
-    / "data"
-    / "index"
-    / "segments.json"
-)
-
 
 def segment_midpoint_wgs84(line) -> tuple[float, float]:
     """Reproject a segment's midpoint to WGS84 ``(lat, lon)`` rounded to 6 dp.
@@ -224,26 +215,11 @@ def tier_for_confidence(v: float) -> str:
     return "unresolved"
 
 
-def _load_segment_records() -> dict[str, dict]:
-    """Load ``segments.json`` into a ``segment_id -> full record`` map.
-
-    The whole-index resolve needs each block's street identity —
-    ``full_street_name``/``from_street``/``to_street``/``borocode`` — plus the
-    ``geometry_wkt`` used for the map midpoint and the geometry-derived sides.
-    """
-    raw = json.loads(_SEGMENTS_PATH.read_text())
-    return {
-        str(seg_id): rec
-        for seg_id, rec in raw.items()
-        if isinstance(rec, dict) and "geometry_wkt" in rec
-    }
-
-
 async def resolve_group(
     client: SODAClient,
     on_street: str,
     side: str,
-) -> list[dict]:
+) -> tuple[list[dict], int]:
     """Issue broad SODA queries for a whole ``(street, side)`` group.
 
     This is the R1 dedup primitive: instead of one exact block query per segment
@@ -271,12 +247,16 @@ async def resolve_group(
         side: Compass side letter ("N", "S", "E", or "W").
 
     Returns:
-        Raw SODA record dicts merged across every variant query (``[]`` if
-        every variant query failed or returned nothing).
+        ``(records, query_count)`` — raw SODA record dicts merged across every
+        variant query (``[]`` if every variant query failed or returned
+        nothing), and the number of HTTP queries actually issued (one per
+        ``name_variants`` form, 1 or 2).
     """
     records: list[dict] = []
+    query_count = 0
     for variant in name_variants(on_street):
         query = client.build_on_street_query(variant, side)
+        query_count += 1
         try:
             variant_records = await client.fetch_signs(query)
         except Exception as exc:  # noqa: BLE001 — fail-soft per variant (Pitfall 4)
@@ -290,7 +270,7 @@ async def resolve_group(
             )
             continue
         records.extend(variant_records)
-    return records
+    return records, query_count
 
 
 def _exact_cross_match(record: dict, from_street: str, to_street: str) -> bool:
@@ -590,10 +570,11 @@ async def build_coverage(
 
     async def _resolve_bounded(
         gk: tuple[str, str], representative_street: str
-    ) -> tuple[tuple[str, str], list[dict]]:
+    ) -> tuple[tuple[str, str], list[dict], int]:
         _, side = gk
         async with semaphore:
-            return gk, await resolve_group(client, representative_street, side)
+            records, count = await resolve_group(client, representative_street, side)
+            return gk, records, count
 
     resolved = await asyncio.gather(
         *(
@@ -601,8 +582,11 @@ async def build_coverage(
             for gk, representative_street in distinct_groups.items()
         )
     )
-    group_records: dict[tuple[str, str], list[dict]] = dict(resolved)
-    query_count = len(distinct_groups)
+    group_records: dict[tuple[str, str], list[dict]] = {}
+    query_count = 0
+    for gk, records, count in resolved:
+        group_records[gk] = records
+        query_count += count
 
     # ---- pre-index each group's records once (perf: O(1)-ish per-segment lookup) ----
     group_indexes: dict[tuple[str, str], dict[tuple[str, str], list[dict]]] = {
@@ -637,6 +621,10 @@ async def build_coverage(
     return {
         "generation_date": datetime.now(NYC_TZ).date().isoformat(),
         "boroughs": BOROUGH_NAMES,
+        # Emitted so the client (docs/explorer/app.js tierForConfidence) can
+        # read the tier partition from the dataset instead of hand-maintaining
+        # a "vendored mirror" of TIER_BOUNDS that can silently drift from it.
+        "tier_bounds": [[lower, name] for lower, name in TIER_BOUNDS],
         "query_count": query_count,
         "segment_count": len(segment_entries),
         "segments": segment_entries,
@@ -682,7 +670,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.segments is not None:
         segments = json.loads(args.segments.read_text())
     else:
-        segments = _load_segment_records()
+        segments = load_segment_records()
 
     expected_count = (
         len(segments) if args.limit is None else min(args.limit, len(segments))
@@ -706,7 +694,11 @@ def main(argv: list[str] | None = None) -> int:
     out_dir: Path = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "coverage.json"
-    out_path.write_text(json.dumps(dataset, indent=2) + "\n")
+    # Compact separators (no indent): this dataset has ~105K segments, and
+    # every docs/explorer visitor's browser fetches the whole file — pretty
+    # printing would inflate it by ~13MB of pure whitespace for no benefit
+    # (no one reads coverage.json by hand).
+    out_path.write_text(json.dumps(dataset, separators=(",", ":")) + "\n")
 
     # R1 verifiability: the low-thousands query claim must be readable from the
     # run output.
@@ -718,6 +710,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    import sys
-
     sys.exit(main())
