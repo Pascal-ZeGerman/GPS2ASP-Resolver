@@ -45,3 +45,16 @@ function buildAttrRow(key, value) {
   tr.appendChild(tdVal);
   return tr;
 }
+
+/* Shared Leaflet tile config (both pages use the same OSM tile source). */
+const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
+const MAX_ZOOM = 19;
+
+/** Leaflet collapses map panes to 0px until their container has real layout
+    dimensions; both pages size #map via CSS after initial paint, so an
+    immediate invalidateSize() plus one deferred at 200ms covers slow layouts. */
+function invalidateMapSizeSoon(map) {
+  map.invalidateSize();
+  window.setTimeout(() => map.invalidateSize(), 200);
+}

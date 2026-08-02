@@ -57,19 +57,7 @@ input:focus-visible,
   outline-offset: 2px;
 }
 
-/* ==========================================================================
-   Hero (coverage-QA copy — same spacing rhythm as the demo, own text)
-   ========================================================================== */
-.hero {
-  padding: var(--sp-3xl) var(--sp-lg) var(--sp-2xl);
-  max-width: 1200px;
-  margin: 0 auto;
-}
-.hero-subhead {
-  color: var(--muted);
-  max-width: 70ch;
-  margin: var(--sp-sm) 0 0;
-}
+/* .hero / .hero-subhead live in ../common.css (shared with demo). */
 .hero-freshness {
   margin: var(--sp-md) 0 0;
 }
@@ -274,18 +262,7 @@ input.filter-control::placeholder { color: var(--muted); }
 #error-state,
 .error-state { border-color: var(--warning); }
 
-/* ==========================================================================
-   Footer (mirrors the demo .site-footer)
-   ========================================================================== */
-.site-footer {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: var(--sp-xl) var(--sp-lg) var(--sp-3xl);
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-xs);
-}
+/* .site-footer lives in ../common.css (shared with demo). */
 
 /* ==========================================================================
    Responsive — tablet (768–1023px) taller map

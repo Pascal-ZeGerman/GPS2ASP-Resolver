@@ -33,11 +33,10 @@
    -------------------------------------------------------------------------- */
 const FULL_RESOLVER_ENDPOINT = null;
 
-const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
+/* TILE_URL / TILE_ATTRIBUTION / MAX_ZOOM live in ../common.js (shared with
+   docs/explorer/app.js). */
 const MAP_CENTER = [40.6776, -73.9685]; // demo dataset centroid (Prospect Pl area)
 const MAP_ZOOM = 15;
-const MAX_ZOOM = 19;
 const ACCENT = '#4da3ff';
 
 /* Python ASPDay convention: Monday = 0 .. Sunday = 6 (matches weekly[].day).
@@ -97,16 +96,18 @@ function hhmmToMinutes(hhmm) {
 /**
  * Next upcoming ASP window computed from the stored weekly pattern.
  *
+ * demo.json is a static, infrequently-regenerated snapshot, so a window's
+ * "active now" state must be recomputed live from the visitor's actual NYC
+ * clock on every load — never trusted from the build-time status the point
+ * was frozen with (see build_demo_dataset.py's ASPActiveNow branch), or a
+ * window that has long since ended keeps reporting as in-progress.
+ *
  * @param {Array<{day:number,start:string,end:string,sign:string}>} weekly
- * @param {boolean} [isActiveNow] - True when the point's status is
- *   'asp_active_now': the single `weekly` entry is the window currently in
- *   progress, so it must match at offset 0 even though its start time has
- *   already passed (see build_demo_dataset.py's ASPActiveNow branch).
  * @returns {null | {date:Date, day:number, offset:number, start:string,
  *                   end:string, sign:string, isToday:boolean,
  *                   isActiveNow:boolean}}
  */
-function computeNextMove(weekly, isActiveNow) {
+function computeNextMove(weekly) {
   if (!Array.isArray(weekly) || weekly.length === 0) return null;
 
   const now = nycNowParts();
@@ -126,11 +127,16 @@ function computeNextMove(weekly, isActiveNow) {
     const dayWindows = weekly.filter((w) => w.day === pyDay);
     for (const w of dayWindows) {
       const startMinutes = hhmmToMinutes(w.start);
+      const endMinutes = hhmmToMinutes(w.end);
+      // Live "in progress" check against the visitor's actual current NYC
+      // time — never the frozen build-time status.
+      const activeNow =
+        offset === 0 && startMinutes <= nowMinutes && nowMinutes < endMinutes;
       // Later calendar days are always in the future; today only if the
       // start is strictly greater than the current NYC time — unless the
-      // window is already actively in progress (isActiveNow), which must
-      // still match today rather than being skipped to next week.
-      const isFuture = offset > 0 ? true : (isActiveNow || startMinutes > nowMinutes);
+      // window is live-active-now, which must still match today rather than
+      // being skipped to next week.
+      const isFuture = offset > 0 ? true : (activeNow || startMinutes > nowMinutes);
       if (isFuture) {
         return {
           date: candidate,
@@ -140,7 +146,7 @@ function computeNextMove(weekly, isActiveNow) {
           end: w.end,
           sign: w.sign,
           isToday: offset === 0,
-          isActiveNow: offset === 0 && Boolean(isActiveNow),
+          isActiveNow: activeNow,
         };
       }
     }
@@ -211,6 +217,10 @@ function renderReadout(point, move) {
     summary = point.summary || 'Alternate-side parking applies on this block.';
   } else if (point.status === 'no_asp') {
     summary = "No alternate-side rules on this block. The sensor reports 'No restrictions'.";
+  } else if (point.status === 'all_unparseable') {
+    summary = 'This block resolved to a real NYC street and a SODA sign record was found, '
+      + "but its text failed to parse into a schedule. The sensor reports 'No restrictions' "
+      + '(fallback) rather than a confirmed schedule.';
   } else if (isResolvedNoSchedule(point)) {
     summary = 'This block resolved to a real NYC street, but no SODA sign record exists '
       + "for it yet. The sensor reports 'No sign on record' rather than a confirmed schedule.";
@@ -443,7 +453,7 @@ function selectPoint(key) {
   drawSegment(key);
   highlightMarker(key);
 
-  const move = computeNextMove(point.weekly, point.status === 'asp_active_now');
+  const move = computeNextMove(point.weekly);
   renderReadout(point, move);
   renderHaCard(point);
   renderCalendar(point, move);
@@ -488,9 +498,7 @@ function initMap() {
     maxZoom: MAX_ZOOM,
     attribution: TILE_ATTRIBUTION,
   }).addTo(state.map);
-  // Leaflet collapses to 0px if the container was laid out after init (Pitfall 7).
-  state.map.invalidateSize();
-  window.setTimeout(() => state.map.invalidateSize(), 200);
+  invalidateMapSizeSoon(state.map);
 }
 
 /* ==========================================================================

@@ -24,11 +24,10 @@ This module is intentionally offline (no ``@pytest.mark.integration``) so CI's
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import re
 from datetime import datetime, time
-from pathlib import Path
 
+import scripts.build_demo_dataset as dumper
 from gps2asp.api_models import ASPDebugResult
 from gps2asp.schedule.models import (
     ASPActiveNow,
@@ -39,20 +38,6 @@ from gps2asp.schedule.models import (
     TimeWindow,
     WeeklySchedule,
 )
-
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "build_demo_dataset.py"
-
-
-def _load_dumper():
-    spec = importlib.util.spec_from_file_location("build_demo_dataset", _MODULE_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-# Loaded at import time — collection FAILS (RED) until the script exists.
-dumper = _load_dumper()
 
 
 # The canonical real HA sensor attribute key sets, transcribed from

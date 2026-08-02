@@ -74,3 +74,27 @@ body {
 .label   { font-size: 14px; font-weight: 400; line-height: 1.5; }
 .mono    { font-family: var(--font-mono); font-size: 14px; font-weight: 400; line-height: 1.5; }
 .muted   { color: var(--muted); }
+
+/* ==========================================================================
+   Hero + footer — shared shell chrome (demo + explorer)
+   ========================================================================== */
+.hero {
+  padding: var(--sp-3xl) var(--sp-lg) var(--sp-2xl);
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.hero-subhead {
+  color: var(--muted);
+  max-width: 70ch;
+  margin: var(--sp-sm) 0 0;
+}
+
+.site-footer {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--sp-xl) var(--sp-lg) var(--sp-3xl);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-xs);
+}

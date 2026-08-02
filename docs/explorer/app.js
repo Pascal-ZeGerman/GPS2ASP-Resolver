@@ -25,9 +25,8 @@
    Config — tiles and citywide framing (D-14: all five boroughs visible on
    load). NEVER hardcode any token or credential here.
    -------------------------------------------------------------------------- */
-const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
-const MAX_ZOOM = 19;
+/* TILE_URL / TILE_ATTRIBUTION / MAX_ZOOM live in ../common.js (shared with
+   docs/demo/app.js). */
 
 // Citywide view so all five boroughs are visible on load (D-14).
 const CITY_CENTER = [40.70, -73.94];
@@ -127,9 +126,7 @@ function initMap() {
   }).addTo(state.map);
   // ONE shared canvas renderer for every circleMarker (RESEARCH: ~105K points).
   state.renderer = L.canvas({ padding: 0.5 });
-  // Leaflet collapses to 0px if the container was laid out after init (Pitfall 7).
-  state.map.invalidateSize();
-  window.setTimeout(() => state.map.invalidateSize(), 200);
+  invalidateMapSizeSoon(state.map);
 }
 
 /**
@@ -187,9 +184,10 @@ function statusCopy(point) {
       return null; // schedule is shown in the attributes table instead
     case 'no_asp':
       return 'No ASP broom sign found on this block (SODA had records for this street).';
+    case 'all_unparseable':
+      return 'Unresolved — a SODA sign record was found for this block but its text failed to parse (coverage gap; not a confirmed clear street).';
     case 'no_match':
     case 'resolution_failed':
-    case 'all_unparseable':
     default:
       return 'Unresolved — no SODA record for this block (coverage gap; not a confirmed clear street).';
   }

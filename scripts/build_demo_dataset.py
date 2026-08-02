@@ -81,8 +81,8 @@ DEMO_POINTS: list[dict] = [
 # of which (east_village, upper_west_side, central_park_no_restrictions) failed
 # outright because they weren't actually close enough to an indexed segment.
 DEMO_PROFILES: dict[str, dict] = {
-    "A": {"label": "Car A", "point_key": "prospect_pl"},
-    "B": {"label": "Car B", "point_key": "williamsburg"},
+    "A": {"point_key": "prospect_pl"},
+    "B": {"point_key": "williamsburg"},
 }
 
 
@@ -129,46 +129,57 @@ def build_sensor_shapes(result) -> dict:
     borough = _borough_name(result.borocode)
     side = result.side_of_street
     side_label = _SIDE_LABELS.get(side) if side is not None else None
+    has_schedule = isinstance(result.schedule, (ScheduleFound, ASPActiveNow))
 
     # --- Next Move Time sensor (primary, user-facing) ---
+    # Location/schedule fields are gated behind has_schedule to mirror
+    # sensor.py's ASPNextMoveTimeSensor.extra_state_attributes, which only
+    # emits cleaning_days/schedule_summary/street_name/cross_streets/
+    # side_of_street/side_label inside its own isinstance(schedule,
+    # (ScheduleFound, ASPActiveNow)) branch.
     next_move_attrs: dict = {}
-    cleaning_days = _cleaning_day_names(result)
-    if cleaning_days:
-        next_move_attrs["cleaning_days"] = cleaning_days
-    if isinstance(result.schedule, (ScheduleFound, ASPActiveNow)):
+    if has_schedule:
+        cleaning_days = _cleaning_day_names(result)
+        if cleaning_days:
+            next_move_attrs["cleaning_days"] = cleaning_days
         next_move_attrs["schedule_summary"] = result.schedule.summary
-    if result.on_street is not None:
-        next_move_attrs["street_name"] = result.on_street
-    if result.from_street is not None and result.to_street is not None:
-        next_move_attrs["cross_streets"] = f"{result.from_street} to {result.to_street}"
-    if side is not None:
-        next_move_attrs["side_of_street"] = side
-    if side_label is not None:
-        next_move_attrs["side_label"] = side_label
+        if result.on_street is not None:
+            next_move_attrs["street_name"] = result.on_street
+        if result.from_street and result.to_street:
+            next_move_attrs["cross_streets"] = (
+                f"{result.from_street} to {result.to_street}"
+            )
+        if side is not None:
+            next_move_attrs["side_of_street"] = side
+        if side_label is not None:
+            next_move_attrs["side_label"] = side_label
     next_move_attrs["confidence_score"] = result.confidence
     if borough is not None:
         next_move_attrs["borough"] = borough
     next_move_attrs["soda_level"] = result.soda_level
 
     # --- Resolved Street sensor (secondary) ---
+    # Mirrors ASPResolvedStreetSensor.extra_state_attributes, which returns {}
+    # entirely unless the schedule is ScheduleFound/ASPActiveNow.
     resolved_attrs: dict = {}
-    if result.from_street is not None:
-        resolved_attrs["from_street"] = result.from_street
-    if result.to_street is not None:
-        resolved_attrs["to_street"] = result.to_street
-    if side is not None:
-        resolved_attrs["side_of_street"] = side
-    resolved_attrs["confidence_score"] = result.confidence
-    if borough is not None:
-        resolved_attrs["borough"] = borough
-    if result.perpendicular_distance_ft is not None:
-        resolved_attrs["distance_ft"] = result.perpendicular_distance_ft
-    if result.street_width_ft is not None:
-        resolved_attrs["street_width_ft"] = result.street_width_ft
-    if result.segment_id is not None:
-        resolved_attrs["segment_id"] = result.segment_id
-    if side_label is not None:
-        resolved_attrs["side_label"] = side_label
+    if has_schedule:
+        if result.from_street is not None:
+            resolved_attrs["from_street"] = result.from_street
+        if result.to_street is not None:
+            resolved_attrs["to_street"] = result.to_street
+        if side is not None:
+            resolved_attrs["side_of_street"] = side
+        resolved_attrs["confidence_score"] = result.confidence
+        if borough is not None:
+            resolved_attrs["borough"] = borough
+        if result.perpendicular_distance_ft is not None:
+            resolved_attrs["distance_ft"] = result.perpendicular_distance_ft
+        if result.street_width_ft is not None:
+            resolved_attrs["street_width_ft"] = result.street_width_ft
+        if result.segment_id is not None:
+            resolved_attrs["segment_id"] = result.segment_id
+        if side_label is not None:
+            resolved_attrs["side_label"] = side_label
 
     return {
         "next_move": {

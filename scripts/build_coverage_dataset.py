@@ -724,10 +724,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.segments is not None:
-        segments = json.loads(args.segments.read_text())
-    else:
-        segments = load_segment_records()
+    segments = load_segment_records(args.segments)
 
     expected_count = (
         len(segments) if args.limit is None else min(args.limit, len(segments))

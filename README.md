@@ -58,14 +58,15 @@ Setting a `NYC_OPEN_DATA_APP_TOKEN` environment variable is optional but helps a
 limiting. The generated `demo.json`/`demo-segments.geojson` are the only files committed — the
 index never is.
 
-**Running it locally.** Serve the folder over HTTP (opening `index.html` via `file://` won't
-let the page `fetch()` its JSON):
+**Running it locally.** Serve the whole `docs/` tree over HTTP (opening `index.html` via `file://`
+won't let the page `fetch()` its JSON, and serving `docs/demo` alone 404s on the shared
+`../common.js`/`../common.css` the page loads):
 
 ```bash
-.venv/bin/python -m http.server --directory docs/demo 8000
+.venv/bin/python -m http.server --directory docs 8000
 ```
 
-Then visit <http://localhost:8000/>.
+Then visit <http://localhost:8000/demo/>.
 
 **Hosting it.** The repo ships a [`.github/workflows/pages.yml`](.github/workflows/pages.yml)
 workflow that publishes the committed `docs/` tree to **GitHub Pages** on every push to `docs/`

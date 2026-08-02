@@ -16,19 +16,7 @@ button:focus-visible,
   outline-offset: 2px;
 }
 
-/* ==========================================================================
-   Hero
-   ========================================================================== */
-.hero {
-  padding: var(--sp-3xl) var(--sp-lg) var(--sp-2xl);
-  max-width: 1200px;
-  margin: 0 auto;
-}
-.hero-subhead {
-  color: var(--muted);
-  max-width: 70ch;
-  margin: var(--sp-sm) 0 0;
-}
+/* .hero / .hero-subhead live in ../common.css (shared with explorer). */
 
 .mode-switch {
   display: flex;
@@ -223,18 +211,7 @@ button:focus-visible,
   100% { box-shadow: 0 0 0 8px rgba(245, 166, 35, 0); }
 }
 
-/* ==========================================================================
-   Footer
-   ========================================================================== */
-.site-footer {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: var(--sp-xl) var(--sp-lg) var(--sp-3xl);
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-xs);
-}
+/* .site-footer lives in ../common.css (shared with explorer). */
 
 /* ==========================================================================
    Responsive — tablet (768–1023px) full-width map, then panels stacked

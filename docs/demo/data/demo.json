@@ -1,12 +1,10 @@
 {
-  "generation_date": "2026-07-30",
+  "generation_date": "2026-08-02",
   "profiles": {
     "A": {
-      "label": "Car A",
       "point_key": "prospect_pl"
     },
     "B": {
-      "label": "Car B",
       "point_key": "williamsburg"
     }
   },
@@ -239,7 +237,6 @@
             ],
             "schedule_summary": "MON & THU 11:30 AM - 1 PM",
             "street_name": "JEROME AVE",
-            "cross_streets": " to E  164 ST",
             "side_of_street": "W",
             "side_label": "West side",
             "confidence_score": 0.4911,
@@ -283,10 +280,6 @@
         "next_move": {
           "entity_id": "sensor.asp_parking_monitor_next_move_time",
           "attributes": {
-            "street_name": "CANAL ST",
-            "cross_streets": "WRIGHT ST to ",
-            "side_of_street": "N",
-            "side_label": "North side",
             "confidence_score": 0.6599,
             "borough": "Staten Island",
             "soda_level": 0
@@ -294,17 +287,7 @@
         },
         "resolved_street": {
           "entity_id": "sensor.asp_parking_monitor_resolved_street",
-          "attributes": {
-            "from_street": "WRIGHT ST",
-            "to_street": "",
-            "side_of_street": "N",
-            "confidence_score": 0.6599,
-            "borough": "Staten Island",
-            "distance_ft": 6.4,
-            "street_width_ft": 36.0,
-            "segment_id": 67901,
-            "side_label": "North side"
-          }
+          "attributes": {}
         }
       }
     },
@@ -347,7 +330,6 @@
             ],
             "schedule_summary": "MON & THU 11 AM - 2 PM",
             "street_name": "ORIENTAL BLVD",
-            "cross_streets": " to DECATUR AVE",
             "side_of_street": "N",
             "side_label": "North side",
             "confidence_score": 0.6411,
