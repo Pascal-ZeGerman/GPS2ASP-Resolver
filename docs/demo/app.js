@@ -357,7 +357,13 @@ function renderCalendar(point, move) {
     const cell = document.createElement('div');
     cell.className = 'calendar-day';
 
-    const isNext = move.day === pyDay;
+    // Match by the exact resolved offset, NOT weekday alone (move.day): when
+    // a block has only one cleaning day and today's window already passed,
+    // computeNextMove resolves offset=7 (next week, same weekday) — matching
+    // by weekday would then also flag TODAY's cell (offset 0), falsely
+    // implying an imminent move that is really a week away. offset=7 falls
+    // outside this 7-cell (0..6) window, so no cell highlights in that case.
+    const isNext = move.offset === offset;
     if (isNext) {
       cell.classList.add(move.isToday && offset === 0 ? 'is-today' : 'is-next');
       if (tooltip) cell.title = tooltip;

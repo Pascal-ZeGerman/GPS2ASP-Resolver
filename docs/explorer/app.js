@@ -343,9 +343,14 @@ function applyFilters() {
  * error and never a silent fall back to the full set (R5).
  */
 function buildFeatureCollection(visible) {
+  // Same numeric-lat/lon guard renderMarkers() applies before drawing (line
+  // ~158) — a point invisible on the map must never be exported either.
+  const exportable = (visible || []).filter(
+    (p) => typeof p.lat === 'number' && typeof p.lon === 'number'
+  );
   return {
     type: 'FeatureCollection',
-    features: (visible || []).map((p) => ({
+    features: exportable.map((p) => ({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
       properties: {
@@ -388,10 +393,31 @@ function exportGeoJSON(visible) {
   return fc;
 }
 
+/**
+ * Return a debounced wrapper around `fn`: a burst of calls within `delayMs`
+ * of each other collapses into ONE trailing call. Used on the street-search
+ * input so typing doesn't redraw the full (up to ~105K point) canvas layer
+ * on every keystroke.
+ */
+function debounce(fn, delayMs) {
+  let timer = null;
+  return (...args) => {
+    if (timer !== null) window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = null;
+      fn(...args);
+    }, delayMs);
+  };
+}
+
+const SEARCH_DEBOUNCE_MS = 200;
+
 /** Wire filter controls and the export button to their handlers. */
 function wireControls() {
   const search = el('filter-search');
-  if (search) search.addEventListener('input', applyFilters);
+  if (search) {
+    search.addEventListener('input', debounce(applyFilters, SEARCH_DEBOUNCE_MS));
+  }
   for (const id of ['filter-borough', 'filter-tier', 'filter-level']) {
     const ctrl = el(id);
     if (ctrl) ctrl.addEventListener('change', applyFilters);

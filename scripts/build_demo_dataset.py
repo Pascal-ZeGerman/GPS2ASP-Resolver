@@ -34,33 +34,22 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 
-from pyproj import Transformer
 from shapely import wkt
 
 from gps2asp import resolve_asp
+from gps2asp.dataset_common import TO_WGS84
+from gps2asp.dataset_common import borough_name as _borough_name
 from gps2asp.resolver.exceptions import (
     IndexNotFoundError,
     NoSegmentFoundError,
     OutsideNYCError,
 )
 from gps2asp.schedule.models import ASPActiveNow, ScheduleFound
+from gps2asp.schedule.next_move import NYC_TZ
 from gps2asp.signs.exceptions import IncompleteResultsError, SODAAPIError
-
-# Reverse of resolver/converter.py's forward transform: EPSG:2263 -> WGS84.
-# always_xy=True yields (lon, lat) — exactly GeoJSON coordinate order.
-_TO_WGS84 = Transformer.from_crs("EPSG:2263", "EPSG:4326", always_xy=True)
-
-# CSCL borough code -> human name (mirrors coordinator._BOROUGH_NAMES).
-_BOROUGH_NAMES: dict[str, str] = {
-    "1": "Manhattan",
-    "2": "Bronx",
-    "3": "Brooklyn",
-    "4": "Queens",
-    "5": "Staten Island",
-}
 
 # side_of_street letter -> display label (mirrors sensor._SIDE_LABELS).
 _SIDE_LABELS: dict[str, str] = {
@@ -118,14 +107,7 @@ def reproject_wkt_to_wgs84(geometry_wkt: str) -> list[list[float]]:
         List of ``[lon, lat]`` coordinate pairs in GeoJSON order (WGS84).
     """
     line = wkt.loads(geometry_wkt)
-    return [list(_TO_WGS84.transform(x, y)) for (x, y) in line.coords]
-
-
-def _borough_name(borocode: str | None) -> str | None:
-    """Map a CSCL borough code to its human name, or None when unknown."""
-    if borocode is None:
-        return None
-    return _BOROUGH_NAMES.get(str(borocode))
+    return [list(TO_WGS84.transform(x, y)) for (x, y) in line.coords]
 
 
 def _cleaning_day_names(result) -> list[str]:
@@ -299,6 +281,19 @@ def _segment_coords(segment_id) -> list[list[float]] | None:
     return reproject_wkt_to_wgs84(geometry_wkt)
 
 
+# Every infrastructural exception dump_point() can catch and degrade to a
+# named-status entry. Shared with main()'s broken_profiles self-check so a
+# future exception added here is automatically covered there too (finding:
+# the self-check previously hardcoded only 3 of these 5+2 status strings).
+_DUMP_POINT_FAILURE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    OutsideNYCError,
+    NoSegmentFoundError,
+    IndexNotFoundError,
+    SODAAPIError,
+    IncompleteResultsError,
+)
+
+
 async def dump_point(lat: float, lon: float) -> dict:
     """Resolve one coordinate, fail-soft per-point.
 
@@ -308,13 +303,7 @@ async def dump_point(lat: float, lon: float) -> dict:
     """
     try:
         result = await resolve_asp(lat, lon, debug=True)
-    except (
-        OutsideNYCError,
-        NoSegmentFoundError,
-        IndexNotFoundError,
-        SODAAPIError,
-        IncompleteResultsError,
-    ) as exc:
+    except _DUMP_POINT_FAILURE_EXCEPTIONS as exc:
         print(
             f"build_demo_dataset: WARNING point ({lat}, {lon}) failed: "
             f"{type(exc).__name__}: {exc}",
@@ -380,9 +369,16 @@ def main(argv: list[str] | None = None) -> int:
 
     # Build-time self-check: every DEMO_PROFILES target must have actually
     # resolved to a real, renderable status. Without this check a broken
-    # profile point (e.g. a coordinate too far from any indexed segment)
-    # silently ships and only surfaces as a dead "Car B" toggle in the
-    # browser — this is exactly the class of bug this check exists to catch.
+    # profile point (e.g. a coordinate too far from any indexed segment, or a
+    # transient SODA failure) silently ships and only surfaces as a dead
+    # "Car B" toggle in the browser — this is exactly the class of bug this
+    # check exists to catch. The failure set covers every exception
+    # dump_point() can catch (_DUMP_POINT_FAILURE_EXCEPTIONS) plus the two
+    # non-exception failure statuses build_point_entry() can emit.
+    failure_statuses = {exc.__name__ for exc in _DUMP_POINT_FAILURE_EXCEPTIONS} | {
+        "resolution_failed",
+        "unknown",
+    }
     broken_profiles = []
     for profile_key, profile in DEMO_PROFILES.items():
         point_key = profile["point_key"]
@@ -393,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             continue
         status = entry.get("status")
-        if status in ("NoSegmentFoundError", "resolution_failed", "unknown"):
+        if status in failure_statuses:
             broken_profiles.append((profile_key, point_key, f"status={status}"))
     if broken_profiles:
         details = "; ".join(
@@ -412,8 +408,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # Assemble the committed demo.json (weekly patterns only; no absolute dates).
+    # NYC-pinned "today" (not the build machine's local date — Pitfall 1): a
+    # UTC-clocked CI runner can already be "tomorrow" while it is still
+    # "today" in NYC for the evening hours this matters.
     dataset = {
-        "generation_date": date.today().isoformat(),
+        "generation_date": datetime.now(NYC_TZ).date().isoformat(),
         "profiles": DEMO_PROFILES,
         "points": {key: payload["entry"] for key, payload in resolved.items()},
     }

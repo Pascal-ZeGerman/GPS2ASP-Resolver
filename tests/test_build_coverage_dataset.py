@@ -29,6 +29,7 @@ from scripts.build_coverage_dataset import (
     confidence_for_level,
     derive_segment_sides,
     group_key,
+    resolve_group,
     tier_for_confidence,
 )
 
@@ -189,6 +190,65 @@ async def test_no_token_in_output(monkeypatch):
         assert set(window.keys()) == {"d", "s", "e"}
 
 
+async def test_level_3_no_cross_street_match_is_unresolved():
+    """Group has records, but none match this block's cross streets -> level 3,
+    cf 0.0, tier 'unresolved' — NOT the misleading 'low' tier a nonzero
+    confidence would produce for a block whose schedule is genuinely no_match."""
+    segments = {"1": _seg("BROADWAY", "1 ST", "2 ST")}
+    # A real broom record on BROADWAY, but for an unrelated block.
+    record = {
+        "sign_description": _PARSEABLE_SIGN,
+        "from_street": "9 ST",
+        "to_street": "10 ST",
+    }
+    client = _StubClient(default=[record])
+    dataset = await build_coverage(segments, client)
+
+    entry = dataset["segments"][0]
+    assert entry["lv"] == 3
+    assert entry["cf"] == 0.0
+    assert entry["status"] == "no_match"
+    assert tier_for_confidence(entry["cf"]) == "unresolved"
+
+
+async def test_resolve_group_tries_both_name_variants():
+    """resolve_group falls back to the raw CSCL form when the canonical SODA
+    form returns nothing — mirrors production's retrieve_signs Level 3 loop,
+    which tries every name_variants() form instead of only the normalized one."""
+    record = {
+        "sign_description": _PARSEABLE_SIGN,
+        "from_street": "1 ST",
+        "to_street": "2 ST",
+    }
+    # Only the RAW CSCL-form query ("3 AVE") has records; the canonical
+    # SODA-expanded form ("3 AVENUE") returns nothing, simulating a street
+    # whose live SODA on_street field is stored in the unexpanded form.
+    client = _StubClient(records_by_query={"3 AVE|N": [record]})
+    records = await resolve_group(client, "3 AVE", "N")
+
+    assert records == [record]
+    assert "3 AVE|N" in client.calls
+    assert "3 AVENUE|N" in client.calls  # canonical form tried too, even if empty
+
+
+async def test_swapped_cross_streets_still_match_via_index():
+    """cross_streets_match's swapped-order semantics still hold through the
+    pre-built group index: a record's from/to can be in the opposite order
+    from the block's own from/to and still count as a match (level 1)."""
+    segments = {"1": _seg("BROADWAY", "1 ST", "2 ST")}
+    record = {
+        "sign_description": _PARSEABLE_SIGN,
+        "from_street": "2 ST",  # swapped relative to the segment's from/to
+        "to_street": "1 ST",
+    }
+    client = _StubClient(default=[record])
+    dataset = await build_coverage(segments, client)
+
+    entry = dataset["segments"][0]
+    assert entry["status"] == "schedule_found"
+    assert entry["lv"] == 1
+
+
 def test_main_writes_canonical_coverage_json(tmp_path, monkeypatch):
     """main() writes coverage.json with the canonical top-level + entry schema."""
     seg_path = tmp_path / "segments.json"
@@ -288,11 +348,16 @@ def test_tier_boundary_partition():
     # --- confidence_for_level maps SODA level deterministically (D-18) ---
     assert confidence_for_level(1) == 0.90
     assert confidence_for_level(2) == 0.66
-    assert confidence_for_level(3) == 0.40
+    # Level 3 (street present in SODA, but no record matches this block's
+    # cross streets) always resolves to an empty filter -> NoMatchFound, the
+    # same as level 0 -- so it carries the SAME 0.00 confidence, landing in
+    # "unresolved" rather than the misleading "low" tier a nonzero value would
+    # produce for a block with no schedule at all.
+    assert confidence_for_level(3) == 0.00
     assert confidence_for_level(0) == 0.00
 
     # ...and each level's confidence lands in the expected tier.
     assert tier_for_confidence(confidence_for_level(1)) == "high"
     assert tier_for_confidence(confidence_for_level(2)) == "medium"
-    assert tier_for_confidence(confidence_for_level(3)) == "low"
+    assert tier_for_confidence(confidence_for_level(3)) == "unresolved"
     assert tier_for_confidence(confidence_for_level(0)) == "unresolved"

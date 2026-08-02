@@ -38,10 +38,9 @@ import json
 import logging
 import math
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
-from pyproj import Transformer
 from shapely import wkt
 
 from gps2asp.schedule import (
@@ -50,9 +49,11 @@ from gps2asp.schedule import (
     ScheduleResult,
     compute_schedule,
 )
-from gps2asp.signs import _cross_streets_match, materialize_cached_records
+from gps2asp.dataset_common import BOROUGH_NAMES, TO_WGS84
+from gps2asp.schedule.next_move import NYC_TZ
+from gps2asp.signs import materialize_cached_records
 from gps2asp.signs.client import SODAClient
-from gps2asp.signs.normalize import normalize_to_soda
+from gps2asp.signs.normalize import name_variants, normalize_to_soda
 
 logger = logging.getLogger("build_coverage_dataset")
 
@@ -65,24 +66,21 @@ logger = logging.getLogger("build_coverage_dataset")
 # attaches America/New_York.
 _BUILD_REFERENCE_TIME = datetime(2025, 1, 1, 4, 0)
 
-# Reverse of resolver/converter.py's forward transform: EPSG:2263 -> WGS84.
-# always_xy=True yields (lon, lat) — exactly GeoJSON coordinate order.
-_TO_WGS84 = Transformer.from_crs("EPSG:2263", "EPSG:4326", always_xy=True)
+# Bound on concurrent SODA group queries (R1's whole-index resolve issues one
+# query per distinct (street, side) group — low thousands for the full index).
+# Unbounded asyncio.gather would fire them all at once; this caps in-flight
+# requests so the build stays a good citizen of the SODA rate limit.
+_GROUP_CONCURRENCY = 10
 
-# CSCL borough code -> human name (mirrors coordinator._BOROUGH_NAMES).
-_BOROUGH_NAMES: dict[str, str] = {
-    "1": "Manhattan",
-    "2": "Bronx",
-    "3": "Brooklyn",
-    "4": "Queens",
-    "5": "Staten Island",
-}
-
-# SODA fallback level -> confidence (D-18). Level 0 (no match) and any unexpected
-# level both map to 0.00 via the .get default. These are geometry-independent
-# proxies: they express "how directly did the block match a SODA sign", NOT the
-# GPS-point-relative resolver confidence (which needs a live fix — Pitfall 2).
-CONFIDENCE_BY_LEVEL: dict[int, float] = {1: 0.90, 2: 0.66, 3: 0.40, 0: 0.00}
+# SODA fallback level -> confidence (D-18). Level 0 (street absent from SODA)
+# and level 3 (street present but no record matches this block's cross streets)
+# both represent a true no-match for THIS block — resolve_side's materialized
+# schedule is NoMatchFound either way — so both map to 0.00 and land in the
+# "unresolved" tier. Any unexpected level also maps to 0.00 via the .get
+# default. These are geometry-independent proxies: they express "how directly
+# did the block match a SODA sign", NOT the GPS-point-relative resolver
+# confidence (which needs a live fix — Pitfall 2).
+CONFIDENCE_BY_LEVEL: dict[int, float] = {1: 0.90, 2: 0.66, 3: 0.00, 0: 0.00}
 
 # The ONE half-open partition rule of the closed interval [0, 1]. Each tier owns
 # [lower, upper): lower-inclusive, upper-exclusive — EXCEPT the top tier, which is
@@ -99,7 +97,7 @@ TIER_BOUNDS: tuple[tuple[float, str], ...] = (
     (0.00, "unresolved"),
 )
 
-# Lazily-loaded segment geometry cache: str(segment_id) -> geometry_wkt.
+# Segment geometry lives in the committed spatial index.
 _SEGMENTS_PATH = (
     Path(__file__).resolve().parents[1]
     / "src"
@@ -108,23 +106,9 @@ _SEGMENTS_PATH = (
     / "index"
     / "segments.json"
 )
-_segments_cache: dict[str, str] | None = None
 
 
-def reproject_wkt_to_wgs84(geometry_wkt: str) -> list[list[float]]:
-    """Reproject an EPSG:2263 LINESTRING WKT to WGS84 ``[[lon, lat], ...]``.
-
-    Args:
-        geometry_wkt: A ``LINESTRING`` in EPSG:2263 (NY State Plane, US feet).
-
-    Returns:
-        List of ``[lon, lat]`` coordinate pairs in GeoJSON order (WGS84).
-    """
-    line = wkt.loads(geometry_wkt)
-    return [list(_TO_WGS84.transform(x, y)) for (x, y) in line.coords]
-
-
-def segment_midpoint_wgs84(geometry_wkt: str) -> tuple[float, float]:
+def segment_midpoint_wgs84(line) -> tuple[float, float]:
     """Reproject a segment's midpoint to WGS84 ``(lat, lon)`` rounded to 6 dp.
 
     Emitting a single midpoint per segment (rather than the full polyline) keeps
@@ -133,39 +117,22 @@ def segment_midpoint_wgs84(geometry_wkt: str) -> tuple[float, float]:
     midpoint, not a lon/lat average.
 
     Args:
-        geometry_wkt: A ``LINESTRING`` in EPSG:2263 (NY State Plane, US feet).
+        line: The segment's already-parsed ``LINESTRING`` geometry (a
+            ``shapely`` geometry, EPSG:2263 / NY State Plane, US feet).
+            Callers that already parsed the WKT for another purpose (e.g.
+            ``_sides_from_line``) pass that same geometry object instead of
+            re-parsing the WKT string.
 
     Returns:
         ``(lat, lon)`` in WGS84, each rounded to 6 decimal places.
     """
-    line = wkt.loads(geometry_wkt)
     midpoint = line.interpolate(0.5, normalized=True)
-    lon, lat = _TO_WGS84.transform(midpoint.x, midpoint.y)
+    lon, lat = TO_WGS84.transform(midpoint.x, midpoint.y)
     return (round(lat, 6), round(lon, 6))
 
 
-def _borough_name(borocode: str | None) -> str | None:
-    """Map a CSCL borough code to its human name, or None when unknown."""
-    if borocode is None:
-        return None
-    return _BOROUGH_NAMES.get(str(borocode))
-
-
-def _load_segments() -> dict[str, str]:
-    """Lazily load ``segments.json`` into a ``segment_id -> geometry_wkt`` map."""
-    global _segments_cache
-    if _segments_cache is None:
-        raw = json.loads(_SEGMENTS_PATH.read_text())
-        _segments_cache = {
-            str(seg_id): rec["geometry_wkt"]
-            for seg_id, rec in raw.items()
-            if isinstance(rec, dict) and "geometry_wkt" in rec
-        }
-    return _segments_cache
-
-
-def derive_segment_sides(geometry_wkt: str) -> tuple[str, str]:
-    """Return a segment's two candidate parking sides from its geometry bearing.
+def _sides_from_line(line) -> tuple[str, str]:
+    """Bearing-based side derivation (D-02) from an already-parsed geometry.
 
     The two sides are derived from the segment's run direction (first -> last
     coordinate), NEVER from ``has_asp_left``/``has_asp_right`` (which are always
@@ -174,12 +141,11 @@ def derive_segment_sides(geometry_wkt: str) -> tuple[str, str]:
     and West curbs.
 
     Args:
-        geometry_wkt: A ``LINESTRING`` in EPSG:2263 (NY State Plane, US feet).
+        line: An already-parsed ``LINESTRING`` geometry (``shapely``).
 
     Returns:
         ``("N", "S")`` for an E-W segment, ``("E", "W")`` for an N-S segment.
     """
-    line = wkt.loads(geometry_wkt)
     coords = list(line.coords)
     x0, y0 = coords[0][0], coords[0][1]
     x1, y1 = coords[-1][0], coords[-1][1]
@@ -189,6 +155,23 @@ def derive_segment_sides(geometry_wkt: str) -> tuple[str, str]:
         return ("N", "S")
     # Otherwise the segment runs N-S -> East/West curbs.
     return ("E", "W")
+
+
+def derive_segment_sides(geometry_wkt: str) -> tuple[str, str]:
+    """Return a segment's two candidate parking sides from its geometry bearing.
+
+    WKT-string entrypoint used by callers that have not already parsed the
+    geometry. ``build_coverage``'s whole-index loop parses the WKT once per
+    segment and calls ``_sides_from_line`` directly instead, reusing that same
+    parsed geometry for the segment's midpoint too.
+
+    Args:
+        geometry_wkt: A ``LINESTRING`` in EPSG:2263 (NY State Plane, US feet).
+
+    Returns:
+        ``("N", "S")`` for an E-W segment, ``("E", "W")`` for an N-S segment.
+    """
+    return _sides_from_line(wkt.loads(geometry_wkt))
 
 
 def group_key(full_street_name: str, side: str) -> tuple[str, str]:
@@ -213,7 +196,8 @@ def group_key(full_street_name: str, side: str) -> tuple[str, str]:
 def confidence_for_level(level: int) -> float:
     """Map a SODA fallback level to its geometry-independent confidence (D-18).
 
-    Levels 1/2/3 -> 0.90/0.66/0.40; level 0 (no match) and any unexpected value
+    Levels 1/2 -> 0.90/0.66; level 3 (street present but no record matches this
+    block), level 0 (street absent from SODA), and any unexpected value all
     -> 0.00. This is NOT the GPS-point resolver confidence (Pitfall 2).
     """
     return CONFIDENCE_BY_LEVEL.get(level, 0.0)
@@ -243,9 +227,8 @@ def tier_for_confidence(v: float) -> str:
 def _load_segment_records() -> dict[str, dict]:
     """Load ``segments.json`` into a ``segment_id -> full record`` map.
 
-    Unlike ``_load_segments`` (which keeps only the geometry for reprojection),
-    the whole-index resolve needs each block's street identity too:
-    ``full_street_name``/``from_street``/``to_street``/``borocode`` plus the
+    The whole-index resolve needs each block's street identity —
+    ``full_street_name``/``from_street``/``to_street``/``borocode`` — plus the
     ``geometry_wkt`` used for the map midpoint and the geometry-derived sides.
     """
     raw = json.loads(_SEGMENTS_PATH.read_text())
@@ -258,51 +241,56 @@ def _load_segment_records() -> dict[str, dict]:
 
 async def resolve_group(
     client: SODAClient,
-    normalized_street: str,
+    on_street: str,
     side: str,
 ) -> list[dict]:
-    """Issue ONE broad SODA query for a whole ``(normalized street, side)`` group.
+    """Issue broad SODA queries for a whole ``(street, side)`` group.
 
     This is the R1 dedup primitive: instead of one exact block query per segment
-    (~105K calls), the build fetches every broom sign on a street+side ONCE, then
-    recovers per-block precision client-side via the cross-street filter. Mirrors
-    ``audit_queens_coverage.py``'s ``build_on_street_query`` + ``fetch_signs``
-    pattern.
+    (~105K calls), the build fetches every broom sign on a street+side ONCE per
+    name variant, then recovers per-block precision client-side via the
+    cross-street filter. Tries every ``name_variants`` form of ``on_street``
+    (the canonical SODA-expanded name, then the raw CSCL form when it differs)
+    and merges the results — mirroring production's ``retrieve_signs`` Level 3
+    fallback loop, which iterates the same variants instead of querying only
+    one canonical form. Without this, a street whose live SODA ``on_street``
+    field is stored in the raw CSCL form would return zero records here even
+    though the live resolver would find it.
 
-    Fail-soft (Pitfall 4): a failed group logs a WARNING and returns ``[]`` rather
-    than aborting the whole-index run — every segment in the group then degrades
-    to an explicit no-match entry (never a silent omission).
+    Fail-soft (Pitfall 4): a failed variant query logs a WARNING and
+    contributes no records rather than aborting the whole group — every
+    segment in the group still degrades to an explicit no-match entry at
+    worst, never a silent omission.
 
     Args:
         client: SODAClient (or a stub exposing the same two methods).
-        normalized_street: Canonical street key (already ``normalize_to_soda``d).
+        on_street: The group's representative on-street name (CSCL form from
+            the first segment observed for this group — ``name_variants``
+            derives the same small variant set regardless of which segment's
+            spelling is used, since they all belong to one normalized street).
         side: Compass side letter ("N", "S", "E", or "W").
 
     Returns:
-        Raw SODA record dicts for the group, or ``[]`` on any query failure.
+        Raw SODA record dicts merged across every variant query (``[]`` if
+        every variant query failed or returned nothing).
     """
-    query = client.build_on_street_query(normalized_street, side)
-    try:
-        return await client.fetch_signs(query)
-    except Exception as exc:  # noqa: BLE001 — fail-soft per group (Pitfall 4)
-        logger.warning(
-            "resolve_group: SODA query failed for street=%r side=%r: %s — "
-            "treating group as empty",
-            normalized_street,
-            side,
-            exc,
-        )
-        return []
-
-
-def cross_streets_match(record: dict, from_street: str, to_street: str) -> bool:
-    """Whether a SODA record covers this block's cross streets.
-
-    Thin wrapper over the resolver's ``signs._cross_streets_match`` so the build
-    reuses its variant + swap + empty-field guard (BUG-S-003) instead of a naive
-    string compare (RESEARCH "Don't Hand-Roll").
-    """
-    return _cross_streets_match(record, from_street, to_street)
+    records: list[dict] = []
+    for variant in name_variants(on_street):
+        query = client.build_on_street_query(variant, side)
+        try:
+            variant_records = await client.fetch_signs(query)
+        except Exception as exc:  # noqa: BLE001 — fail-soft per variant (Pitfall 4)
+            logger.warning(
+                "resolve_group: SODA query failed for street=%r (variant=%r) "
+                "side=%r: %s — treating variant as empty",
+                on_street,
+                variant,
+                side,
+                exc,
+            )
+            continue
+        records.extend(variant_records)
+    return records
 
 
 def _exact_cross_match(record: dict, from_street: str, to_street: str) -> bool:
@@ -323,15 +311,90 @@ def _exact_cross_match(record: dict, from_street: str, to_street: str) -> bool:
     return (rf == ff and rt == tt) or (rf == tt and rt == ff)
 
 
+def _street_key(raw: str) -> str | None:
+    """Canonical normalized-street key for cross-street indexing, or ``None``.
+
+    Mirrors the resolver's ``_normalize_street`` (``normalize_to_soda`` on the
+    upper/stripped field) and its empty-field guard (BUG-S-003): an empty raw
+    field never produces an indexable key, so it can never spuriously match.
+    """
+    if not raw:
+        return None
+    return normalize_to_soda(raw.upper().strip())
+
+
+def index_group_records(group_records: list[dict]) -> dict[tuple[str, str], list[dict]]:
+    """Pre-index a group's records by normalized ``(from, to)`` cross-street pair.
+
+    Built ONCE per group (the R1 dedup group), turning the per-segment
+    cross-street lookup from an O(group_size) linear scan into O(1)-ish dict
+    probes. A popular street (e.g. BROADWAY) can pool 100+ records into one
+    group; without this index, every one of that street's many segments
+    re-scanned the WHOLE group list in ``_cross_street_candidates``.
+
+    Args:
+        group_records: Raw SODA record dicts for one ``(street, side)`` group.
+
+    Returns:
+        ``(normalized_from, normalized_to) -> [matching records]``.
+    """
+    index: dict[tuple[str, str], list[dict]] = {}
+    for record in group_records:
+        from_key = _street_key(record.get("from_street", ""))
+        to_key = _street_key(record.get("to_street", ""))
+        if from_key is None or to_key is None:
+            continue  # BUG-S-003 guard: never index an empty cross-street field
+        index.setdefault((from_key, to_key), []).append(record)
+    return index
+
+
+def _cross_street_candidates(
+    group_index: dict[tuple[str, str], list[dict]],
+    from_street: str,
+    to_street: str,
+) -> list[dict]:
+    """Records whose cross streets match ``(from_street, to_street)``, either order.
+
+    Reproduces the resolver's ``_cross_streets_match`` direct-OR-swapped,
+    variant-expanded semantics (same guard, same ``name_variants`` expansion)
+    via bounded dict probes against a pre-built ``index_group_records`` index
+    instead of a linear scan of every record in the group.
+
+    Args:
+        group_index: Output of ``index_group_records`` for this block's group.
+        from_street: This block's from_street (CSCL form).
+        to_street: This block's to_street (CSCL form).
+
+    Returns:
+        Matching records (no particular order; never contains duplicates).
+    """
+    if not from_street or not to_street:
+        return []
+    from_variants = {v.upper().strip() for v in name_variants(from_street)}
+    to_variants = {v.upper().strip() for v in name_variants(to_street)}
+
+    seen_ids: set[int] = set()
+    matches: list[dict] = []
+    for fv in from_variants:
+        for tv in to_variants:
+            for bucket_key in ((fv, tv), (tv, fv)):
+                for record in group_index.get(bucket_key, ()):
+                    if id(record) not in seen_ids:
+                        seen_ids.add(id(record))
+                        matches.append(record)
+    return matches
+
+
 def resolve_side(
     group_records: list[dict],
+    group_index: dict[tuple[str, str], list[dict]],
     on_street: str,
     from_street: str,
     to_street: str,
     side: str,
     now: datetime,
 ) -> tuple[int, ScheduleResult]:
-    """Resolve ONE side of a block from its group's pre-fetched records.
+    """Resolve ONE side of a block from its group's pre-fetched, pre-indexed records.
 
     Assigns ``soda_level`` by match precision (D-18 confidence follows):
       * group empty (street absent from SODA) -> 0 (no-match)
@@ -345,12 +408,17 @@ def resolve_side(
     the filter is empty, so ``materialize_cached_records`` yields ``NoMatchFound``
     -> a ``no_match`` schedule (still an explicit entry).
 
+    Args:
+        group_records: The group's raw records — used only to detect the
+            street-absent-from-SODA case (level 0); the actual cross-street
+            match runs against ``group_index``.
+        group_index: ``index_group_records(group_records)``, built once per
+            group and reused across every segment on that group (perf).
+
     Returns:
         ``(soda_level, schedule_result)``.
     """
-    filtered = [
-        r for r in group_records if cross_streets_match(r, from_street, to_street)
-    ]
+    filtered = _cross_street_candidates(group_index, from_street, to_street)
     if not group_records:
         soda_level = 0
     elif any(_exact_cross_match(r, from_street, to_street) for r in filtered):
@@ -413,6 +481,7 @@ def _summary_and_weekly(
 def build_segment_entry(
     segment_id: str,
     seg_record: dict,
+    line,
     side: str,
     soda_level: int,
     schedule: ScheduleResult,
@@ -425,12 +494,14 @@ def build_segment_entry(
 
     Args:
         segment_id: The segment id (dataset ``id``).
-        seg_record: The raw segments.json record (street identity + geometry).
+        seg_record: The raw segments.json record (street identity).
+        line: The segment's already-parsed geometry (same object used to
+            derive its sides in pass 1 — avoids re-parsing the WKT).
         side: The worst-case side chosen for this segment (D-13).
         soda_level: Match-precision level for the chosen side.
         schedule: The chosen side's schedule result.
     """
-    lat, lon = segment_midpoint_wgs84(seg_record["geometry_wkt"])
+    lat, lon = segment_midpoint_wgs84(line)
     summary, weekly = _summary_and_weekly(schedule)
     return {
         "id": segment_id,
@@ -459,16 +530,22 @@ async def build_coverage(
     """Resolve the whole index deduped by ``(street, side)`` into the dataset dict.
 
     Steps (R1):
-      1. For each segment, derive its two geometry-based sides and their two
-         ``group_key``s; collect the DISTINCT set of ``(normalized street, side)``
-         groups.
-      2. Issue exactly ONE ``resolve_group`` per distinct group, caching records
-         in memory — this is the dedup: SODA call count == distinct-group count,
-         far below the segment count.
-      3. For each segment, resolve BOTH sides against their group's records and
+      1. For each segment, parse its geometry ONCE and derive its two
+         geometry-based sides and their two ``group_key``s from that same
+         parsed geometry; collect the DISTINCT set of ``(normalized street,
+         side)`` groups, keyed to one representative original street name.
+      2. Resolve every distinct group CONCURRENTLY (bounded by
+         ``_GROUP_CONCURRENCY``), caching records in memory — this is the
+         dedup: SODA group count == distinct-group count, far below the
+         segment count.
+      3. Pre-index each group's records once (``index_group_records``) so
+         pass 2's per-segment cross-street lookup is O(1)-ish instead of an
+         O(group_size) rescan.
+      4. For each segment, resolve BOTH sides against their group's index and
          pick the WORST-CASE side (lower confidence; D-13). A segment is only
-         high-tier when both sides resolve well.
-      4. Build one compact entry per segment — never omit a segment.
+         high-tier when both sides resolve well. Reuses the SAME parsed
+         geometry from step 1 for the segment's midpoint (no re-parse).
+      5. Build one compact entry per segment — never omit a segment.
 
     Args:
         segments: ``segment_id -> raw segments.json record`` (in-memory; tests
@@ -485,38 +562,67 @@ async def build_coverage(
     if limit is not None:
         items = items[:limit]
 
-    # ---- pass 1: derive per-segment sides + collect the distinct group set ----
-    # seg_plan[sid] = (on_street, from_street, to_street, [(side, group_key), ...])
-    seg_plan: dict[str, tuple[str, str, str, list[tuple[str, tuple[str, str]]]]] = {}
-    distinct_groups: dict[tuple[str, str], None] = {}
+    # ---- pass 1: parse geometry once, derive sides, collect distinct groups ----
+    # seg_plan[sid] = (on_street, from_street, to_street, line, [(side, group_key), ...])
+    seg_plan: dict[
+        str, tuple[str, str, str, object, list[tuple[str, tuple[str, str]]]]
+    ] = {}
+    # distinct_groups[group_key] = a representative original (CSCL-form) street
+    # name for that group — the first segment's spelling observed for it, used
+    # to seed resolve_group's name_variants fallback (any segment's spelling
+    # works, since they all normalize to the same group_key street).
+    distinct_groups: dict[tuple[str, str], str] = {}
     for sid, rec in items:
         on_street = rec["full_street_name"]
         from_street = rec["from_street"]
         to_street = rec["to_street"]
-        sides = derive_segment_sides(rec["geometry_wkt"])
+        line = wkt.loads(rec["geometry_wkt"])
+        sides = _sides_from_line(line)
         side_keys: list[tuple[str, tuple[str, str]]] = []
         for side in sides:
             gk = group_key(on_street, side)
-            distinct_groups[gk] = None
+            distinct_groups.setdefault(gk, on_street)
             side_keys.append((side, gk))
-        seg_plan[sid] = (on_street, from_street, to_street, side_keys)
+        seg_plan[sid] = (on_street, from_street, to_street, line, side_keys)
 
-    # ---- resolve each distinct group exactly once (the R1 dedup) ----
-    group_records: dict[tuple[str, str], list[dict]] = {}
-    for normalized_street, side in distinct_groups:
-        group_records[(normalized_street, side)] = await resolve_group(
-            client, normalized_street, side
+    # ---- resolve every distinct group concurrently (the R1 dedup) ----
+    semaphore = asyncio.Semaphore(_GROUP_CONCURRENCY)
+
+    async def _resolve_bounded(
+        gk: tuple[str, str], representative_street: str
+    ) -> tuple[tuple[str, str], list[dict]]:
+        _, side = gk
+        async with semaphore:
+            return gk, await resolve_group(client, representative_street, side)
+
+    resolved = await asyncio.gather(
+        *(
+            _resolve_bounded(gk, representative_street)
+            for gk, representative_street in distinct_groups.items()
         )
+    )
+    group_records: dict[tuple[str, str], list[dict]] = dict(resolved)
     query_count = len(distinct_groups)
+
+    # ---- pre-index each group's records once (perf: O(1)-ish per-segment lookup) ----
+    group_indexes: dict[tuple[str, str], dict[tuple[str, str], list[dict]]] = {
+        gk: index_group_records(records) for gk, records in group_records.items()
+    }
 
     # ---- pass 2: worst-case side per segment -> one entry each ----
     segment_entries: list[dict] = []
     for sid, rec in items:
-        on_street, from_street, to_street, side_keys = seg_plan[sid]
+        on_street, from_street, to_street, line, side_keys = seg_plan[sid]
         best: tuple[float, int, str, ScheduleResult] | None = None
         for side, gk in side_keys:
             soda_level, schedule = resolve_side(
-                group_records[gk], on_street, from_street, to_street, side, now
+                group_records[gk],
+                group_indexes[gk],
+                on_street,
+                from_street,
+                to_street,
+                side,
+                now,
             )
             cf = confidence_for_level(soda_level)
             # Worst-case = LOWER confidence (D-13); ties keep the first side.
@@ -525,12 +631,12 @@ async def build_coverage(
         assert best is not None  # every segment has at least one side
         _, worst_level, worst_side, worst_schedule = best
         segment_entries.append(
-            build_segment_entry(sid, rec, worst_side, worst_level, worst_schedule)
+            build_segment_entry(sid, rec, line, worst_side, worst_level, worst_schedule)
         )
 
     return {
-        "generation_date": date.today().isoformat(),
-        "boroughs": _BOROUGH_NAMES,
+        "generation_date": datetime.now(NYC_TZ).date().isoformat(),
+        "boroughs": BOROUGH_NAMES,
         "query_count": query_count,
         "segment_count": len(segment_entries),
         "segments": segment_entries,

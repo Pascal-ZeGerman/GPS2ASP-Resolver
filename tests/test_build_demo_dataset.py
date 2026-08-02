@@ -23,6 +23,7 @@ This module is intentionally offline (no ``@pytest.mark.integration``) so CI's
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import re
 from datetime import datetime, time
@@ -309,3 +310,31 @@ def test_asp_active_now_populates_weekly():
     next_move_attrs = entry["sensors"]["next_move"]["attributes"]
     assert next_move_attrs["cleaning_days"] == ["Thursday"]
     assert next_move_attrs["schedule_summary"] == "MON & THU 11 AM - 2 PM"
+
+
+# --- main()'s broken_profiles self-check -------------------------------------
+
+
+def test_main_catches_every_dump_point_failure_status(monkeypatch, tmp_path):
+    """main()'s broken_profiles self-check must catch every status dump_point()
+    can emit, not just NoSegmentFoundError/resolution_failed/unknown.
+
+    Regression test: a transient SODAAPIError (or OutsideNYCError/
+    IndexNotFoundError/IncompleteResultsError) for a DEMO_PROFILES target
+    previously slipped past the check silently, shipping a demo.json whose
+    "Car B" toggle would render dead in the browser.
+    """
+
+    async def _always_fails(lat, lon, debug=True):
+        raise dumper.SODAAPIError(status_code=503, detail="boom")
+
+    monkeypatch.setattr(dumper, "resolve_asp", _always_fails)
+
+    out_dir = tmp_path / "out"
+    try:
+        rc = dumper.main(["--out-dir", str(out_dir)])
+    finally:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    assert rc == 1
+    assert not (out_dir / "demo.json").exists()
