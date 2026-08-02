@@ -40,13 +40,14 @@ from pathlib import Path
 from shapely import wkt
 
 from gps2asp import resolve_asp
-from gps2asp.dataset_common import TO_WGS84, load_segment_records
+from gps2asp.dataset_common import TO_WGS84, bounded_gather
 from gps2asp.dataset_common import borough_name as _borough_name
 from gps2asp.resolver.exceptions import (
     IndexNotFoundError,
     NoSegmentFoundError,
     OutsideNYCError,
 )
+from gps2asp.resolver.spatial_index import SpatialIndex
 from gps2asp.schedule.models import ASPActiveNow, ScheduleFound
 from gps2asp.schedule.next_move import NYC_TZ
 from gps2asp.signs.exceptions import IncompleteResultsError, SODAAPIError
@@ -58,10 +59,6 @@ _SIDE_LABELS: dict[str, str] = {
     "E": "East side",
     "W": "West side",
 }
-
-# Lazily-loaded segment geometry cache: str(segment_id) -> geometry_wkt.
-_segments_cache: dict[str, str] | None = None
-
 
 # Hand-picked demo coordinates. Includes the canonical Prospect Pl regression
 # case, a point expected to have no ASP restrictions, and one deliberately
@@ -250,22 +247,17 @@ def build_point_entry(result, lat: float, lon: float) -> dict:
     }
 
 
-def _load_segments() -> dict[str, str]:
-    """Lazily load ``segment_id -> geometry_wkt`` from the shared segments.json loader."""
-    global _segments_cache
-    if _segments_cache is None:
-        _segments_cache = {
-            seg_id: rec["geometry_wkt"]
-            for seg_id, rec in load_segment_records().items()
-        }
-    return _segments_cache
+async def _segment_coords(segment_id) -> list[list[float]] | None:
+    """Reprojected WGS84 coords for a segment id, or None when unavailable.
 
-
-def _segment_coords(segment_id) -> list[list[float]] | None:
-    """Reprojected WGS84 coords for a segment id, or None when unavailable."""
+    Reads geometry from the resolver's SpatialIndex singleton — already
+    loaded by the resolve_asp() call in dump_point() — instead of a second,
+    independent parse of segments.json.
+    """
     if segment_id is None:
         return None
-    geometry_wkt = _load_segments().get(str(segment_id))
+    index = await SpatialIndex.get()
+    geometry_wkt = index.get_segment_geometry_wkt(segment_id)
     if geometry_wkt is None:
         return None
     return reproject_wkt_to_wgs84(geometry_wkt)
@@ -308,7 +300,7 @@ async def dump_point(lat: float, lon: float) -> dict:
         return {"entry": entry, "coords": None}
 
     entry = build_point_entry(result, lat, lon)
-    coords = _segment_coords(result.segment_id)
+    coords = await _segment_coords(result.segment_id)
     return {"entry": entry, "coords": coords}
 
 
@@ -334,13 +326,11 @@ _POINT_CONCURRENCY = 5
 
 async def _run(points: list[dict]) -> dict[str, dict]:
     """Resolve every point CONCURRENTLY (bounded), returning ``point_key -> {entry, coords}``."""
-    semaphore = asyncio.Semaphore(_POINT_CONCURRENCY)
 
-    async def _dump_bounded(point: dict) -> tuple[str, dict]:
-        async with semaphore:
-            return point["key"], await dump_point(point["lat"], point["lon"])
+    async def _dump_one(point: dict) -> tuple[str, dict]:
+        return point["key"], await dump_point(point["lat"], point["lon"])
 
-    resolved = await asyncio.gather(*(_dump_bounded(point) for point in points))
+    resolved = await bounded_gather(points, _dump_one, _POINT_CONCURRENCY)
     return dict(resolved)
 
 

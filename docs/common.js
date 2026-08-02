@@ -24,3 +24,24 @@ function show(node) {
 function hide(node) {
   if (node) node.hidden = true;
 }
+
+/* Python ASPDay convention: Monday = 0 .. Sunday = 6 (matches weekly[].day
+   / wk[].d in both docs/demo/data/demo.json and docs/explorer/data/coverage.json). */
+const DAY_ABBR = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Whether a point entry carries a real weekly ASP schedule. */
+function hasSchedule(point) {
+  return point.status === 'schedule_found' || point.status === 'asp_active_now';
+}
+
+/** Build one <tr> with a key cell and a value cell, both textContent-set. */
+function buildAttrRow(key, value) {
+  const tr = document.createElement('tr');
+  const tdKey = document.createElement('td');
+  const tdVal = document.createElement('td');
+  tdKey.textContent = key;
+  tdVal.textContent = value == null ? '' : String(value);
+  tr.appendChild(tdKey);
+  tr.appendChild(tdVal);
+  return tr;
+}

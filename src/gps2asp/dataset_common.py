@@ -8,10 +8,16 @@ that shared, non-resolver-logic plumbing so the two dumpers never drift.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
+from typing import TypeVar
 
 from pyproj import Transformer
+
+_T = TypeVar("_T")
+_R = TypeVar("_R")
 
 # Reverse of resolver/converter.py's forward transform: EPSG:2263 -> WGS84.
 # always_xy=True yields (lon, lat) — exactly GeoJSON coordinate order.
@@ -52,3 +58,34 @@ def borough_name(borocode: str | None) -> str | None:
     if borocode is None:
         return None
     return BOROUGH_NAMES.get(str(borocode))
+
+
+async def bounded_gather(
+    items: Iterable[_T],
+    worker: Callable[[_T], Awaitable[_R]],
+    concurrency: int,
+) -> list[_R]:
+    """Run ``worker`` over every item concurrently, bounded by ``concurrency``.
+
+    Both offline dataset dumpers need the same semaphore-bounded-gather
+    idiom (each item is an independent I/O-bound resolve: one point resolve
+    for the demo dumper, one SODA group fetch for the coverage dumper).
+    Factored here so a future fix to the bounded-concurrency pattern (e.g.
+    propagating the first exception, adding a timeout) doesn't have to be
+    hand-ported between the two dumper scripts.
+
+    Args:
+        items: The items to process; result order matches ``items`` order.
+        worker: Async callable applied to each item under the semaphore.
+        concurrency: Maximum number of ``worker`` calls in flight at once.
+
+    Returns:
+        Results in the same order as ``items``.
+    """
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def _bounded(item: _T) -> _R:
+        async with semaphore:
+            return await worker(item)
+
+    return await asyncio.gather(*(_bounded(item) for item in items))

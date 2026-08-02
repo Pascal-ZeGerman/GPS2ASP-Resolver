@@ -40,11 +40,11 @@ const MAP_ZOOM = 15;
 const MAX_ZOOM = 19;
 const ACCENT = '#4da3ff';
 
-/* Python ASPDay convention: Monday = 0 .. Sunday = 6 (matches weekly[].day). */
+/* Python ASPDay convention: Monday = 0 .. Sunday = 6 (matches weekly[].day).
+   DAY_ABBR lives in ../common.js, shared with docs/explorer/app.js. */
 const DAY_NAMES = [
   'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
 ];
-const DAY_ABBR = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 /* Shared runtime state. */
 const state = {
@@ -98,10 +98,15 @@ function hhmmToMinutes(hhmm) {
  * Next upcoming ASP window computed from the stored weekly pattern.
  *
  * @param {Array<{day:number,start:string,end:string,sign:string}>} weekly
+ * @param {boolean} [isActiveNow] - True when the point's status is
+ *   'asp_active_now': the single `weekly` entry is the window currently in
+ *   progress, so it must match at offset 0 even though its start time has
+ *   already passed (see build_demo_dataset.py's ASPActiveNow branch).
  * @returns {null | {date:Date, day:number, offset:number, start:string,
- *                   end:string, sign:string, isToday:boolean}}
+ *                   end:string, sign:string, isToday:boolean,
+ *                   isActiveNow:boolean}}
  */
-function computeNextMove(weekly) {
+function computeNextMove(weekly, isActiveNow) {
   if (!Array.isArray(weekly) || weekly.length === 0) return null;
 
   const now = nycNowParts();
@@ -122,8 +127,10 @@ function computeNextMove(weekly) {
     for (const w of dayWindows) {
       const startMinutes = hhmmToMinutes(w.start);
       // Later calendar days are always in the future; today only if the
-      // start is strictly greater than the current NYC time.
-      const isFuture = offset > 0 ? true : startMinutes > nowMinutes;
+      // start is strictly greater than the current NYC time — unless the
+      // window is already actively in progress (isActiveNow), which must
+      // still match today rather than being skipped to next week.
+      const isFuture = offset > 0 ? true : (isActiveNow || startMinutes > nowMinutes);
       if (isFuture) {
         return {
           date: candidate,
@@ -133,6 +140,7 @@ function computeNextMove(weekly) {
           end: w.end,
           sign: w.sign,
           isToday: offset === 0,
+          isActiveNow: offset === 0 && Boolean(isActiveNow),
         };
       }
     }
@@ -164,11 +172,6 @@ function relativeDayLabel(move) {
   return DAY_NAMES[move.day];
 }
 
-/** Whether a point entry carries a real weekly ASP schedule. */
-function hasSchedule(point) {
-  return point.status === 'schedule_found' || point.status === 'asp_active_now';
-}
-
 /** Whether a point resolved to a real NYC street segment (confidence/borough/
  * segment_id populated) even without a weekly schedule — e.g. status
  * 'no_match' (SODA had no sign record for this block). Distinct from a point
@@ -180,8 +183,8 @@ function isResolvedNoSchedule(point) {
 }
 
 /* ==========================================================================
-   DOM helpers — el/setText/show/hide live in ../common.js (shared with
-   docs/explorer/app.js), loaded before this script.
+   DOM helpers — el/setText/show/hide/hasSchedule/buildAttrRow live in
+   ../common.js (shared with docs/explorer/app.js), loaded before this script.
    ========================================================================== */
 
 /** Build an attributes <tbody> from a plain object using textContent only. */
@@ -191,14 +194,7 @@ function renderAttrs(tbodyId, attributes) {
   tbody.textContent = ''; // clear via textContent, not the HTML-parsing sink
   if (!attributes) return;
   for (const [key, value] of Object.entries(attributes)) {
-    const tr = document.createElement('tr');
-    const tdKey = document.createElement('td');
-    const tdVal = document.createElement('td');
-    tdKey.textContent = key;
-    tdVal.textContent = Array.isArray(value) ? value.join(', ') : String(value);
-    tr.appendChild(tdKey);
-    tr.appendChild(tdVal);
-    tbody.appendChild(tr);
+    tbody.appendChild(buildAttrRow(key, Array.isArray(value) ? value.join(', ') : value));
   }
 }
 
@@ -247,6 +243,9 @@ function renderReadout(point, move) {
     } else if (!hasSchedule(point)) {
       chipClass = 'chip-neutral';
       chipText = 'Outside coverage area';
+    } else if (move && move.isActiveNow) {
+      chipClass = 'chip-warning';
+      chipText = 'Move now';
     } else if (move && move.isToday) {
       chipClass = 'chip-warning';
       chipText = 'Move today';
@@ -384,7 +383,10 @@ function renderCalendar(point, move) {
 
     if (isNext) {
       const timeLabel = document.createElement('span');
-      timeLabel.textContent = to12Hour(move.start);
+      // Active-now windows already started; show when they end instead of
+      // a start time that's already in the past (matches the HA sensor's
+      // ASPActiveNow handling in sensor.py, which surfaces active_window.end).
+      timeLabel.textContent = to12Hour(move.isActiveNow ? move.end : move.start);
       cell.appendChild(timeLabel);
     }
 
@@ -394,7 +396,7 @@ function renderCalendar(point, move) {
   // Large date-relative sensor state string (formatted at NYC time).
   const prefix = move.isToday ? '⚠ ' : ''; // ⚠ for "today"
   setText('sensor-next-move-state',
-    `${prefix}${relativeDayLabel(move)}, ${to12Hour(move.start)}`);
+    `${prefix}${relativeDayLabel(move)}, ${to12Hour(move.isActiveNow ? move.end : move.start)}`);
 }
 
 /* ==========================================================================
@@ -441,7 +443,7 @@ function selectPoint(key) {
   drawSegment(key);
   highlightMarker(key);
 
-  const move = computeNextMove(point.weekly);
+  const move = computeNextMove(point.weekly, point.status === 'asp_active_now');
   renderReadout(point, move);
   renderHaCard(point);
   renderCalendar(point, move);

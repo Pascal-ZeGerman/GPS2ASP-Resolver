@@ -49,7 +49,12 @@ from gps2asp.schedule import (
     ScheduleResult,
     compute_schedule,
 )
-from gps2asp.dataset_common import BOROUGH_NAMES, TO_WGS84, load_segment_records
+from gps2asp.dataset_common import (
+    BOROUGH_NAMES,
+    TO_WGS84,
+    bounded_gather,
+    load_segment_records,
+)
 from gps2asp.schedule.next_move import NYC_TZ
 from gps2asp.signs import materialize_cached_records
 from gps2asp.signs.client import SODAClient
@@ -194,6 +199,21 @@ def confidence_for_level(level: int) -> float:
     return CONFIDENCE_BY_LEVEL.get(level, 0.0)
 
 
+def confidence_for_result(level: int, schedule: ScheduleResult) -> float:
+    """Confidence for one resolved side, accounting for unparseable signs.
+
+    ``confidence_for_level`` alone only reflects match precision (whether a
+    cross-street match was found), not whether the matched sign(s) actually
+    parsed into a usable schedule. An ``all_unparseable`` schedule (sign(s)
+    matched but their text failed to parse) is a genuine coverage gap and must
+    never surface at high/medium confidence just because the street matched
+    (Prohibition 2 / T-42-04 — never let a gap read as well-resolved).
+    """
+    if schedule.status == "all_unparseable":
+        return 0.0
+    return confidence_for_level(level)
+
+
 def tier_for_confidence(v: float) -> str:
     """Partition a confidence in [0, 1] into exactly one named tier.
 
@@ -254,10 +274,21 @@ async def resolve_group(
     """
     records: list[dict] = []
     query_count = 0
-    for variant in name_variants(on_street):
-        query = client.build_on_street_query(variant, side)
-        query_count += 1
+    try:
+        variants = name_variants(on_street)
+    except Exception as exc:  # noqa: BLE001 — fail-soft per group (Pitfall 4)
+        logger.warning(
+            "resolve_group: failed to derive name variants for street=%r side=%r: "
+            "%s — treating group as empty",
+            on_street,
+            side,
+            exc,
+        )
+        return records, query_count
+    for variant in variants:
         try:
+            query = client.build_on_street_query(variant, side)
+            query_count += 1
             variant_records = await client.fetch_signs(query)
         except Exception as exc:  # noqa: BLE001 — fail-soft per variant (Pitfall 4)
             logger.warning(
@@ -328,12 +359,19 @@ def index_group_records(group_records: list[dict]) -> dict[tuple[str, str], list
     return index
 
 
+def _street_variants(street: str) -> set[str]:
+    """Upper/stripped ``name_variants`` set for one street, or empty if blank."""
+    if not street:
+        return set()
+    return {v.upper().strip() for v in name_variants(street)}
+
+
 def _cross_street_candidates(
     group_index: dict[tuple[str, str], list[dict]],
-    from_street: str,
-    to_street: str,
+    from_variants: set[str],
+    to_variants: set[str],
 ) -> list[dict]:
-    """Records whose cross streets match ``(from_street, to_street)``, either order.
+    """Records whose cross streets match ``(from_variants, to_variants)``, either order.
 
     Reproduces the resolver's ``_cross_streets_match`` direct-OR-swapped,
     variant-expanded semantics (same guard, same ``name_variants`` expansion)
@@ -342,16 +380,17 @@ def _cross_street_candidates(
 
     Args:
         group_index: Output of ``index_group_records`` for this block's group.
-        from_street: This block's from_street (CSCL form).
-        to_street: This block's to_street (CSCL form).
+        from_variants: This block's from_street, expanded via ``_street_variants``
+            — precomputed once per segment (perf: a segment's two sides share
+            identical from/to streets, so the caller derives this ONCE rather
+            than re-running ``name_variants`` per side).
+        to_variants: This block's to_street, expanded via ``_street_variants``.
 
     Returns:
         Matching records (no particular order; never contains duplicates).
     """
-    if not from_street or not to_street:
+    if not from_variants or not to_variants:
         return []
-    from_variants = {v.upper().strip() for v in name_variants(from_street)}
-    to_variants = {v.upper().strip() for v in name_variants(to_street)}
 
     seen_ids: set[int] = set()
     matches: list[dict] = []
@@ -371,6 +410,8 @@ def resolve_side(
     on_street: str,
     from_street: str,
     to_street: str,
+    from_variants: set[str],
+    to_variants: set[str],
     side: str,
     now: datetime,
 ) -> tuple[int, ScheduleResult]:
@@ -394,11 +435,15 @@ def resolve_side(
             match runs against ``group_index``.
         group_index: ``index_group_records(group_records)``, built once per
             group and reused across every segment on that group (perf).
+        from_variants: ``_street_variants(from_street)``, precomputed once per
+            segment by the caller (perf: both of a segment's sides share the
+            same from/to streets, so name_variants shouldn't re-run per side).
+        to_variants: ``_street_variants(to_street)``, precomputed likewise.
 
     Returns:
         ``(soda_level, schedule_result)``.
     """
-    filtered = _cross_street_candidates(group_index, from_street, to_street)
+    filtered = _cross_street_candidates(group_index, from_variants, to_variants)
     if not group_records:
         soda_level = 0
     elif any(_exact_cross_match(r, from_street, to_street) for r in filtered):
@@ -491,9 +536,9 @@ def build_segment_entry(
         "fr": seg_record.get("from_street"),
         "to": seg_record.get("to_street"),
         "sd": side,
-        "bc": str(seg_record.get("borocode")),
+        "bc": None if (bc := seg_record.get("borocode")) is None else str(bc),
         "lv": soda_level,
-        "cf": confidence_for_level(soda_level),
+        "cf": confidence_for_result(soda_level, schedule),
         "status": schedule.status,
         "sm": summary,
         "wk": weekly,
@@ -548,9 +593,15 @@ async def build_coverage(
         str, tuple[str, str, str, object, list[tuple[str, tuple[str, str]]]]
     ] = {}
     # distinct_groups[group_key] = a representative original (CSCL-form) street
-    # name for that group — the first segment's spelling observed for it, used
-    # to seed resolve_group's name_variants fallback (any segment's spelling
-    # works, since they all normalize to the same group_key street).
+    # name for that group, used to seed resolve_group's name_variants fallback.
+    # name_variants() only emits the raw/abbreviated form when it differs from
+    # the canonical SODA form (see name_variants docstring), so an arbitrary
+    # "first segment observed" representative can pick a spelling that's
+    # already canonical and silently drop the abbreviated-form fallback query
+    # for the WHOLE group even when a sibling segment's raw spelling would
+    # have triggered it. Prefer a representative whose raw spelling differs
+    # from its canonical form — it queries the superset of variants any
+    # canonical-only representative would.
     distinct_groups: dict[tuple[str, str], str] = {}
     for sid, rec in items:
         on_street = rec["full_street_name"]
@@ -561,26 +612,26 @@ async def build_coverage(
         side_keys: list[tuple[str, tuple[str, str]]] = []
         for side in sides:
             gk = group_key(on_street, side)
-            distinct_groups.setdefault(gk, on_street)
+            current = distinct_groups.get(gk)
+            if current is None or (
+                current == normalize_to_soda(current)
+                and on_street != normalize_to_soda(on_street)
+            ):
+                distinct_groups[gk] = on_street
             side_keys.append((side, gk))
         seg_plan[sid] = (on_street, from_street, to_street, line, side_keys)
 
     # ---- resolve every distinct group concurrently (the R1 dedup) ----
-    semaphore = asyncio.Semaphore(_GROUP_CONCURRENCY)
-
-    async def _resolve_bounded(
-        gk: tuple[str, str], representative_street: str
+    async def _resolve_one(
+        item: tuple[tuple[str, str], str],
     ) -> tuple[tuple[str, str], list[dict], int]:
+        gk, representative_street = item
         _, side = gk
-        async with semaphore:
-            records, count = await resolve_group(client, representative_street, side)
-            return gk, records, count
+        records, count = await resolve_group(client, representative_street, side)
+        return gk, records, count
 
-    resolved = await asyncio.gather(
-        *(
-            _resolve_bounded(gk, representative_street)
-            for gk, representative_street in distinct_groups.items()
-        )
+    resolved = await bounded_gather(
+        distinct_groups.items(), _resolve_one, _GROUP_CONCURRENCY
     )
     group_records: dict[tuple[str, str], list[dict]] = {}
     query_count = 0
@@ -597,6 +648,10 @@ async def build_coverage(
     segment_entries: list[dict] = []
     for sid, rec in items:
         on_street, from_street, to_street, line, side_keys = seg_plan[sid]
+        # Both of a segment's sides share the same from/to streets — derive
+        # variants ONCE per segment rather than once per side (perf).
+        from_variants = _street_variants(from_street)
+        to_variants = _street_variants(to_street)
         best: tuple[float, int, str, ScheduleResult] | None = None
         for side, gk in side_keys:
             soda_level, schedule = resolve_side(
@@ -605,10 +660,12 @@ async def build_coverage(
                 on_street,
                 from_street,
                 to_street,
+                from_variants,
+                to_variants,
                 side,
                 now,
             )
-            cf = confidence_for_level(soda_level)
+            cf = confidence_for_result(soda_level, schedule)
             # Worst-case = LOWER confidence (D-13); ties keep the first side.
             if best is None or cf < best[0]:
                 best = (cf, soda_level, side, schedule)

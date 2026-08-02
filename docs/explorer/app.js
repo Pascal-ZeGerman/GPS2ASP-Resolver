@@ -33,9 +33,6 @@ const MAX_ZOOM = 19;
 const CITY_CENTER = [40.70, -73.94];
 const CITY_ZOOM = 11;
 
-/* Python ASPDay convention: Monday = 0 .. Sunday = 6 (matches wk[].d). */
-const DAY_ABBR = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
 /* Standard NYC borocode -> name fallback (top-level coverage.json `boroughs`
    map is the source of truth; this only backstops a missing map). */
 const BOROUGH_FALLBACK = {
@@ -170,22 +167,8 @@ function renderMarkers(points) {
    (textContent / DOM node creation ONLY; never an HTML-string assignment)
    ========================================================================== */
 
-/** Whether a point carries a real weekly ASP schedule. */
-function hasSchedule(point) {
-  return point.status === 'schedule_found' || point.status === 'asp_active_now';
-}
-
-/** Build one <tr> with a key cell and a value cell, both textContent-set. */
-function attrRow(key, value) {
-  const tr = document.createElement('tr');
-  const tdKey = document.createElement('td');
-  const tdVal = document.createElement('td');
-  tdKey.textContent = key;
-  tdVal.textContent = value == null ? '' : String(value);
-  tr.appendChild(tdKey);
-  tr.appendChild(tdVal);
-  return tr;
-}
+/* hasSchedule and buildAttrRow (formerly attrRow) live in ../common.js,
+   shared with docs/demo/app.js, loaded before this script. */
 
 /** Human "Mon 08:30–10:00" line for one weekly window ({d,s,e}). */
 function weeklyLine(w) {
@@ -241,15 +224,15 @@ function buildPopup(point) {
   const tier = tierForConfidence(point.cf);
   const cfNum = Number(point.cf);
   const cfText = Number.isFinite(cfNum) ? cfNum.toFixed(2) : '—';
-  tbody.appendChild(attrRow('Confidence', `${cfText} (${tier})`));
+  tbody.appendChild(buildAttrRow('Confidence', `${cfText} (${tier})`));
 
   const lv = Number(point.lv);
-  tbody.appendChild(attrRow('SODA level', lv === 0 ? '0 (no match)' : String(point.lv)));
+  tbody.appendChild(buildAttrRow('SODA level', lv === 0 ? '0 (no match)' : String(point.lv)));
 
   if (hasSchedule(point)) {
-    if (point.sm) tbody.appendChild(attrRow('Schedule', point.sm));
+    if (point.sm) tbody.appendChild(buildAttrRow('Schedule', point.sm));
     if (Array.isArray(point.wk) && point.wk.length > 0) {
-      tbody.appendChild(attrRow('Cleaning', point.wk.map(weeklyLine).join('; ')));
+      tbody.appendChild(buildAttrRow('Cleaning', point.wk.map(weeklyLine).join('; ')));
     }
   }
 
