@@ -36,7 +36,7 @@ It's a plain HTML/CSS/JS page — no build step, no install, no server-side code
 
 **Where the data comes from.** The demo does **not** call any live API from the browser.
 It reads a **dated snapshot** committed to the repo at
-[`docs/demo/data/demo.json`](docs/demo/data/demo.json) (snapshot date: **2026-07-30**),
+[`docs/demo/data/demo.json`](docs/demo/data/demo.json) (snapshot date: **2026-08-02**),
 plus the matched segment geometries in `docs/demo/data/demo-segments.geojson`. The snapshot
 stores *weekly recurring patterns* rather than absolute datetimes, and the page recomputes the
 next move time in your browser at NYC time — so the "next move" stays correct even though the

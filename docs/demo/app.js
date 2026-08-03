@@ -188,6 +188,18 @@ function isResolvedNoSchedule(point) {
   return !hasSchedule(point) && point.status !== 'no_asp' && point.segment_id != null;
 }
 
+/** Whether a point's status names a transient/infrastructural build-time
+ * failure (a flaky SODA call, a not-yet-built index) rather than a genuine
+ * coverage gap (OutsideNYCError/NoSegmentFoundError — the point really is
+ * outside NYC or has no nearby indexed segment). Regenerating the dataset
+ * would likely resolve a transient failure; it would not resolve a true
+ * coverage gap. See build_demo_dataset.py's _DUMP_POINT_FAILURE_EXCEPTIONS. */
+function isTransientFailure(point) {
+  return point.status === 'SODAAPIError'
+    || point.status === 'IncompleteResultsError'
+    || point.status === 'IndexNotFoundError';
+}
+
 /* ==========================================================================
    DOM helpers — el/setText/show/hide/hasSchedule/buildAttrRow live in
    ../common.js (shared with docs/explorer/app.js), loaded before this script.
@@ -228,6 +240,10 @@ function renderReadout(point, move) {
     summary = 'This GPS point sat too close to more than one candidate NYC street segment '
       + "to confidently resolve. The sensor reports 'No street match' rather than a "
       + 'confirmed schedule.';
+  } else if (isTransientFailure(point)) {
+    summary = `This point failed to resolve during dataset generation (${point.status}), `
+      + 'a transient build-time error rather than a real coverage gap. '
+      + 'Regenerating the demo dataset would likely resolve it.';
   } else {
     summary = 'This block is outside the demo dataset. In Home Assistant the '
       + "sensor reports 'Outside coverage area'.";
@@ -260,6 +276,9 @@ function renderReadout(point, move) {
     } else if (point.status === 'resolution_failed') {
       chipClass = 'chip-neutral';
       chipText = 'No street match';
+    } else if (isTransientFailure(point)) {
+      chipClass = 'chip-neutral';
+      chipText = 'Resolution error';
     } else if (!hasSchedule(point)) {
       chipClass = 'chip-neutral';
       chipText = 'Outside coverage area';
@@ -366,6 +385,8 @@ function renderCalendar(point, move) {
       stateText = 'No sign on record';
     } else if (point.status === 'resolution_failed') {
       stateText = 'No street match';
+    } else if (isTransientFailure(point)) {
+      stateText = 'Resolution error';
     }
     setText('sensor-next-move-state', stateText);
     return;

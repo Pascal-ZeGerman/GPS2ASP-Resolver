@@ -53,6 +53,7 @@ from gps2asp.dataset_common import (
     BOROUGH_NAMES,
     TO_WGS84,
     bounded_gather,
+    count_raw_segment_records,
     load_segment_records,
 )
 from gps2asp.schedule.next_move import NYC_TZ
@@ -308,17 +309,23 @@ def _exact_cross_match(record: dict, from_street: str, to_street: str) -> bool:
     """Whether a record's cross streets match EXACTLY (no abbreviation variants).
 
     Used to separate soda_level 1 (exact from/to or exact swap) from level 2
-    (matched only via an abbreviation variant). Compares the canonical
-    ``normalize_to_soda`` forms directly, without expanding ``name_variants``.
+    (matched only via an abbreviation variant). Compares the RAW (upper/
+    stripped, but NOT ``normalize_to_soda``-expanded) forms directly. A
+    record only ever reaches this check by already having matched via
+    ``index_group_records``, which keys on the ``normalize_to_soda`` form —
+    so comparing normalized forms here would always be true and level 2
+    could never be reached; comparing the raw literal forms instead lets a
+    record whose spelling only matched through abbreviation normalization
+    (e.g. "E 100 ST" vs "EAST  100 STREET") correctly fall through to level 2.
     """
     record_from = record.get("from_street", "")
     record_to = record.get("to_street", "")
     if not record_from or not record_to or not from_street or not to_street:
         return False
-    rf = normalize_to_soda(record_from.upper().strip())
-    rt = normalize_to_soda(record_to.upper().strip())
-    ff = normalize_to_soda(from_street.upper().strip())
-    tt = normalize_to_soda(to_street.upper().strip())
+    rf = record_from.upper().strip()
+    rt = record_to.upper().strip()
+    ff = from_street.upper().strip()
+    tt = to_street.upper().strip()
     return (rf == ff and rt == tt) or (rf == tt and rt == ff)
 
 
@@ -622,8 +629,7 @@ async def build_coverage(
             gk = group_key(on_street, side)
             current = distinct_groups.get(gk)
             if current is None or (
-                current == normalize_to_soda(current)
-                and on_street != normalize_to_soda(on_street)
+                current == normalize_to_soda(current) and on_street != gk[0]
             ):
                 distinct_groups[gk] = on_street
             side_keys.append((side, gk))
@@ -736,9 +742,11 @@ def main(argv: list[str] | None = None) -> int:
 
     segments = load_segment_records(args.segments)
 
-    expected_count = (
-        len(segments) if args.limit is None else min(args.limit, len(segments))
-    )
+    # Compared against the RAW pre-filter count (not len(segments)) so this
+    # self-check can actually catch a segment that load_segment_records
+    # itself silently dropped, not just one build_coverage dropped.
+    raw_count = count_raw_segment_records(args.segments)
+    expected_count = raw_count if args.limit is None else min(args.limit, raw_count)
 
     client = SODAClient()
     dataset = asyncio.run(build_coverage(segments, client, limit=args.limit))

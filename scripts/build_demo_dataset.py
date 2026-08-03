@@ -332,6 +332,37 @@ def _read_points(points_file: Path | None) -> list[dict]:
     return data
 
 
+def _validate_points(points: list[dict]) -> None:
+    """Fail loud on duplicate ``key``/``profile`` values in a points list.
+
+    ``_run()``'s ``dict(resolved)`` and ``_profiles_for_points()``'s dict
+    comprehension both silently keep only the LAST entry on a repeated
+    ``key``/``profile`` value — a hand-edited ``--points`` file with a
+    copy-paste duplicate would otherwise drop an earlier point's resolved
+    entry or profile assignment with no warning. Raising here instead turns
+    that silent data loss into an immediate, actionable error.
+    """
+    seen_keys: dict[str, int] = {}
+    seen_profiles: dict[str, int] = {}
+    for i, point in enumerate(points):
+        key = point.get("key")
+        if key in seen_keys:
+            raise SystemExit(
+                f"--points file: duplicate \"key\" {key!r} at indices "
+                f"{seen_keys[key]} and {i} — each point needs a unique key."
+            )
+        seen_keys[key] = i
+        profile = point.get("profile")
+        if profile:
+            if profile in seen_profiles:
+                raise SystemExit(
+                    f"--points file: duplicate \"profile\" {profile!r} at "
+                    f"indices {seen_profiles[profile]} and {i} — each profile "
+                    "letter must map to exactly one point."
+                )
+            seen_profiles[profile] = i
+
+
 def _profiles_for_points(points: list[dict], points_file: Path | None) -> dict[str, dict]:
     """Profile assignments (e.g. ``{"A": {"point_key": ...}}``) to ship and
     self-check.
@@ -392,6 +423,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     points = _read_points(args.points)
+    _validate_points(points)
     resolved = asyncio.run(_run(points))
     profiles = _profiles_for_points(points, args.points)
 

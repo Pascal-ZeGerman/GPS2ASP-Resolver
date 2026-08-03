@@ -67,26 +67,50 @@ function tierForConfidence(v) {
   return 'unresolved';
 }
 
+/* HUE + radius channels read live from styles.css's --tier-*/--marker-r-*
+   custom properties (D-09) instead of hardcoding a second copy of the same
+   values here — CSS stays the single source of truth, so a future palette
+   or radius change in styles.css can never silently desync the legend
+   swatches (CSS) from the actual on-map canvas markers (this file). Read
+   once and cached: getComputedStyle is a layout-triggering call and these
+   tokens never change at runtime. */
+let _tierStyleCache = null;
+function _tierStyle() {
+  if (_tierStyleCache) return _tierStyleCache;
+  const computed = getComputedStyle(document.documentElement);
+  _tierStyleCache = {
+    high: {
+      color: computed.getPropertyValue('--tier-high').trim() || '#35d67f',
+      radius: parseFloat(computed.getPropertyValue('--marker-r-high')) || 2,
+    },
+    medium: {
+      color: computed.getPropertyValue('--tier-medium').trim() || '#2dd4bf',
+      radius: parseFloat(computed.getPropertyValue('--marker-r-medium')) || 3,
+    },
+    low: {
+      color: computed.getPropertyValue('--tier-low').trim() || '#f5a623',
+      radius: parseFloat(computed.getPropertyValue('--marker-r-low')) || 4,
+    },
+    unresolved: {
+      color: computed.getPropertyValue('--tier-unresolved').trim() || '#e5484d',
+      radius: parseFloat(computed.getPropertyValue('--marker-r-unresolved')) || 5,
+    },
+  };
+  return _tierStyleCache;
+}
+
 /* HUE channel — the four CSS tier colors (styles.css --tier-* tokens, D-09). */
 function colorForTier(tier) {
-  switch (tier) {
-    case 'high': return '#35d67f'; // green — exact block match (--tier-high)
-    case 'medium': return '#2dd4bf'; // teal-green — approximate (--tier-medium)
-    case 'low': return '#f5a623'; // amber — fuzzy/fallback (--tier-low)
-    default: return '#e5484d'; // red — unresolved, the gaps (--tier-unresolved)
-  }
+  const style = _tierStyle();
+  return (style[tier] || style.unresolved).color;
 }
 
 /* SECOND (non-hue) channel — per-tier marker radius (styles.css convention:
    unresolved > low > medium > high, so data gaps pop and are distinguishable
    by SIZE regardless of color vision — Prohibition 3 / T-42-05). */
 function radiusForTier(tier) {
-  switch (tier) {
-    case 'high': return 2;
-    case 'medium': return 3;
-    case 'low': return 4;
-    default: return 5; // unresolved — largest so gaps pop at citywide zoom
-  }
+  const style = _tierStyle();
+  return (style[tier] || style.unresolved).radius;
 }
 
 /* Shared runtime state. */
