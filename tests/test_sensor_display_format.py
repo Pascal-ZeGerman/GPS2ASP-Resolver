@@ -612,6 +612,7 @@ class TestSideLabel:
             ASPActiveNow as VendoredASPActiveNow,
             CleaningWindow as VendoredCleaningWindow,
             ASPDay as VendoredASPDay,
+            TimeWindow as VendoredTimeWindow,
         )
 
         _now = datetime.now(tz=NYC_TZ)
@@ -626,6 +627,16 @@ class TestSideLabel:
         schedule = VendoredASPActiveNow(
             status="asp_active_now",
             active_window=_cw,
+            weekly_schedule=VendoredWeeklySchedule(
+                windows=(
+                    VendoredTimeWindow(
+                        day=VendoredASPDay.MONDAY,
+                        start_time=time(8, 30),
+                        end_time=time(10, 0),
+                        source_sign="NO PARKING 8:30AM-10AM MON",
+                    ),
+                )
+            ),
             on_street="PROSPECT PLACE",
             from_street="VANDERBILT AVENUE",
             to_street="UNDERHILL AVENUE",

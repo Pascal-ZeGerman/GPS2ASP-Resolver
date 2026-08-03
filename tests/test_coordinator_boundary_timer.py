@@ -134,6 +134,7 @@ def _make_asp_active_now(active_window: CleaningWindow) -> ASPActiveNow:
     return ASPActiveNow(
         status="asp_active_now",
         active_window=active_window,
+        weekly_schedule=MagicMock(),
         on_street="TEST ST",
         from_street="FIRST AVE",
         to_street="SECOND AVE",

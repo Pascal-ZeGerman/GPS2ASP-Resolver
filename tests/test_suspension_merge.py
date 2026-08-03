@@ -47,7 +47,7 @@ def schedule_found() -> ScheduleFound:
 def asp_active_now() -> ASPActiveNow:
     """Minimal valid ASPActiveNow for testing (using a real CleaningWindow)."""
     from datetime import datetime, time
-    from gps2asp.schedule.models import ASPDay
+    from gps2asp.schedule.models import ASPDay, TimeWindow
     from zoneinfo import ZoneInfo
 
     nyc_tz = ZoneInfo("America/New_York")
@@ -62,6 +62,16 @@ def asp_active_now() -> ASPActiveNow:
     return ASPActiveNow(
         status="asp_active_now",
         active_window=window,
+        weekly_schedule=WeeklySchedule(
+            windows=(
+                TimeWindow(
+                    day=ASPDay.MONDAY,
+                    start_time=time(8, 0),
+                    end_time=time(9, 30),
+                    source_sign="MONDAY 8-9:30 AM",
+                ),
+            )
+        ),
         on_street="MAIN ST",
         from_street="1ST AVE",
         to_street="2ND AVE",

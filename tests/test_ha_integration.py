@@ -371,6 +371,16 @@ def _make_asp_active_now(
     return ASPActiveNow(
         status="asp_active_now",
         active_window=window,
+        weekly_schedule=WeeklySchedule(
+            windows=(
+                TimeWindow(
+                    day=window.day,
+                    start_time=window.start_time,
+                    end_time=window.end_time,
+                    source_sign="NO PARKING 8:30AM-10AM MON",
+                ),
+            )
+        ),
         on_street="PROSPECT PLACE",
         from_street="VANDERBILT AVENUE",
         to_street="UNDERHILL AVENUE",
@@ -1581,6 +1591,8 @@ def test_resolved_street_sensor_side_label_present_for_asp_active_now() -> None:
         ASPActiveNow as VendoredASPActiveNow,
         CleaningWindow as VendoredCleaningWindow,
         ASPDay as VendoredASPDay,
+        TimeWindow as VendoredTimeWindow,
+        WeeklySchedule as VendoredWeeklySchedule,
     )
 
     now = datetime.now(tz=NYC_TZ)
@@ -1595,6 +1607,16 @@ def test_resolved_street_sensor_side_label_present_for_asp_active_now() -> None:
     schedule = VendoredASPActiveNow(
         status="asp_active_now",
         active_window=cw,
+        weekly_schedule=VendoredWeeklySchedule(
+            windows=(
+                VendoredTimeWindow(
+                    day=VendoredASPDay.MONDAY,
+                    start_time=time(8, 30),
+                    end_time=time(10, 0),
+                    source_sign="NO PARKING 8:30AM-10AM MON",
+                ),
+            )
+        ),
         on_street="PROSPECT PLACE",
         from_street="VANDERBILT AVENUE",
         to_street="UNDERHILL AVENUE",
