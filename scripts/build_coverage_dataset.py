@@ -490,16 +490,17 @@ def _summary_and_weekly(
         ]
         return schedule.summary, weekly
     if isinstance(schedule, ASPActiveNow):
-        # No weekly_schedule on the active variant — only the single active
-        # window. Still surface it so the client renders a schedule (mirrors
-        # build_demo_dataset's asp_active_now handling).
-        window = schedule.active_window
+        # Emit the FULL merged weekly_schedule (every cleaning day), not just the
+        # single in-progress active_window — otherwise wk[] silently drops days
+        # the summary text lists (BUG-ASPActiveNow-full-weekly). Mirrors the
+        # ScheduleFound branch above (compact {d, s, e}, no sign text per D-04).
         weekly = [
             {
                 "d": window.day.value,
                 "s": window.start_time.strftime("%H:%M"),
                 "e": window.end_time.strftime("%H:%M"),
             }
+            for window in schedule.weekly_schedule.windows
         ]
         return schedule.summary, weekly
     return None, []

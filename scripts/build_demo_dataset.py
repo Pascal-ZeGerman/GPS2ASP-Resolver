@@ -105,7 +105,10 @@ def _cleaning_day_names(result) -> list[str]:
     if isinstance(schedule, ScheduleFound):
         windows = schedule.weekly_schedule.windows
     elif isinstance(schedule, ASPActiveNow):
-        windows = [schedule.active_window]
+        # Use the FULL merged weekly schedule (every cleaning day), not just the
+        # single in-progress active_window — otherwise cleaning_days silently
+        # drops days the summary text lists (BUG-ASPActiveNow-full-weekly).
+        windows = schedule.weekly_schedule.windows
     else:
         return []
     seen: list[str] = []
@@ -222,19 +225,21 @@ def build_point_entry(result, lat: float, lon: float) -> dict:
             for window in schedule.weekly_schedule.windows
         ]
     elif isinstance(schedule, ASPActiveNow):
-        # The car is parked during an active cleaning window right now — there is
-        # no weekly_schedule (only the single active_window), but app.js's
+        # The car is parked during an active cleaning window right now. app.js's
         # hasSchedule() treats "asp_active_now" as a schedule-bearing status, so
-        # summary/weekly must still be populated or the calendar renders empty.
+        # summary/weekly must be populated or the calendar renders empty. Build
+        # weekly from the FULL merged weekly_schedule (all cleaning days) so the
+        # calendar matches the summary text — mirrors the ScheduleFound branch
+        # above (each element is a TimeWindow with a singular source_sign).
         summary = schedule.summary
-        window = schedule.active_window
         weekly = [
             {
                 "day": window.day.value,
                 "start": window.start_time.strftime("%H:%M"),
                 "end": window.end_time.strftime("%H:%M"),
-                "sign": "; ".join(window.source_signs),
+                "sign": window.source_sign,
             }
+            for window in schedule.weekly_schedule.windows
         ]
 
     side = result.side_of_street

@@ -121,6 +121,24 @@ def _make_asp_active_now() -> ASPActiveNow:
             end_datetime=datetime(2026, 7, 30, 14, 0),
             source_signs=["NO PARKING THU 11AM-2PM STREET CLEANING"],
         ),
+        # Full merged weekly schedule carries BOTH cleaning days (Mon & Thu),
+        # matching the summary — the in-progress active_window is only Thursday.
+        weekly_schedule=WeeklySchedule(
+            windows=(
+                TimeWindow(
+                    day=ASPDay.MONDAY,
+                    start_time=time(11, 0),
+                    end_time=time(14, 0),
+                    source_sign="NO PARKING MON 11AM-2PM STREET CLEANING",
+                ),
+                TimeWindow(
+                    day=ASPDay.THURSDAY,
+                    start_time=time(11, 0),
+                    end_time=time(14, 0),
+                    source_sign="NO PARKING THU 11AM-2PM STREET CLEANING",
+                ),
+            )
+        ),
         on_street="ORIENTAL BLVD",
         from_street="",
         to_street="DECATUR AVE",
@@ -283,17 +301,23 @@ def test_asp_active_now_populates_weekly():
 
     assert entry["status"] == "asp_active_now"
     assert entry["summary"] == "MON & THU 11 AM - 2 PM"
-    assert isinstance(entry["weekly"], list) and entry["weekly"]
-    window = entry["weekly"][0]
-    assert window["day"] == ASPDay.THURSDAY.value
-    assert window["start"] == "11:00"
-    assert window["end"] == "14:00"
-    assert "NO PARKING" in window["sign"]
+    # The FULL merged weekly schedule survives — BOTH cleaning days, not just the
+    # single in-progress window (BUG-ASPActiveNow-full-weekly).
+    assert isinstance(entry["weekly"], list) and len(entry["weekly"]) == 2
+    assert {w["day"] for w in entry["weekly"]} == {
+        ASPDay.MONDAY.value,
+        ASPDay.THURSDAY.value,
+    }
+    for window in entry["weekly"]:
+        assert window["start"] == "11:00"
+        assert window["end"] == "14:00"
+        assert "NO PARKING" in window["sign"]
 
     # build_sensor_shapes()/_cleaning_day_names() had the identical ScheduleFound-
     # only gap — cleaning_days/schedule_summary must also populate for asp_active_now.
+    # WeeklySchedule windows are sorted by day (Monday=0 before Thursday=3).
     next_move_attrs = entry["sensors"]["next_move"]["attributes"]
-    assert next_move_attrs["cleaning_days"] == ["Thursday"]
+    assert next_move_attrs["cleaning_days"] == ["Monday", "Thursday"]
     assert next_move_attrs["schedule_summary"] == "MON & THU 11 AM - 2 PM"
 
 

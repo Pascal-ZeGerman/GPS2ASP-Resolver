@@ -364,3 +364,61 @@ def test_tier_boundary_partition():
     assert tier_for_confidence(confidence_for_level(2)) == "medium"
     assert tier_for_confidence(confidence_for_level(3)) == "unresolved"
     assert tier_for_confidence(confidence_for_level(0)) == "unresolved"
+
+
+def test_summary_and_weekly_asp_active_now_keeps_all_days():
+    """_summary_and_weekly() on a multi-day ASPActiveNow must emit EVERY cleaning
+    day, not just the single in-progress window (BUG-ASPActiveNow-full-weekly).
+    """
+    from datetime import datetime, time
+
+    from scripts.build_coverage_dataset import _summary_and_weekly
+    from gps2asp.schedule.models import (
+        ASPActiveNow,
+        ASPDay,
+        CleaningWindow,
+        TimeWindow,
+        WeeklySchedule,
+    )
+
+    schedule = ASPActiveNow(
+        status="asp_active_now",
+        active_window=CleaningWindow(
+            day=ASPDay.THURSDAY,
+            start_time=time(11, 0),
+            end_time=time(14, 0),
+            start_datetime=datetime(2026, 7, 30, 11, 0),
+            end_datetime=datetime(2026, 7, 30, 14, 0),
+            source_signs=["NO PARKING THU 11AM-2PM STREET CLEANING"],
+        ),
+        weekly_schedule=WeeklySchedule(
+            windows=(
+                TimeWindow(
+                    day=ASPDay.MONDAY,
+                    start_time=time(11, 0),
+                    end_time=time(14, 0),
+                    source_sign="NO PARKING MON 11AM-2PM STREET CLEANING",
+                ),
+                TimeWindow(
+                    day=ASPDay.THURSDAY,
+                    start_time=time(11, 0),
+                    end_time=time(14, 0),
+                    source_sign="NO PARKING THU 11AM-2PM STREET CLEANING",
+                ),
+            )
+        ),
+        on_street="ORIENTAL BLVD",
+        from_street="",
+        to_street="DECATUR AVE",
+        side_of_street="N",
+        source_signs=["NO PARKING THU 11AM-2PM STREET CLEANING"],
+        summary="MON & THU 11 AM - 2 PM",
+    )
+
+    summary, wk = _summary_and_weekly(schedule)
+    assert summary == "MON & THU 11 AM - 2 PM"
+    assert len(wk) == 2
+    assert {entry["d"] for entry in wk} == {ASPDay.MONDAY.value, ASPDay.THURSDAY.value}
+    # Compact coverage schema: {d, s, e} only, never a sign text (D-04).
+    for entry in wk:
+        assert set(entry.keys()) == {"d", "s", "e"}
