@@ -274,18 +274,10 @@ class ASPNextMoveTimeSensor(SensorEntity):
         if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
             weekly = schedule.weekly_schedule
 
-            day_names = sorted(
-                {w.day.name.title() for w in weekly.windows},
-                key=lambda d: [
-                    "Monday",
-                    "Tuesday",
-                    "Wednesday",
-                    "Thursday",
-                    "Friday",
-                    "Saturday",
-                    "Sunday",
-                ].index(d),
-            )
+            day_names = [
+                d.name.title()
+                for d in sorted({w.day for w in weekly.windows})
+            ]
             attrs["cleaning_days"] = day_names
 
             # time_window_start/end: use next_window (the temporally-next window)

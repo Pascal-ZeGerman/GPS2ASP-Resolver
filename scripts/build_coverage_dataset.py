@@ -296,11 +296,10 @@ async def resolve_group(
             if variant not in seen_variants:
                 seen_variants.add(variant)
                 variants.append(variant)
-    for variant in variants:
+    async def _fetch_variant(variant: str) -> list[dict]:
         try:
             query = client.build_on_street_query(variant, side)
-            query_count += 1
-            variant_records = await client.fetch_signs(query)
+            return await client.fetch_signs(query)
         except Exception as exc:  # noqa: BLE001 — fail-soft per variant (Pitfall 4)
             logger.warning(
                 "resolve_group: SODA query failed for streets=%r (variant=%r) "
@@ -310,7 +309,11 @@ async def resolve_group(
                 side,
                 exc,
             )
-            continue
+            return []
+
+    query_count = len(variants)
+    variant_results = await asyncio.gather(*(_fetch_variant(v) for v in variants))
+    for variant_records in variant_results:
         records.extend(variant_records)
     return records, query_count
 

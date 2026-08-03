@@ -76,12 +76,24 @@ function nycNowParts() {
   for (const part of fmt.formatToParts(new Date())) {
     p[part.type] = part.value;
   }
+  let year = parseInt(p.year, 10);
+  let month = parseInt(p.month, 10);
+  let day = parseInt(p.day, 10);
   let hour = parseInt(p.hour, 10);
-  if (hour === 24) hour = 0; // some engines emit "24" for midnight
+  if (hour === 24) {
+    // Some engines pair hour="24" with the calendar day that is ENDING (the
+    // ICU h24-cycle convention) rather than the day that is starting — roll
+    // the date forward so midnight lands on the correct NYC calendar day.
+    const rolled = new Date(Date.UTC(year, month - 1, day + 1));
+    year = rolled.getUTCFullYear();
+    month = rolled.getUTCMonth() + 1;
+    day = rolled.getUTCDate();
+    hour = 0;
+  }
   return {
-    year: parseInt(p.year, 10),
-    month: parseInt(p.month, 10),
-    day: parseInt(p.day, 10),
+    year,
+    month,
+    day,
     hour,
     minute: parseInt(p.minute, 10),
   };
@@ -105,7 +117,7 @@ function hhmmToMinutes(hhmm) {
  * @param {Array<{day:number,start:string,end:string,sign:string}>} weekly
  * @returns {null | {date:Date, day:number, offset:number, start:string,
  *                   end:string, sign:string, isToday:boolean,
- *                   isActiveNow:boolean}}
+ *                   isActiveNow:boolean, baseMs:number}}
  */
 function computeNextMove(weekly) {
   if (!Array.isArray(weekly) || weekly.length === 0) return null;
@@ -114,6 +126,9 @@ function computeNextMove(weekly) {
   const nowMinutes = now.hour * 60 + now.minute;
   // Use a UTC Date purely as a calendar for the NYC "today" date so day
   // arithmetic and weekday extraction are immune to the machine's timezone.
+  // Stashed on the returned move (below) so renderCalendar reuses this same
+  // "now" snapshot instead of taking its own read, which could straddle a
+  // midnight rollover and disagree with this one.
   const baseMs = Date.UTC(now.year, now.month - 1, now.day);
 
   for (let offset = 0; offset < 8; offset++) {
@@ -147,6 +162,7 @@ function computeNextMove(weekly) {
           sign: w.sign,
           isToday: offset === 0,
           isActiveNow: activeNow,
+          baseMs,
         };
       }
     }
@@ -392,8 +408,10 @@ function renderCalendar(point, move) {
     return;
   }
 
-  const now = nycNowParts();
-  const baseMs = Date.UTC(now.year, now.month - 1, now.day);
+  // Reuse the "now" snapshot computeNextMove already took for `move`, rather
+  // than taking a second independent read here — two reads could straddle a
+  // midnight rollover and disagree on "today" (see computeNextMove).
+  const baseMs = move.baseMs;
   const tooltip = (point.sensors
     && point.sensors.next_move
     && point.sensors.next_move.attributes
