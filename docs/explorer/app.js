@@ -75,25 +75,29 @@ function tierForConfidence(v) {
    once and cached: getComputedStyle is a layout-triggering call and these
    tokens never change at runtime. */
 let _tierStyleCache = null;
+function _cssRadius(computed, varName, fallback) {
+  const parsed = parseFloat(computed.getPropertyValue(varName));
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
 function _tierStyle() {
   if (_tierStyleCache) return _tierStyleCache;
   const computed = getComputedStyle(document.documentElement);
   _tierStyleCache = {
     high: {
       color: computed.getPropertyValue('--tier-high').trim() || '#35d67f',
-      radius: parseFloat(computed.getPropertyValue('--marker-r-high')) || 2,
+      radius: _cssRadius(computed, '--marker-r-high', 2),
     },
     medium: {
       color: computed.getPropertyValue('--tier-medium').trim() || '#2dd4bf',
-      radius: parseFloat(computed.getPropertyValue('--marker-r-medium')) || 3,
+      radius: _cssRadius(computed, '--marker-r-medium', 3),
     },
     low: {
       color: computed.getPropertyValue('--tier-low').trim() || '#f5a623',
-      radius: parseFloat(computed.getPropertyValue('--marker-r-low')) || 4,
+      radius: _cssRadius(computed, '--marker-r-low', 4),
     },
     unresolved: {
       color: computed.getPropertyValue('--tier-unresolved').trim() || '#e5484d',
-      radius: parseFloat(computed.getPropertyValue('--marker-r-unresolved')) || 5,
+      radius: _cssRadius(computed, '--marker-r-unresolved', 5),
     },
   };
   return _tierStyleCache;

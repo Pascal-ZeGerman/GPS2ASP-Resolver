@@ -53,8 +53,7 @@ from gps2asp.dataset_common import (
     BOROUGH_NAMES,
     TO_WGS84,
     bounded_gather,
-    count_raw_segment_records,
-    load_segment_records,
+    load_segment_records_with_raw_count,
 )
 from gps2asp.schedule.next_move import NYC_TZ
 from gps2asp.signs import _normalize_street, materialize_cached_records
@@ -486,21 +485,10 @@ def _summary_and_weekly(
     unlike ``build_demo_dataset`` which keeps ``sign``). Non-schedule variants
     (no_asp / no_match / all_unparseable) yield ``(None, [])``.
     """
-    if isinstance(schedule, ScheduleFound):
-        weekly = [
-            {
-                "d": window.day.value,
-                "s": window.start_time.strftime("%H:%M"),
-                "e": window.end_time.strftime("%H:%M"),
-            }
-            for window in schedule.weekly_schedule.windows
-        ]
-        return schedule.summary, weekly
-    if isinstance(schedule, ASPActiveNow):
+    if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
         # Emit the FULL merged weekly_schedule (every cleaning day), not just the
-        # single in-progress active_window — otherwise wk[] silently drops days
-        # the summary text lists (BUG-ASPActiveNow-full-weekly). Mirrors the
-        # ScheduleFound branch above (compact {d, s, e}, no sign text per D-04).
+        # single in-progress active_window (for ASPActiveNow) — otherwise wk[]
+        # silently drops days the summary text lists (BUG-ASPActiveNow-full-weekly).
         weekly = [
             {
                 "d": window.day.value,
@@ -740,12 +728,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    segments = load_segment_records(args.segments)
-
     # Compared against the RAW pre-filter count (not len(segments)) so this
     # self-check can actually catch a segment that load_segment_records
     # itself silently dropped, not just one build_coverage dropped.
-    raw_count = count_raw_segment_records(args.segments)
+    segments, raw_count = load_segment_records_with_raw_count(args.segments)
     expected_count = raw_count if args.limit is None else min(args.limit, raw_count)
 
     client = SODAClient()

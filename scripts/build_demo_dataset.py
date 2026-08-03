@@ -102,9 +102,7 @@ def reproject_wkt_to_wgs84(geometry_wkt: str) -> list[list[float]]:
 def _cleaning_day_names(result) -> list[str]:
     """Ordered unique cleaning-day names from a ScheduleFound/ASPActiveNow schedule."""
     schedule = result.schedule
-    if isinstance(schedule, ScheduleFound):
-        windows = schedule.weekly_schedule.windows
-    elif isinstance(schedule, ASPActiveNow):
+    if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
         # Use the FULL merged weekly schedule (every cleaning day), not just the
         # single in-progress active_window — otherwise cleaning_days silently
         # drops days the summary text lists (BUG-ASPActiveNow-full-weekly).
@@ -213,24 +211,13 @@ def build_point_entry(result, lat: float, lon: float) -> dict:
 
     weekly: list[dict] = []
     summary: str | None = None
-    if isinstance(schedule, ScheduleFound):
-        summary = schedule.summary
-        weekly = [
-            {
-                "day": window.day.value,
-                "start": window.start_time.strftime("%H:%M"),
-                "end": window.end_time.strftime("%H:%M"),
-                "sign": window.source_sign,
-            }
-            for window in schedule.weekly_schedule.windows
-        ]
-    elif isinstance(schedule, ASPActiveNow):
-        # The car is parked during an active cleaning window right now. app.js's
-        # hasSchedule() treats "asp_active_now" as a schedule-bearing status, so
-        # summary/weekly must be populated or the calendar renders empty. Build
-        # weekly from the FULL merged weekly_schedule (all cleaning days) so the
-        # calendar matches the summary text — mirrors the ScheduleFound branch
-        # above (each element is a TimeWindow with a singular source_sign).
+    if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
+        # For ASPActiveNow, the car is parked during an active cleaning window
+        # right now. app.js's hasSchedule() treats "asp_active_now" as a
+        # schedule-bearing status, so summary/weekly must be populated or the
+        # calendar renders empty. Build weekly from the FULL merged
+        # weekly_schedule (all cleaning days), not just the single in-progress
+        # active_window, so the calendar matches the summary text.
         summary = schedule.summary
         weekly = [
             {
@@ -345,6 +332,18 @@ def _validate_points(points: list[dict]) -> None:
     seen_keys: dict[str, int] = {}
     seen_profiles: dict[str, int] = {}
     for i, point in enumerate(points):
+        if not isinstance(point, dict):
+            raise SystemExit(
+                f"--points file: entry at index {i} must be a JSON object, "
+                f"got {type(point).__name__}."
+            )
+        missing = [field for field in ("key", "lat", "lon") if field not in point]
+        if missing:
+            raise SystemExit(
+                f"--points file: entry at index {i} is missing required "
+                f"field(s) {missing} — every point needs \"key\", \"lat\", "
+                "and \"lon\"."
+            )
         key = point.get("key")
         if key in seen_keys:
             raise SystemExit(
