@@ -232,6 +232,49 @@ async def test_resolve_group_tries_both_name_variants():
     assert "3 AVENUE|N" in client.calls  # canonical form tried too, even if empty
 
 
+async def test_resolve_group_accepts_list_of_streets_dedupes_variants():
+    """resolve_group accepts multiple raw spellings for one group (a group can
+    have more than one distinct raw CSCL spelling across its member segments)
+    and queries the union of every spelling's name_variants, deduping the
+    canonical form so it isn't queried once per spelling."""
+    record = {
+        "sign_description": _PARSEABLE_SIGN,
+        "from_street": "1 ST",
+        "to_street": "2 ST",
+    }
+    # Only the second raw spelling's own query has records.
+    client = _StubClient(records_by_query={"E  100 ST|N": [record]})
+    records, query_count = await resolve_group(
+        client, ["E 100 ST", "E  100 ST"], "N"
+    )
+
+    assert records == [record]
+    # 3 distinct variants total: shared canonical "EAST  100 STREET" (queried
+    # once, not once per spelling) + each spelling's own raw form.
+    assert query_count == 3
+    assert "E 100 ST|N" in client.calls
+    assert "E  100 ST|N" in client.calls
+    assert client.calls.count("EAST  100 STREET|N") == 1
+
+
+async def test_group_query_tries_every_distinct_raw_spelling_in_group():
+    """Two segments share a (street, side) group via normalize_to_soda but carry
+    DIFFERENT non-canonical raw spellings that differ only by internal
+    whitespace ('E 100 ST' vs 'E  100 ST') — regression test for a bug where
+    only the FIRST non-canonical spelling observed became the group's
+    permanent SODA-query representative, so a sibling segment's own raw
+    spelling was never queried and could silently zero out the whole group."""
+    segments = {
+        "1": _seg("E 100 ST", "1 AVE", "2 AVE"),
+        "2": _seg("E  100 ST", "3 AVE", "4 AVE"),
+    }
+    client = _StubClient()  # every query returns [] — only the calls matter here
+    await build_coverage(segments, client)
+
+    assert any(c.startswith("E 100 ST|") for c in client.calls), client.calls
+    assert any(c.startswith("E  100 ST|") for c in client.calls), client.calls
+
+
 async def test_swapped_cross_streets_still_match_via_index():
     """cross_streets_match's swapped-order semantics still hold through the
     pre-built group index: a record's from/to can be in the opposite order

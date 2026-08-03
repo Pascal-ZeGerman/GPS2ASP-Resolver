@@ -237,7 +237,7 @@ def tier_for_confidence(v: float) -> str:
 
 async def resolve_group(
     client: SODAClient,
-    on_street: str,
+    on_streets: str | list[str],
     side: str,
 ) -> tuple[list[dict], int]:
     """Issue broad SODA queries for a whole ``(street, side)`` group.
@@ -245,13 +245,14 @@ async def resolve_group(
     This is the R1 dedup primitive: instead of one exact block query per segment
     (~105K calls), the build fetches every broom sign on a street+side ONCE per
     name variant, then recovers per-block precision client-side via the
-    cross-street filter. Tries every ``name_variants`` form of ``on_street``
-    (the canonical SODA-expanded name, then the raw CSCL form when it differs)
-    and merges the results — mirroring production's ``retrieve_signs`` Level 3
-    fallback loop, which iterates the same variants instead of querying only
-    one canonical form. Without this, a street whose live SODA ``on_street``
-    field is stored in the raw CSCL form would return zero records here even
-    though the live resolver would find it.
+    cross-street filter. Tries every ``name_variants`` form of EVERY distinct raw
+    spelling observed for the group (the canonical SODA-expanded name, then each
+    raw CSCL form that differs from it) and merges the results — mirroring
+    production's ``retrieve_signs`` Level 3 fallback loop, which iterates the same
+    variants instead of querying only one canonical form. Without this, a street
+    whose live SODA ``on_street`` field is stored in a raw CSCL form that only
+    ONE sibling segment happens to use would return zero records here even
+    though the live resolver would find it for that segment.
 
     Fail-soft (Pitfall 4): a failed variant query logs a WARNING and
     contributes no records rather than aborting the whole group — every
@@ -260,31 +261,41 @@ async def resolve_group(
 
     Args:
         client: SODAClient (or a stub exposing the same two methods).
-        on_street: The group's representative on-street name (CSCL form from
-            the first segment observed for this group — ``name_variants``
-            derives the same small variant set regardless of which segment's
-            spelling is used, since they all belong to one normalized street).
+        on_streets: The group's raw on-street name(s) (CSCL form). A single
+            string is accepted for the common one-spelling case; a list covers
+            a group whose segments carry more than one distinct raw spelling
+            of the same normalized street — every spelling's variants are
+            queried so no sibling segment's SODA form is skipped.
         side: Compass side letter ("N", "S", "E", or "W").
 
     Returns:
         ``(records, query_count)`` — raw SODA record dicts merged across every
         variant query (``[]`` if every variant query failed or returned
         nothing), and the number of HTTP queries actually issued (one per
-        ``name_variants`` form, 1 or 2).
+        distinct ``name_variants`` form across all ``on_streets``).
     """
+    if isinstance(on_streets, str):
+        on_streets = [on_streets]
     records: list[dict] = []
     query_count = 0
-    try:
-        variants = name_variants(on_street)
-    except Exception as exc:  # noqa: BLE001 — fail-soft per group (Pitfall 4)
-        logger.warning(
-            "resolve_group: failed to derive name variants for street=%r side=%r: "
-            "%s — treating group as empty",
-            on_street,
-            side,
-            exc,
-        )
-        return records, query_count
+    variants: list[str] = []
+    seen_variants: set[str] = set()
+    for on_street in on_streets:
+        try:
+            street_variants = name_variants(on_street)
+        except Exception as exc:  # noqa: BLE001 — fail-soft per street (Pitfall 4)
+            logger.warning(
+                "resolve_group: failed to derive name variants for street=%r "
+                "side=%r: %s — skipping this spelling",
+                on_street,
+                side,
+                exc,
+            )
+            continue
+        for variant in street_variants:
+            if variant not in seen_variants:
+                seen_variants.add(variant)
+                variants.append(variant)
     for variant in variants:
         try:
             query = client.build_on_street_query(variant, side)
@@ -292,9 +303,9 @@ async def resolve_group(
             variant_records = await client.fetch_signs(query)
         except Exception as exc:  # noqa: BLE001 — fail-soft per variant (Pitfall 4)
             logger.warning(
-                "resolve_group: SODA query failed for street=%r (variant=%r) "
+                "resolve_group: SODA query failed for streets=%r (variant=%r) "
                 "side=%r: %s — treating variant as empty",
-                on_street,
+                on_streets,
                 variant,
                 side,
                 exc,
@@ -595,17 +606,16 @@ async def build_coverage(
     seg_plan: dict[
         str, tuple[str, str, str, object, list[tuple[str, tuple[str, str]]]]
     ] = {}
-    # distinct_groups[group_key] = a representative original (CSCL-form) street
-    # name for that group, used to seed resolve_group's name_variants fallback.
-    # name_variants() only emits the raw/abbreviated form when it differs from
-    # the canonical SODA form (see name_variants docstring), so an arbitrary
-    # "first segment observed" representative can pick a spelling that's
-    # already canonical and silently drop the abbreviated-form fallback query
-    # for the WHOLE group even when a sibling segment's raw spelling would
-    # have triggered it. Prefer a representative whose raw spelling differs
-    # from its canonical form — it queries the superset of variants any
-    # canonical-only representative would.
-    distinct_groups: dict[tuple[str, str], str] = {}
+    # distinct_groups[group_key] = every distinct raw (CSCL-form) street
+    # spelling observed for that group, used to seed resolve_group's
+    # name_variants fallback. name_variants() only emits the raw/abbreviated
+    # form when it differs from the canonical SODA form (see name_variants
+    # docstring), so collecting a SINGLE "first/best" representative spelling
+    # can silently drop the abbreviated-form fallback query for a sibling
+    # segment whose raw spelling differs from the chosen representative's.
+    # Collecting every distinct spelling (deduped in resolve_group) queries
+    # the full superset of variants any segment in the group could need.
+    distinct_groups: dict[tuple[str, str], list[str]] = {}
     for sid, rec in items:
         on_street = rec["full_street_name"]
         from_street = rec["from_street"]
@@ -615,21 +625,19 @@ async def build_coverage(
         side_keys: list[tuple[str, tuple[str, str]]] = []
         for side in sides:
             gk = group_key(on_street, side)
-            current = distinct_groups.get(gk)
-            if current is None or (
-                current == normalize_to_soda(current) and on_street != gk[0]
-            ):
-                distinct_groups[gk] = on_street
+            streets = distinct_groups.setdefault(gk, [])
+            if on_street not in streets:
+                streets.append(on_street)
             side_keys.append((side, gk))
         seg_plan[sid] = (on_street, from_street, to_street, line, side_keys)
 
     # ---- resolve every distinct group concurrently (the R1 dedup) ----
     async def _resolve_one(
-        item: tuple[tuple[str, str], str],
+        item: tuple[tuple[str, str], list[str]],
     ) -> tuple[tuple[str, str], list[dict], int]:
-        gk, representative_street = item
+        gk, group_streets = item
         _, side = gk
-        records, count = await resolve_group(client, representative_street, side)
+        records, count = await resolve_group(client, group_streets, side)
         return gk, records, count
 
     resolved = await bounded_gather(
@@ -728,11 +736,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # Compared against the RAW pre-filter count (not len(segments)) so this
-    # self-check can actually catch a segment that load_segment_records
-    # itself silently dropped, not just one build_coverage dropped.
+    # With no --limit, compared against the RAW pre-filter count (not
+    # len(segments)) so this self-check can actually catch a segment that
+    # load_segment_records itself silently dropped, not just one
+    # build_coverage dropped. With --limit, build_coverage() slices --limit
+    # off the already-FILTERED segments dict (see build_coverage's `items =
+    # list(segments.items())`), so the expectation must be based on the
+    # filtered count — comparing against raw_count there would false-positive
+    # whenever any raw record was filtered out.
     segments, raw_count = load_segment_records_with_raw_count(args.segments)
-    expected_count = raw_count if args.limit is None else min(args.limit, raw_count)
+    expected_count = (
+        raw_count if args.limit is None else min(args.limit, len(segments))
+    )
 
     client = SODAClient()
     dataset = asyncio.run(build_coverage(segments, client, limit=args.limit))

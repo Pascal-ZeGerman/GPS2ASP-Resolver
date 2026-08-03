@@ -44,43 +44,17 @@ def _load_raw_segments(path: Path | None = None) -> dict:
     return json.loads((path or _default_segments_path()).read_text())
 
 
-def load_segment_records(path: Path | None = None) -> dict[str, dict]:
-    """Load ``segments.json`` into a ``segment_id -> full record`` map.
-
-    Filters to dict records carrying ``geometry_wkt`` — the only records
-    either dumper can use (for a map midpoint/render or a schedule resolve).
-    Shared by both offline dataset dumpers so the loader and its filter never
-    drift between them.
-    """
-    raw = _load_raw_segments(path)
-    return {
-        str(seg_id): rec
-        for seg_id, rec in raw.items()
-        if isinstance(rec, dict) and "geometry_wkt" in rec
-    }
-
-
-def count_raw_segment_records(path: Path | None = None) -> int:
-    """Count entries in ``segments.json`` BEFORE ``load_segment_records`` filters it.
-
-    Lets a caller's "never omit a segment" self-check compare against the true
-    pre-filter total — comparing against ``len(load_segment_records(path))``
-    instead would be tautological, since that count already reflects whatever
-    the loader silently dropped.
-    """
-    return len(_load_raw_segments(path))
-
-
 def load_segment_records_with_raw_count(
     path: Path | None = None,
 ) -> tuple[dict[str, dict], int]:
-    """Like ``load_segment_records`` plus the pre-filter raw count, from a
-    single parse of ``segments.json``.
+    """Load ``segments.json`` into a filtered record map, plus the pre-filter
+    raw count, from a single parse of ``segments.json``.
 
+    Filters to dict records carrying ``geometry_wkt`` — the only records
+    either dumper can use (for a map midpoint/render or a schedule resolve).
     Callers that need both the filtered records and the raw count (e.g. a
-    "never omit a segment" self-check) should use this instead of calling
-    ``load_segment_records`` and ``count_raw_segment_records`` separately —
-    that would parse the (multi-MB) index file twice.
+    "never omit a segment" self-check) should use this rather than parsing
+    the (multi-MB) index file twice.
     """
     raw = _load_raw_segments(path)
     filtered = {
