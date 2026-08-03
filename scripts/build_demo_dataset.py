@@ -327,6 +327,26 @@ def _read_points(points_file: Path | None) -> list[dict]:
     return data
 
 
+def _profiles_for_points(points: list[dict], points_file: Path | None) -> dict[str, dict]:
+    """Profile assignments (e.g. ``{"A": {"point_key": ...}}``) to ship and
+    self-check.
+
+    The built-in DEMO_POINTS list is paired with the module-level
+    DEMO_PROFILES. A ``--points`` override supplies its own assignments via
+    each point's optional ``profile`` field instead — DEMO_PROFILES' point
+    keys ("prospect_pl"/"williamsburg") won't generally exist in an override
+    file, so falling back to it would break main()'s broken_profiles
+    self-check for the supplied points.
+    """
+    if points_file is None:
+        return DEMO_PROFILES
+    return {
+        point["profile"]: {"point_key": point["key"]}
+        for point in points
+        if point.get("profile")
+    }
+
+
 # Bound on concurrent point resolves — each is an independent, I/O-bound
 # resolve_asp() call (its own SODA queries). DEMO_POINTS is small (a handful
 # of hand-picked coordinates), so this only needs to keep the build a good
@@ -368,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
 
     points = _read_points(args.points)
     resolved = asyncio.run(_run(points))
+    profiles = _profiles_for_points(points, args.points)
 
     # Build-time self-check: every DEMO_PROFILES target must have actually
     # resolved to a real, renderable status. Without this check a broken
@@ -382,7 +403,7 @@ def main(argv: list[str] | None = None) -> int:
         "unknown",
     }
     broken_profiles = []
-    for profile_key, profile in DEMO_PROFILES.items():
+    for profile_key, profile in profiles.items():
         point_key = profile["point_key"]
         entry = resolved.get(point_key, {}).get("entry")
         if entry is None:
@@ -398,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{pk} ({key}): {reason}" for pk, key, reason in broken_profiles
         )
         print(
-            f"build_demo_dataset: ERROR — {len(broken_profiles)} DEMO_PROFILES "
+            f"build_demo_dataset: ERROR — {len(broken_profiles)} profile "
             f"target(s) failed to resolve: {details}",
             file=sys.stderr,
         )
@@ -415,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
     # "today" in NYC for the evening hours this matters.
     dataset = {
         "generation_date": datetime.now(NYC_TZ).date().isoformat(),
-        "profiles": DEMO_PROFILES,
+        "profiles": profiles,
         "points": {key: payload["entry"] for key, payload in resolved.items()},
     }
 

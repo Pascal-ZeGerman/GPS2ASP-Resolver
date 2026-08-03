@@ -62,37 +62,14 @@ input:focus-visible,
   margin: var(--sp-md) 0 0;
 }
 
-/* ==========================================================================
-   Layout — desktop two-column (map ~60% / panel ~40%), single-column on small.
-   Mobile-first: single-column stack.
-   ========================================================================== */
-.layout {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--sp-xl);
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 var(--sp-lg) var(--sp-3xl);
-}
-.panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-md);
-}
+/* .layout / .panel / #map (base rule) live in ../common.css (shared with
+   docs/demo/styles.css). This file overrides #map's min-height at wider
+   breakpoints below. */
 
 /* ==========================================================================
    Map region
    ========================================================================== */
 .map-region { display: flex; flex-direction: column; gap: var(--sp-md); }
-
-/* Explicit map height — Leaflet collapses to 0px otherwise (Pitfall 7). */
-#map {
-  min-height: 320px;              /* below 768px baseline */
-  width: 100%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
 
 /* Canvas circleMarker fill/stroke colors keyed to the tier scale. 42-04 sets
    the fillColor per marker; these classes document the intended mapping and can
@@ -194,15 +171,7 @@ input:focus-visible,
   line-height: 1.4;
 }
 
-/* ==========================================================================
-   Cards (shared surface for filters / states — mirrors the demo .card)
-   ========================================================================== */
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--sp-lg);
-}
+/* .card lives in ../common.css (shared with docs/demo/styles.css). */
 
 /* ==========================================================================
    Filter panel — label + control rows, 44px touch targets (like the demo's

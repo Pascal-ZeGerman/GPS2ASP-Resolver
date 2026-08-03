@@ -224,6 +224,10 @@ function renderReadout(point, move) {
   } else if (isResolvedNoSchedule(point)) {
     summary = 'This block resolved to a real NYC street, but no SODA sign record exists '
       + "for it yet. The sensor reports 'No sign on record' rather than a confirmed schedule.";
+  } else if (point.status === 'resolution_failed') {
+    summary = 'This GPS point sat too close to more than one candidate NYC street segment '
+      + "to confidently resolve. The sensor reports 'No street match' rather than a "
+      + 'confirmed schedule.';
   } else {
     summary = 'This block is outside the demo dataset. In Home Assistant the '
       + "sensor reports 'Outside coverage area'.";
@@ -247,9 +251,15 @@ function renderReadout(point, move) {
     if (point.status === 'no_asp') {
       chipClass = 'chip-positive';
       chipText = 'No restrictions';
+    } else if (point.status === 'all_unparseable') {
+      chipClass = 'chip-neutral';
+      chipText = 'No restrictions';
     } else if (isResolvedNoSchedule(point)) {
       chipClass = 'chip-neutral';
       chipText = 'No sign on record';
+    } else if (point.status === 'resolution_failed') {
+      chipClass = 'chip-neutral';
+      chipText = 'No street match';
     } else if (!hasSchedule(point)) {
       chipClass = 'chip-neutral';
       chipText = 'Outside coverage area';
@@ -350,10 +360,12 @@ function renderCalendar(point, move) {
       : 'No scheduled move for this block.';
     calendar.appendChild(note);
     let stateText = 'Outside coverage area';
-    if (point.status === 'no_asp') {
+    if (point.status === 'no_asp' || point.status === 'all_unparseable') {
       stateText = 'No restrictions';
     } else if (isResolvedNoSchedule(point)) {
       stateText = 'No sign on record';
+    } else if (point.status === 'resolution_failed') {
+      stateText = 'No street match';
     }
     setText('sensor-next-move-state', stateText);
     return;
@@ -513,21 +525,28 @@ function setRadioState(groupId, activeId) {
   }
 }
 
-function wireProfileToggle() {
-  const group = el('profile-toggle');
+/** Wire a [role="radio"] group's click + keyboard (Enter/Space) activation.
+ * `datasetKey` names the button's data-* attribute (e.g. 'profile' for
+ * data-profile) whose value is passed to `onActivate(value, btnId)`. */
+function wireRadioGroup(groupId, datasetKey, onActivate) {
+  const group = el(groupId);
   if (!group) return;
   group.addEventListener('click', (e) => {
     const btn = e.target.closest('[role="radio"]');
     if (!btn) return;
-    activateProfile(btn.dataset.profile, btn.id);
+    onActivate(btn.dataset[datasetKey], btn.id);
   });
   group.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
     const btn = e.target.closest('[role="radio"]');
     if (!btn) return;
     e.preventDefault();
-    activateProfile(btn.dataset.profile, btn.id);
+    onActivate(btn.dataset[datasetKey], btn.id);
   });
+}
+
+function wireProfileToggle() {
+  wireRadioGroup('profile-toggle', 'profile', activateProfile);
 }
 
 function activateProfile(profileKey, btnId) {
@@ -540,20 +559,7 @@ function activateProfile(profileKey, btnId) {
 }
 
 function wireModeToggle() {
-  const group = el('mode-toggle');
-  if (!group) return;
-  group.addEventListener('click', (e) => {
-    const btn = e.target.closest('[role="radio"]');
-    if (!btn) return;
-    activateMode(btn.dataset.mode, btn.id);
-  });
-  group.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
-    const btn = e.target.closest('[role="radio"]');
-    if (!btn) return;
-    e.preventDefault();
-    activateMode(btn.dataset.mode, btn.id);
-  });
+  wireRadioGroup('mode-toggle', 'mode', activateMode);
 }
 
 function activateMode(mode, btnId) {

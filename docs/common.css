@@ -98,3 +98,38 @@ body {
   flex-direction: column;
   gap: var(--sp-xs);
 }
+
+/* ==========================================================================
+   Shared layout scaffold — desktop two-column, mobile-first single-column
+   (demo + explorer). Each page's own styles.css overrides #map's min-height
+   at wider breakpoints and adds its own page-specific components.
+   ========================================================================== */
+.layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-xl);
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--sp-lg) var(--sp-3xl);
+}
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-md);
+}
+
+/* Explicit map height — Leaflet collapses to 0px otherwise (Pitfall 7). */
+#map {
+  min-height: 320px;              /* below 768px baseline */
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-lg);
+}

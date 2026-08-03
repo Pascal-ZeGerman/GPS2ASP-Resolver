@@ -56,7 +56,7 @@ from gps2asp.dataset_common import (
     load_segment_records,
 )
 from gps2asp.schedule.next_move import NYC_TZ
-from gps2asp.signs import materialize_cached_records
+from gps2asp.signs import _normalize_street, materialize_cached_records
 from gps2asp.signs.client import SODAClient
 from gps2asp.signs.normalize import name_variants, normalize_to_soda
 
@@ -325,13 +325,15 @@ def _exact_cross_match(record: dict, from_street: str, to_street: str) -> bool:
 def _street_key(raw: str) -> str | None:
     """Canonical normalized-street key for cross-street indexing, or ``None``.
 
-    Mirrors the resolver's ``_normalize_street`` (``normalize_to_soda`` on the
-    upper/stripped field) and its empty-field guard (BUG-S-003): an empty raw
-    field never produces an indexable key, so it can never spuriously match.
+    Reuses the resolver's own ``_normalize_street`` so this dumper's
+    soda_level classification can never silently drift from what the live
+    resolver would return for the same record, plus an empty-field guard
+    (BUG-S-003): an empty raw field never produces an indexable key, so it
+    can never spuriously match.
     """
     if not raw:
         return None
-    return normalize_to_soda(raw.upper().strip())
+    return _normalize_street(raw)
 
 
 def index_group_records(group_records: list[dict]) -> dict[tuple[str, str], list[dict]]:
@@ -510,6 +512,7 @@ def build_segment_entry(
     side: str,
     soda_level: int,
     schedule: ScheduleResult,
+    confidence: float,
 ) -> dict:
     """Assemble ONE canonical compact coverage.json segment entry (42-01 schema).
 
@@ -525,6 +528,10 @@ def build_segment_entry(
         side: The worst-case side chosen for this segment (D-13).
         soda_level: Match-precision level for the chosen side.
         schedule: The chosen side's schedule result.
+        confidence: The chosen side's confidence score — the same
+            ``confidence_for_result(soda_level, schedule)`` value the caller
+            already computed to pick this side as the worst case (D-13), so
+            the picked winner and the serialized ``cf`` can never disagree.
     """
     lat, lon = segment_midpoint_wgs84(line)
     summary, weekly = _summary_and_weekly(schedule)
@@ -538,7 +545,7 @@ def build_segment_entry(
         "sd": side,
         "bc": None if (bc := seg_record.get("borocode")) is None else str(bc),
         "lv": soda_level,
-        "cf": confidence_for_result(soda_level, schedule),
+        "cf": confidence,
         "status": schedule.status,
         "sm": summary,
         "wk": weekly,
@@ -670,9 +677,11 @@ async def build_coverage(
             if best is None or cf < best[0]:
                 best = (cf, soda_level, side, schedule)
         assert best is not None  # every segment has at least one side
-        _, worst_level, worst_side, worst_schedule = best
+        worst_cf, worst_level, worst_side, worst_schedule = best
         segment_entries.append(
-            build_segment_entry(sid, rec, line, worst_side, worst_level, worst_schedule)
+            build_segment_entry(
+                sid, rec, line, worst_side, worst_level, worst_schedule, worst_cf
+            )
         )
 
     return {

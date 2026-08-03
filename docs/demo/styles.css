@@ -44,50 +44,19 @@ button:focus-visible,
 .mode-option[aria-checked="true"] { color: var(--fg); background: #1b2130; }
 .mode-status { color: var(--muted); }
 
-/* ==========================================================================
-   Layout — desktop two-column, tablet/mobile single-column
-   Default (mobile-first): single column stack.
-   ========================================================================== */
-.layout {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--sp-xl);
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 var(--sp-lg) var(--sp-3xl);
-}
-.panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-md);
-}
+/* .layout / .panel / #map (base rule) / .card live in ../common.css (shared
+   with docs/explorer/styles.css). This file overrides #map's min-height at
+   wider breakpoints below. */
 
 /* --- Map region --- */
 .map-region { display: flex; flex-direction: column; gap: var(--sp-sm); }
 
-/* Explicit map height — Leaflet collapses to 0px otherwise (Pitfall 7). */
-#map {
-  min-height: 320px;              /* below 768px baseline */
-  width: 100%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
 .primary-cta {                    /* Accent reserved use #1 */
   color: var(--accent);
   font-weight: 600;
   margin: 0;
 }
 
-/* ==========================================================================
-   Cards
-   ========================================================================== */
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--sp-lg);
-}
 .restriction-summary { margin: 0 0 var(--sp-xs); }
 .restriction-meta { margin: 0 0 var(--sp-md); }
 
