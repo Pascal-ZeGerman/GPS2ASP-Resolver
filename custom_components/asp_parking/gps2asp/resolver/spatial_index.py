@@ -312,3 +312,26 @@ class SpatialIndex:
         results.sort(key=lambda c: c.distance_ft)
 
         return results
+
+    def get_segment_geometry_wkt(self, segment_id: object) -> str | None:
+        """Return the raw ``geometry_wkt`` for one segment id, or ``None``.
+
+        Reuses the already-loaded ``_segments`` metadata (the same dict
+        ``nearest()``/``query_radius()`` read) instead of re-parsing
+        segments.json. Callers that already resolved a point through this
+        singleton (e.g. dataset dumpers deriving a matched segment's display
+        geometry) get the lookup for free rather than paying a second,
+        independent full parse of the multi-megabyte index file.
+
+        Args:
+            segment_id: A segment id as returned on ``SegmentCandidate.segment_id``
+                (int or str; looked up via ``str(segment_id)``, matching the
+                string keys segments.json is loaded into).
+
+        Returns:
+            The segment's ``geometry_wkt``, or ``None`` if unloaded or not found.
+        """
+        if self._segments is None:
+            return None
+        seg_data = self._segments.get(str(segment_id))
+        return seg_data.get("geometry_wkt") if seg_data else None
