@@ -185,30 +185,21 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
         schedule = apply_suspension(schedule, data.suspension_state)
 
     if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
-        if isinstance(schedule, ScheduleFound):
-            weekly = schedule.weekly_schedule
-        else:
-            weekly = None
+        weekly = schedule.weekly_schedule
 
-        if weekly is not None:
-            day_names = sorted(
-                {w.day.name.title() for w in weekly.windows},
-                key=lambda d: [
-                    "Monday",
-                    "Tuesday",
-                    "Wednesday",
-                    "Thursday",
-                    "Friday",
-                    "Saturday",
-                    "Sunday",
-                ].index(d),
-            )
-            attrs["cleaning_days"] = day_names
-        elif isinstance(schedule, ASPActiveNow):
-            # BUG-T-005 (Phase 35.1-05): mirror sensor.py — surface the active
-            # cleaning day so the UI never loses the cleaning_days chip on
-            # active-now mornings.
-            attrs["cleaning_days"] = [schedule.active_window.day.name.title()]
+        day_names = sorted(
+            {w.day.name.title() for w in weekly.windows},
+            key=lambda d: [
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday",
+            ].index(d),
+        )
+        attrs["cleaning_days"] = day_names
 
         # time_window_start/end: mirror production logic — use next_window (the
         # temporally-next window), not weekly.windows[0] (day-sorted first entry).

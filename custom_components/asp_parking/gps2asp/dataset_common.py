@@ -40,6 +40,10 @@ def _default_segments_path() -> Path:
     return Path(__file__).resolve().parent / "data" / "index" / "segments.json"
 
 
+def _load_raw_segments(path: Path | None = None) -> dict:
+    return json.loads((path or _default_segments_path()).read_text())
+
+
 def load_segment_records(path: Path | None = None) -> dict[str, dict]:
     """Load ``segments.json`` into a ``segment_id -> full record`` map.
 
@@ -48,7 +52,7 @@ def load_segment_records(path: Path | None = None) -> dict[str, dict]:
     Shared by both offline dataset dumpers so the loader and its filter never
     drift between them.
     """
-    raw = json.loads((path or _default_segments_path()).read_text())
+    raw = _load_raw_segments(path)
     return {
         str(seg_id): rec
         for seg_id, rec in raw.items()
@@ -64,8 +68,27 @@ def count_raw_segment_records(path: Path | None = None) -> int:
     instead would be tautological, since that count already reflects whatever
     the loader silently dropped.
     """
-    raw = json.loads((path or _default_segments_path()).read_text())
-    return len(raw)
+    return len(_load_raw_segments(path))
+
+
+def load_segment_records_with_raw_count(
+    path: Path | None = None,
+) -> tuple[dict[str, dict], int]:
+    """Like ``load_segment_records`` plus the pre-filter raw count, from a
+    single parse of ``segments.json``.
+
+    Callers that need both the filtered records and the raw count (e.g. a
+    "never omit a segment" self-check) should use this instead of calling
+    ``load_segment_records`` and ``count_raw_segment_records`` separately —
+    that would parse the (multi-MB) index file twice.
+    """
+    raw = _load_raw_segments(path)
+    filtered = {
+        str(seg_id): rec
+        for seg_id, rec in raw.items()
+        if isinstance(rec, dict) and "geometry_wkt" in rec
+    }
+    return filtered, len(raw)
 
 # CSCL borough code -> human name (mirrors coordinator._BOROUGH_NAMES).
 BOROUGH_NAMES: dict[str, str] = {
