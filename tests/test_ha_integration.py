@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 from freezegun import freeze_time
 
-from gps2asp.dataset_common import SIDE_LABELS as _SIDE_LABELS
+from gps2asp.dataset_labels import SIDE_LABELS as _SIDE_LABELS
 from gps2asp.schedule.models import (
     ASPActiveNow,
     ASPDay,
