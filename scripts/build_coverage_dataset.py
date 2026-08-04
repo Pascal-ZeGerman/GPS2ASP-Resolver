@@ -335,10 +335,10 @@ def _exact_cross_match(record: dict, from_street: str, to_street: str) -> bool:
     record_to = record.get("to_street", "")
     if not record_from or not record_to or not from_street or not to_street:
         return False
-    rf = record_from.upper().strip()
-    rt = record_to.upper().strip()
-    ff = from_street.upper().strip()
-    tt = to_street.upper().strip()
+    rf = " ".join(record_from.upper().split())
+    rt = " ".join(record_to.upper().split())
+    ff = " ".join(from_street.upper().split())
+    tt = " ".join(to_street.upper().split())
     return (rf == ff and rt == tt) or (rf == tt and rt == ff)
 
 

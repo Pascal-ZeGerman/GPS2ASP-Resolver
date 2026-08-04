@@ -50,15 +50,23 @@ class SpatialIndex:
     def __init__(self, index_dir: str | None = None) -> None:
         self._index = None
         self._segments = None
+        self._index_dir = self.resolve_index_dir(index_dir)
 
+    @staticmethod
+    def resolve_index_dir(index_dir: str | None = None) -> Path:
+        """Resolve the index directory using the constructor/env/default precedence.
+
+        Shared with ``dataset_common._default_segments_path`` so the offline
+        dataset dumpers always resolve ``segments.json`` from the same
+        directory the live resolver reads its index from.
+        """
         if index_dir is not None:
-            self._index_dir = Path(index_dir)
-        elif env_dir := os.environ.get("GPS2ASP_INDEX_DIR"):
-            self._index_dir = Path(env_dir)
-        else:
-            # Default: data/index/ relative to the gps2asp package
-            package_dir = Path(__file__).parent.parent
-            self._index_dir = package_dir / "data" / "index"
+            return Path(index_dir)
+        if env_dir := os.environ.get("GPS2ASP_INDEX_DIR"):
+            return Path(env_dir)
+        # Default: data/index/ relative to the gps2asp package
+        package_dir = Path(__file__).parent.parent
+        return package_dir / "data" / "index"
 
     @classmethod
     async def get(cls, index_dir: str | None = None) -> SpatialIndex:
