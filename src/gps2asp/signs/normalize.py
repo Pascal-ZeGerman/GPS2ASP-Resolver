@@ -61,6 +61,17 @@ _LETTERED_AVE_RE = re.compile(r"^(?:AVE|AVENUE) ([A-Z])$")
 _DIR_NUMBERED_RE = re.compile(r"^(EAST|WEST|NORTH|SOUTH)\s+(\d+)\s+(.+)$")
 
 
+def collapse_whitespace_upper(name: str) -> str:
+    """Uppercase and collapse internal whitespace runs to a single space.
+
+    Shared primitive: CSCL/SODA fields may carry irregular internal spacing
+    (e.g. "W  THAMES ST", 2 spaces) that must be collapsed before any raw
+    string comparison, or an internal-whitespace difference silently reads
+    as a mismatch.
+    """
+    return " ".join(name.upper().split())
+
+
 def normalize_to_soda(cscl_name: str) -> str:
     """Convert CSCL street name format to SODA parking signs format.
 
@@ -112,7 +123,7 @@ def normalize_to_soda(cscl_name: str) -> str:
     # Collapse internal whitespace: CSCL may have "E  100 ST" (2 spaces) and
     # SODA has "EAST  100 STREET" (2 spaces for 3-digit numbers). Collapsing
     # first ensures consistent token splitting before re-formatting.
-    name = " ".join(cscl_name.upper().split())
+    name = collapse_whitespace_upper(cscl_name)
 
     # Step 0: Expand lettered avenue prefix: "AVE A" -> "AVENUE A"
     # Also handles already-expanded SODA-format names like "AVENUE E" to make

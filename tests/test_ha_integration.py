@@ -177,10 +177,7 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
     if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
         weekly = schedule.weekly_schedule
 
-        day_names = [
-            d.name.title()
-            for d in sorted({w.day for w in weekly.windows})
-        ]
+        day_names = [d.name.title() for d in sorted({w.day for w in weekly.windows})]
         attrs["cleaning_days"] = day_names
 
         # time_window_start/end: mirror production logic — use next_window (the

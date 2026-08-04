@@ -333,13 +333,13 @@ def _validate_points(points: list[dict]) -> None:
         if missing:
             raise SystemExit(
                 f"--points file: entry at index {i} is missing required "
-                f"field(s) {missing} — every point needs \"key\", \"lat\", "
-                "and \"lon\"."
+                f'field(s) {missing} — every point needs "key", "lat", '
+                'and "lon".'
             )
         key = point.get("key")
         if key in seen_keys:
             raise SystemExit(
-                f"--points file: duplicate \"key\" {key!r} at indices "
+                f'--points file: duplicate "key" {key!r} at indices '
                 f"{seen_keys[key]} and {i} — each point needs a unique key."
             )
         seen_keys[key] = i
@@ -347,14 +347,16 @@ def _validate_points(points: list[dict]) -> None:
         if profile:
             if profile in seen_profiles:
                 raise SystemExit(
-                    f"--points file: duplicate \"profile\" {profile!r} at "
+                    f'--points file: duplicate "profile" {profile!r} at '
                     f"indices {seen_profiles[profile]} and {i} — each profile "
                     "letter must map to exactly one point."
                 )
             seen_profiles[profile] = i
 
 
-def _profiles_for_points(points: list[dict], points_file: Path | None) -> dict[str, dict]:
+def _profiles_for_points(
+    points: list[dict], points_file: Path | None
+) -> dict[str, dict]:
     """Profile assignments (e.g. ``{"A": {"point_key": ...}}``) to ship and
     self-check.
 

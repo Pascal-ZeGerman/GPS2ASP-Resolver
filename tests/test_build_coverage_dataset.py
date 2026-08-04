@@ -244,9 +244,7 @@ async def test_resolve_group_accepts_list_of_streets_dedupes_variants():
     }
     # Only the second raw spelling's own query has records.
     client = _StubClient(records_by_query={"E  100 ST|N": [record]})
-    records, query_count = await resolve_group(
-        client, ["E 100 ST", "E  100 ST"], "N"
-    )
+    records, query_count = await resolve_group(client, ["E 100 ST", "E  100 ST"], "N")
 
     assert records == [record]
     # 3 distinct variants total: shared canonical "EAST  100 STREET" (queried

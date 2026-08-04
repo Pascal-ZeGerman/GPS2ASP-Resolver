@@ -59,7 +59,11 @@ from gps2asp.resolver.confidence import DEFAULT_CONFIDENCE_THRESHOLD
 from gps2asp.schedule.next_move import NYC_TZ
 from gps2asp.signs import _normalize_street, materialize_cached_records
 from gps2asp.signs.client import SODAClient
-from gps2asp.signs.normalize import name_variants, normalize_to_soda
+from gps2asp.signs.normalize import (
+    collapse_whitespace_upper,
+    name_variants,
+    normalize_to_soda,
+)
 
 logger = logging.getLogger("build_coverage_dataset")
 
@@ -104,6 +108,7 @@ TIER_BOUNDS: tuple[tuple[float, str], ...] = (
     (DEFAULT_CONFIDENCE_THRESHOLD, "low"),
     (0.00, "unresolved"),
 )
+
 
 def segment_midpoint_wgs84(line) -> tuple[float, float]:
     """Reproject a segment's midpoint to WGS84 ``(lat, lon)`` rounded to 6 dp.
@@ -296,6 +301,7 @@ async def resolve_group(
             if variant not in seen_variants:
                 seen_variants.add(variant)
                 variants.append(variant)
+
     async def _fetch_variant(variant: str) -> list[dict]:
         try:
             query = client.build_on_street_query(variant, side)
@@ -335,10 +341,10 @@ def _exact_cross_match(record: dict, from_street: str, to_street: str) -> bool:
     record_to = record.get("to_street", "")
     if not record_from or not record_to or not from_street or not to_street:
         return False
-    rf = " ".join(record_from.upper().split())
-    rt = " ".join(record_to.upper().split())
-    ff = " ".join(from_street.upper().split())
-    tt = " ".join(to_street.upper().split())
+    rf = collapse_whitespace_upper(record_from)
+    rt = collapse_whitespace_upper(record_to)
+    ff = collapse_whitespace_upper(from_street)
+    tt = collapse_whitespace_upper(to_street)
     return (rf == ff and rt == tt) or (rf == tt and rt == ff)
 
 
@@ -748,9 +754,7 @@ def main(argv: list[str] | None = None) -> int:
     # filtered count — comparing against raw_count there would false-positive
     # whenever any raw record was filtered out.
     segments, raw_count = load_segment_records_with_raw_count(args.segments)
-    expected_count = (
-        raw_count if args.limit is None else min(args.limit, len(segments))
-    )
+    expected_count = raw_count if args.limit is None else min(args.limit, len(segments))
 
     client = SODAClient()
     dataset = asyncio.run(build_coverage(segments, client, limit=args.limit))

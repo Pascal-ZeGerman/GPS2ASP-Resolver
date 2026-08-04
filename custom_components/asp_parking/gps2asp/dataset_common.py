@@ -16,7 +16,17 @@ from typing import TypeVar
 
 from pyproj import Transformer
 
+from .dataset_labels import BOROUGH_NAMES, SIDE_LABELS, borough_name
 from .resolver.spatial_index import SpatialIndex
+
+__all__ = [
+    "BOROUGH_NAMES",
+    "SIDE_LABELS",
+    "TO_WGS84",
+    "bounded_gather",
+    "borough_name",
+    "load_segment_records_with_raw_count",
+]
 
 _T = TypeVar("_T")
 _R = TypeVar("_R")
@@ -60,33 +70,6 @@ def load_segment_records_with_raw_count(
         if isinstance(rec, dict) and "geometry_wkt" in rec
     }
     return filtered, len(raw)
-
-# CSCL borough code -> human name. Single source of truth shared by
-# coordinator.py and both offline dataset dumpers so the three never drift.
-BOROUGH_NAMES: dict[str, str] = {
-    "1": "Manhattan",
-    "2": "Bronx",
-    "3": "Brooklyn",
-    "4": "Queens",
-    "5": "Staten Island",
-}
-
-
-def borough_name(borocode: str | None) -> str | None:
-    """Map a CSCL borough code to its human name, or None when unknown."""
-    if borocode is None:
-        return None
-    return BOROUGH_NAMES.get(str(borocode))
-
-
-# side_of_street letter -> display label. Single source of truth shared by
-# sensor.py and build_demo_dataset.py so the two never drift.
-SIDE_LABELS: dict[str, str] = {
-    "N": "North side",
-    "S": "South side",
-    "E": "East side",
-    "W": "West side",
-}
 
 
 async def bounded_gather(

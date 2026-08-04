@@ -44,7 +44,7 @@ from homeassistant.util import location as location_util
 
 from zoneinfo import ZoneInfo
 
-from .gps2asp.dataset_common import BOROUGH_NAMES as _BOROUGH_NAMES
+from .gps2asp.dataset_labels import BOROUGH_NAMES as _BOROUGH_NAMES
 from .gps2asp.resolver import convert, resolve
 from .gps2asp.resolver.exceptions import (
     AmbiguousResolutionError,
@@ -130,6 +130,7 @@ logger = logging.getLogger(__name__)
 NYC_TZ = ZoneInfo("America/New_York")
 
 _METRES_TO_FEET = 3.28084  # 1 metre = 3.28084 US survey feet
+
 
 class RebuildPath(Enum):
     """Phase 38 (IDX-05): which executor strategy services a rebuild request.
