@@ -488,8 +488,8 @@ def resolve_side(
         to_street,
         side,
         # For empty `filtered` this marker is unused (NoMatchFound short-circuits);
-        # clamp to a valid level>=1 for the success shape when records are present.
-        soda_level if soda_level >= 1 else 1,
+        # soda_level is always >=1 whenever `filtered` is non-empty (see branches above).
+        soda_level,
     )
     schedule = compute_schedule(sign_result, now=now)
     return soda_level, schedule

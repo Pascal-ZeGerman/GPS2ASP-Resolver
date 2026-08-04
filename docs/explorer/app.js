@@ -139,6 +139,7 @@ const state = {
 
 /** borocode -> borough name (coverage.json `boroughs` map first, then fallback). */
 function boroughName(bc) {
+  if (bc == null) return '';
   const key = String(bc);
   if (state.boroughByCode && state.boroughByCode[key] != null) {
     return state.boroughByCode[key];
