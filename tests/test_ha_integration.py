@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from freezegun import freeze_time
 
+from gps2asp.dataset_common import SIDE_LABELS as _SIDE_LABELS
 from gps2asp.schedule.models import (
     ASPActiveNow,
     ASPDay,
@@ -37,17 +38,6 @@ from gps2asp.suspension import SuspensionInfo, apply_suspension  # noqa: E402
 
 NYC_TZ = ZoneInfo("America/New_York")
 UTC_TZ = timezone.utc
-
-# Phase 36 SENSOR-01: mirror of custom_components/asp_parking/sensor.py _SIDE_LABELS.
-# Defined here (not imported) to avoid pulling in HA-dependent sensor.py at
-# collection time — test_ha_integration.py is designed to run without HA.
-# IMPORTANT: keep in sync with sensor._SIDE_LABELS manually if labels change.
-_SIDE_LABELS: dict[str, str] = {
-    "N": "North side",
-    "S": "South side",
-    "E": "East side",
-    "W": "West side",
-}
 
 
 def _format_move_time(dt: datetime) -> str:

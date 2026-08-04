@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 from typing import TypeVar
 
 from pyproj import Transformer
+
+from gps2asp.resolver.spatial_index import SpatialIndex
 
 _T = TypeVar("_T")
 _R = TypeVar("_R")
@@ -28,16 +29,12 @@ TO_WGS84 = Transformer.from_crs("EPSG:2263", "EPSG:4326", always_xy=True)
 def _default_segments_path() -> Path:
     """Default ``segments.json`` location, honoring ``GPS2ASP_INDEX_DIR``.
 
-    Mirrors ``SpatialIndex``'s own precedence (env var, then the
-    package-bundled default) so this dumper never reads a different index
-    than the live resolver path ``build_demo_dataset.py`` uses via
+    Reuses ``SpatialIndex.resolve_index_dir``'s own precedence (env var, then
+    the package-bundled default) so this dumper never reads a different
+    index than the live resolver path ``build_demo_dataset.py`` uses via
     ``SpatialIndex.get()``.
     """
-    if env_dir := os.environ.get("GPS2ASP_INDEX_DIR"):
-        return Path(env_dir) / "segments.json"
-    # This module already lives at src/gps2asp/, so its own parent directory
-    # IS src/gps2asp/.
-    return Path(__file__).resolve().parent / "data" / "index" / "segments.json"
+    return SpatialIndex.resolve_index_dir() / "segments.json"
 
 
 def _load_raw_segments(path: Path | None = None) -> dict:
