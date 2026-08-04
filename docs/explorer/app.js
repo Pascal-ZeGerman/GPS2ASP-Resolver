@@ -67,7 +67,7 @@ function tierForConfidence(v) {
   return 'unresolved';
 }
 
-/* HUE + radius channels read live from styles.css's --tier-*/--marker-r-*
+/* HUE + radius channels read live from styles.css's --tier-* and --marker-r-*
    custom properties (D-09) instead of hardcoding a second copy of the same
    values here — CSS stays the single source of truth, so a future palette
    or radius change in styles.css can never silently desync the legend
@@ -447,6 +447,7 @@ async function init() {
     await loadDataset();
   } catch (err) {
     // Dataset failed to load — show the visible alert, never a blank map (R2).
+    console.error('[explorer] dataset load failed:', err);
     show(el('error-state'));
     return;
   }

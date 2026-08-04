@@ -661,7 +661,9 @@ async function loadDataset() {
     fetch('data/demo-segments.geojson'),
   ]);
   if (!dataRes.ok || !geoRes.ok) {
-    throw new Error('dataset fetch failed');
+    throw new Error(
+      `dataset fetch failed: demo.json HTTP ${dataRes.status}, demo-segments.geojson HTTP ${geoRes.status}`
+    );
   }
   // Parse with the standard JSON parser only — never eval/dynamic evaluation.
   state.data = await dataRes.json();
@@ -672,6 +674,7 @@ async function init() {
   try {
     await loadDataset();
   } catch (err) {
+    console.error('[demo] dataset load failed:', err);
     show(el('error-state'));
     return;
   }
