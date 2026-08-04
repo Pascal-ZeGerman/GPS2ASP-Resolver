@@ -277,7 +277,6 @@ async def resolve_group(
     if isinstance(on_streets, str):
         on_streets = [on_streets]
     records: list[dict] = []
-    query_count = 0
     variants: list[str] = []
     seen_variants: set[str] = set()
     for on_street in on_streets:
