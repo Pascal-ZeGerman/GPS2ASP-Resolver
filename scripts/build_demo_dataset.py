@@ -138,7 +138,7 @@ def build_sensor_shapes(result) -> dict:
         next_move_attrs["schedule_summary"] = result.schedule.summary
         if result.on_street is not None:
             next_move_attrs["street_name"] = result.on_street
-        if result.from_street and result.to_street:
+        if result.from_street is not None and result.to_street is not None:
             next_move_attrs["cross_streets"] = (
                 f"{result.from_street} to {result.to_street}"
             )
