@@ -40,7 +40,7 @@ from pathlib import Path
 from shapely import wkt
 
 from gps2asp import resolve_asp
-from gps2asp.dataset_common import TO_WGS84, bounded_gather
+from gps2asp.dataset_common import SIDE_LABELS, TO_WGS84, bounded_gather
 from gps2asp.dataset_common import borough_name as _borough_name
 from gps2asp.resolver.exceptions import (
     IndexNotFoundError,
@@ -51,14 +51,6 @@ from gps2asp.resolver.spatial_index import SpatialIndex
 from gps2asp.schedule.models import ASPActiveNow, ScheduleFound
 from gps2asp.schedule.next_move import NYC_TZ
 from gps2asp.signs.exceptions import IncompleteResultsError, SODAAPIError
-
-# side_of_street letter -> display label (mirrors sensor._SIDE_LABELS).
-_SIDE_LABELS: dict[str, str] = {
-    "N": "North side",
-    "S": "South side",
-    "E": "East side",
-    "W": "West side",
-}
 
 # Hand-picked demo coordinates. Includes the canonical Prospect Pl regression
 # case, a point expected to have no ASP restrictions, and one deliberately
@@ -129,7 +121,7 @@ def build_sensor_shapes(result) -> dict:
     """
     borough = _borough_name(result.borocode)
     side = result.side_of_street
-    side_label = _SIDE_LABELS.get(side) if side is not None else None
+    side_label = SIDE_LABELS.get(side) if side is not None else None
     has_schedule = isinstance(result.schedule, (ScheduleFound, ASPActiveNow))
 
     # --- Next Move Time sensor (primary, user-facing) ---
@@ -238,7 +230,7 @@ def build_point_entry(result, lat: float, lon: float) -> dict:
         "from_street": result.from_street,
         "to_street": result.to_street,
         "side_of_street": side,
-        "side_label": _SIDE_LABELS.get(side) if side is not None else None,
+        "side_label": SIDE_LABELS.get(side) if side is not None else None,
         "confidence": result.confidence,
         "borocode": result.borocode,
         "borough": _borough_name(result.borocode),

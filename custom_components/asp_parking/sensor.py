@@ -31,6 +31,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
+from .gps2asp.dataset_common import SIDE_LABELS as _SIDE_LABELS
 from .gps2asp.schedule.models import (
     AllUnparseable,
     ASPActiveNow,
@@ -44,20 +45,12 @@ from .const import CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT, DOMAIN, VERSION
 from .coordinator import ASPParkingCoordinator
 from .util import now_ha_local
 
-
-# Phase 36 SENSOR-01: cardinal-direction → human-readable label mapping.
-# Mirrors the _BOROUGH_NAMES precedent in coordinator.py:117 (typed dict[str, str],
-# module level, hardcoded English). Used by ASPNextMoveTimeSensor and
-# ASPResolvedStreetSensor to surface a display-friendly 'side_label' attribute
-# alongside the raw 'side_of_street' single-letter code (which remains unchanged
-# for backward compatibility). Unrecognized values cause the side_label key to
-# be omitted entirely (not inserted as None) — per locked SPEC edge case.
-_SIDE_LABELS: dict[str, str] = {
-    "N": "North side",
-    "S": "South side",
-    "E": "East side",
-    "W": "West side",
-}
+# Phase 36 SENSOR-01: cardinal-direction → human-readable label mapping. Used
+# by ASPNextMoveTimeSensor and ASPResolvedStreetSensor to surface a
+# display-friendly 'side_label' attribute alongside the raw 'side_of_street'
+# single-letter code (which remains unchanged for backward compatibility).
+# Unrecognized values cause the side_label key to be omitted entirely (not
+# inserted as None) — per locked SPEC edge case.
 
 
 async def async_setup_entry(

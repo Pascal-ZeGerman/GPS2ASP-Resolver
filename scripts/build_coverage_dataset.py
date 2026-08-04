@@ -55,6 +55,7 @@ from gps2asp.dataset_common import (
     bounded_gather,
     load_segment_records_with_raw_count,
 )
+from gps2asp.resolver.confidence import DEFAULT_CONFIDENCE_THRESHOLD
 from gps2asp.schedule.next_move import NYC_TZ
 from gps2asp.signs import _normalize_street, materialize_cached_records
 from gps2asp.signs.client import SODAClient
@@ -91,16 +92,16 @@ CONFIDENCE_BY_LEVEL: dict[int, float] = {1: 0.90, 2: 0.66, 3: 0.00, 0: 0.00}
 
 # The ONE half-open partition rule of the closed interval [0, 1]. Each tier owns
 # [lower, upper): lower-inclusive, upper-exclusive — EXCEPT the top tier, which is
-# inclusive of 1.0 so a perfect score is never orphaned. 0.33 is anchored to the
-# resolver's DEFAULT_CONFIDENCE_THRESHOLD ("resolved" floor), so 0.33 lands in
-# "low", never "unresolved". The tier NAME (not just a color) is the downstream
-# channel: legend labels + per-tier marker radius (42-03/42-04), giving a
-# non-hue signal for colorblind accessibility (T-42-05). Ordered high -> low so
-# the first matching lower bound wins.
+# inclusive of 1.0 so a perfect score is never orphaned. DEFAULT_CONFIDENCE_THRESHOLD
+# is anchored to the resolver's "resolved" floor, so it lands in "low", never
+# "unresolved". The tier NAME (not just a color) is the downstream channel: legend
+# labels + per-tier marker radius (42-03/42-04), giving a non-hue signal for
+# colorblind accessibility (T-42-05). Ordered high -> low so the first matching
+# lower bound wins.
 TIER_BOUNDS: tuple[tuple[float, str], ...] = (
     (0.75, "high"),
     (0.50, "medium"),
-    (0.33, "low"),
+    (DEFAULT_CONFIDENCE_THRESHOLD, "low"),
     (0.00, "unresolved"),
 )
 
