@@ -8,6 +8,11 @@ pyproj/asyncio dumper plumbing, which HA never uses.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .schedule.models import TimeWindow
+
 # CSCL borough code -> human name. Single source of truth shared by
 # coordinator.py and both offline dataset dumpers so the three never drift.
 BOROUGH_NAMES: dict[str, str] = {
@@ -34,3 +39,20 @@ SIDE_LABELS: dict[str, str] = {
     "E": "East side",
     "W": "West side",
 }
+
+
+def cleaning_day_names(windows: "list[TimeWindow] | tuple[TimeWindow, ...]") -> list[str]:
+    """Ordered-unique cleaning-day display names from a schedule's windows.
+
+    ``windows`` is expected pre-sorted by day then start_time (the
+    ``WeeklySchedule.windows`` contract), so deduplicating by first
+    appearance yields the same day order as sorting the unique day values.
+    Single source of truth shared by sensor.py, build_demo_dataset.py, and
+    the HA-independent test mirror so the three never drift.
+    """
+    seen: list[str] = []
+    for window in windows:
+        name = window.day.name.title()
+        if name not in seen:
+            seen.append(name)
+    return seen

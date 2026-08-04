@@ -39,6 +39,7 @@ import logging
 import math
 import sys
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 from shapely import wkt
@@ -57,7 +58,7 @@ from gps2asp.dataset_common import (
 )
 from gps2asp.resolver.confidence import DEFAULT_CONFIDENCE_THRESHOLD
 from gps2asp.schedule.next_move import NYC_TZ
-from gps2asp.signs import _normalize_street, materialize_cached_records
+from gps2asp.signs import materialize_cached_records, normalize_street
 from gps2asp.signs.client import SODAClient
 from gps2asp.signs.normalize import (
     collapse_whitespace_upper,
@@ -176,6 +177,7 @@ def derive_segment_sides(geometry_wkt: str) -> tuple[str, str]:
     return _sides_from_line(wkt.loads(geometry_wkt))
 
 
+@lru_cache(maxsize=None)
 def group_key(full_street_name: str, side: str) -> tuple[str, str]:
     """Canonical dedup key ``(normalized_street, side)`` for a block face.
 
@@ -184,6 +186,11 @@ def group_key(full_street_name: str, side: str) -> tuple[str, str]:
     Broadway / "W  THAMES ST" all fold onto a single street key. Pairing it with
     the derived ``side`` gives two recoverable keys per segment (one per curb),
     guaranteeing no segment is double-counted or dropped across group boundaries.
+
+    Cached (``lru_cache``): the same few thousand distinct NYC street names
+    repeat across ~105K segments, so memoizing here turns each distinct
+    ``(street, side)`` pair's regex-heavy normalization into a one-time cost
+    instead of re-running it for every segment that touches that street.
 
     Args:
         full_street_name: The block's on-street / full street name (CSCL form).
@@ -351,7 +358,7 @@ def _exact_cross_match(record: dict, from_street: str, to_street: str) -> bool:
 def _street_key(raw: str) -> str | None:
     """Canonical normalized-street key for cross-street indexing, or ``None``.
 
-    Reuses the resolver's own ``_normalize_street`` so this dumper's
+    Reuses the resolver's own public ``normalize_street`` so this dumper's
     soda_level classification can never silently drift from what the live
     resolver would return for the same record, plus an empty-field guard
     (BUG-S-003): an empty raw field never produces an indexable key, so it
@@ -359,7 +366,7 @@ def _street_key(raw: str) -> str | None:
     """
     if not raw:
         return None
-    return _normalize_street(raw)
+    return normalize_street(raw)
 
 
 def index_group_records(group_records: list[dict]) -> dict[tuple[str, str], list[dict]]:
@@ -387,17 +394,26 @@ def index_group_records(group_records: list[dict]) -> dict[tuple[str, str], list
     return index
 
 
-def _street_variants(street: str) -> set[str]:
-    """Upper/stripped ``name_variants`` set for one street, or empty if blank."""
+@lru_cache(maxsize=None)
+def _street_variants(street: str) -> frozenset[str]:
+    """Upper/stripped ``name_variants`` set for one street, or empty if blank.
+
+    Cached (``lru_cache``): the same few thousand distinct NYC street names
+    repeat heavily across adjacent blocks in the index, so memoizing here
+    turns each distinct name's ``name_variants`` pipeline into a one-time
+    cost instead of re-running it for every segment that touches that street.
+    Returns a ``frozenset`` (rather than ``set``) so the cached object can
+    never be mutated by a caller.
+    """
     if not street:
-        return set()
-    return {v.upper().strip() for v in name_variants(street)}
+        return frozenset()
+    return frozenset(v.upper().strip() for v in name_variants(street))
 
 
 def _cross_street_candidates(
     group_index: dict[tuple[str, str], list[dict]],
-    from_variants: set[str],
-    to_variants: set[str],
+    from_variants: frozenset[str],
+    to_variants: frozenset[str],
 ) -> list[dict]:
     """Records whose cross streets match ``(from_variants, to_variants)``, either order.
 
@@ -438,8 +454,8 @@ def resolve_side(
     on_street: str,
     from_street: str,
     to_street: str,
-    from_variants: set[str],
-    to_variants: set[str],
+    from_variants: frozenset[str],
+    to_variants: frozenset[str],
     side: str,
     now: datetime,
 ) -> tuple[int, ScheduleResult]:

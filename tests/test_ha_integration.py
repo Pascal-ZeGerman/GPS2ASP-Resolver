@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 from freezegun import freeze_time
 
 from gps2asp.dataset_labels import SIDE_LABELS as _SIDE_LABELS
+from gps2asp.dataset_labels import cleaning_day_names
 from gps2asp.schedule.models import (
     ASPActiveNow,
     ASPDay,
@@ -177,8 +178,7 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
     if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
         weekly = schedule.weekly_schedule
 
-        day_names = [d.name.title() for d in sorted({w.day for w in weekly.windows})]
-        attrs["cleaning_days"] = day_names
+        attrs["cleaning_days"] = cleaning_day_names(weekly.windows)
 
         # time_window_start/end: mirror production logic — use next_window (the
         # temporally-next window), not weekly.windows[0] (day-sorted first entry).

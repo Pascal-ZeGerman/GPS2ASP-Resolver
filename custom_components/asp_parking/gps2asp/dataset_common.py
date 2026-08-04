@@ -16,7 +16,12 @@ from typing import TypeVar
 
 from pyproj import Transformer
 
-from .dataset_labels import BOROUGH_NAMES, SIDE_LABELS, borough_name
+from .dataset_labels import (
+    BOROUGH_NAMES,
+    SIDE_LABELS,
+    borough_name,
+    cleaning_day_names,
+)
 from .resolver.spatial_index import SpatialIndex
 
 __all__ = [
@@ -25,6 +30,7 @@ __all__ = [
     "TO_WGS84",
     "bounded_gather",
     "borough_name",
+    "cleaning_day_names",
     "load_segment_records_with_raw_count",
 ]
 

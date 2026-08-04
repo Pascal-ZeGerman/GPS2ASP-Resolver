@@ -42,6 +42,7 @@ from shapely import wkt
 from gps2asp import resolve_asp
 from gps2asp.dataset_common import SIDE_LABELS, TO_WGS84, bounded_gather
 from gps2asp.dataset_common import borough_name as _borough_name
+from gps2asp.dataset_common import cleaning_day_names
 from gps2asp.resolver.exceptions import (
     IndexNotFoundError,
     NoSegmentFoundError,
@@ -94,19 +95,12 @@ def reproject_wkt_to_wgs84(geometry_wkt: str) -> list[list[float]]:
 def _cleaning_day_names(result) -> list[str]:
     """Ordered unique cleaning-day names from a ScheduleFound/ASPActiveNow schedule."""
     schedule = result.schedule
-    if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
-        # Use the FULL merged weekly schedule (every cleaning day), not just the
-        # single in-progress active_window — otherwise cleaning_days silently
-        # drops days the summary text lists (BUG-ASPActiveNow-full-weekly).
-        windows = schedule.weekly_schedule.windows
-    else:
+    if not isinstance(schedule, (ScheduleFound, ASPActiveNow)):
         return []
-    seen: list[str] = []
-    for window in windows:
-        name = window.day.name.title()
-        if name not in seen:
-            seen.append(name)
-    return seen
+    # Use the FULL merged weekly schedule (every cleaning day), not just the
+    # single in-progress active_window — otherwise cleaning_days silently
+    # drops days the summary text lists (BUG-ASPActiveNow-full-weekly).
+    return cleaning_day_names(schedule.weekly_schedule.windows)
 
 
 def build_sensor_shapes(result) -> dict:
@@ -265,6 +259,20 @@ async def _segment_coords(segment_id) -> list[list[float]] | None:
 _DUMP_POINT_FAILURE_EXCEPTIONS: tuple[type[Exception], ...] = (
     OutsideNYCError,
     NoSegmentFoundError,
+    IndexNotFoundError,
+    SODAAPIError,
+    IncompleteResultsError,
+)
+
+# Subset of _DUMP_POINT_FAILURE_EXCEPTIONS that names a transient,
+# infrastructural build-time failure (a flaky SODA call, a not-yet-built
+# index) rather than a genuine coverage gap. OutsideNYCError/NoSegmentFoundError
+# are deliberately excluded: the point really is outside NYC or has no nearby
+# indexed segment, and regenerating the dataset would not change that. Emitted
+# into demo.json (see main()) so docs/demo/app.js's isTransientFailure reads
+# this set from the dataset instead of hand-maintaining a vendored mirror that
+# could silently drift from it.
+_TRANSIENT_FAILURE_EXCEPTIONS: tuple[type[Exception], ...] = (
     IndexNotFoundError,
     SODAAPIError,
     IncompleteResultsError,
@@ -468,6 +476,13 @@ def main(argv: list[str] | None = None) -> int:
         "generation_date": datetime.now(NYC_TZ).date().isoformat(),
         "profiles": profiles,
         "points": {key: payload["entry"] for key, payload in resolved.items()},
+        # Emitted so the client (docs/demo/app.js isTransientFailure) can read
+        # the transient-vs-coverage-gap split from the dataset instead of
+        # hand-maintaining a vendored mirror of _TRANSIENT_FAILURE_EXCEPTIONS
+        # that can silently drift from it.
+        "transient_failure_statuses": sorted(
+            exc.__name__ for exc in _TRANSIENT_FAILURE_EXCEPTIONS
+        ),
     }
 
     # One GeoJSON LineString feature per resolved segment (WGS84).

@@ -32,6 +32,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .gps2asp.dataset_labels import SIDE_LABELS as _SIDE_LABELS
+from .gps2asp.dataset_labels import cleaning_day_names
 from .gps2asp.schedule.models import (
     AllUnparseable,
     ASPActiveNow,
@@ -267,10 +268,7 @@ class ASPNextMoveTimeSensor(SensorEntity):
         if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
             weekly = schedule.weekly_schedule
 
-            day_names = [
-                d.name.title() for d in sorted({w.day for w in weekly.windows})
-            ]
-            attrs["cleaning_days"] = day_names
+            attrs["cleaning_days"] = cleaning_day_names(weekly.windows)
 
             # time_window_start/end: use next_window (the temporally-next window)
             # rather than windows[0] (the day-sorted first window), so these

@@ -105,6 +105,11 @@ function hhmmToMinutes(hhmm) {
   return h * 60 + m;
 }
 
+/** JS getUTCDay() (Sun=0..Sat=6) -> Python ASPDay convention (Mon=0..Sun=6). */
+function jsDayToPyDay(date) {
+  return (date.getUTCDay() + 6) % 7;
+}
+
 /**
  * Next upcoming ASP window computed from the stored weekly pattern.
  *
@@ -133,10 +138,7 @@ function computeNextMove(weekly) {
 
   for (let offset = 0; offset < 8; offset++) {
     const candidate = new Date(baseMs + offset * 86400000);
-    // JS getDay()/getUTCDay() is Sunday=0..Saturday=6; convert to the Python
-    // Mon=0..Sun=6 ASPDay convention via (getUTCDay() + 6) % 7.
-    const jsDay = candidate.getUTCDay();
-    const pyDay = (jsDay + 6) % 7;
+    const pyDay = jsDayToPyDay(candidate);
 
     // windows_for_day equivalent: preserve stored order (mirrors Python).
     const dayWindows = weekly.filter((w) => w.day === pyDay);
@@ -204,16 +206,24 @@ function isResolvedNoSchedule(point) {
   return !hasSchedule(point) && point.status !== 'no_asp' && point.segment_id != null;
 }
 
+/** Transient-failure status names (SODAAPIError etc.). Overwritten from
+ * demo.json's own `transient_failure_statuses` field at load time (see
+ * init()) so this can never drift from build_demo_dataset.py's
+ * _TRANSIENT_FAILURE_EXCEPTIONS — the dataset IS the single source of truth,
+ * mirroring docs/explorer/app.js's TIER_BOUNDS sync. This default covers
+ * demo.json snapshots built before the field existed. */
+let TRANSIENT_FAILURE_STATUSES = new Set([
+  'SODAAPIError', 'IncompleteResultsError', 'IndexNotFoundError',
+]);
+
 /** Whether a point's status names a transient/infrastructural build-time
  * failure (a flaky SODA call, a not-yet-built index) rather than a genuine
  * coverage gap (OutsideNYCError/NoSegmentFoundError — the point really is
  * outside NYC or has no nearby indexed segment). Regenerating the dataset
  * would likely resolve a transient failure; it would not resolve a true
- * coverage gap. See build_demo_dataset.py's _DUMP_POINT_FAILURE_EXCEPTIONS. */
+ * coverage gap. See build_demo_dataset.py's _TRANSIENT_FAILURE_EXCEPTIONS. */
 function isTransientFailure(point) {
-  return point.status === 'SODAAPIError'
-    || point.status === 'IncompleteResultsError'
-    || point.status === 'IndexNotFoundError';
+  return TRANSIENT_FAILURE_STATUSES.has(point.status);
 }
 
 /* ==========================================================================
@@ -421,7 +431,7 @@ function renderCalendar(point, move) {
   // Seven cells, one per upcoming weekday (offsets 0..6 cover all 7 weekdays).
   for (let offset = 0; offset < 7; offset++) {
     const candidate = new Date(baseMs + offset * 86400000);
-    const pyDay = (candidate.getUTCDay() + 6) % 7;
+    const pyDay = jsDayToPyDay(candidate);
 
     const cell = document.createElement('div');
     cell.className = 'calendar-day';
@@ -668,6 +678,11 @@ async function init() {
 
   setText('data-freshness',
     `Demo data snapshot: ${state.data.generation_date}. Live results may differ.`);
+
+  if (Array.isArray(state.data.transient_failure_statuses)
+    && state.data.transient_failure_statuses.length > 0) {
+    TRANSIENT_FAILURE_STATUSES = new Set(state.data.transient_failure_statuses);
+  }
 
   initMap();
   addMarkers();
