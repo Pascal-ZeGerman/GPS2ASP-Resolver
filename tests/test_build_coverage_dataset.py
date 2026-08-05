@@ -224,10 +224,11 @@ async def test_resolve_group_tries_both_name_variants():
     # SODA-expanded form ("3 AVENUE") returns nothing, simulating a street
     # whose live SODA on_street field is stored in the unexpanded form.
     client = _StubClient(records_by_query={"3 AVE|N": [record]})
-    records, query_count = await resolve_group(client, "3 AVE", "N")
+    records, query_count, failed_count = await resolve_group(client, "3 AVE", "N")
 
     assert records == [record]
     assert query_count == 2  # one query per name_variants() form
+    assert failed_count == 0  # empty result, not an error
     assert "3 AVE|N" in client.calls
     assert "3 AVENUE|N" in client.calls  # canonical form tried too, even if empty
 
@@ -244,15 +245,55 @@ async def test_resolve_group_accepts_list_of_streets_dedupes_variants():
     }
     # Only the second raw spelling's own query has records.
     client = _StubClient(records_by_query={"E  100 ST|N": [record]})
-    records, query_count = await resolve_group(client, ["E 100 ST", "E  100 ST"], "N")
+    records, query_count, failed_count = await resolve_group(
+        client, ["E 100 ST", "E  100 ST"], "N"
+    )
 
     assert records == [record]
     # 3 distinct variants total: shared canonical "EAST  100 STREET" (queried
     # once, not once per spelling) + each spelling's own raw form.
     assert query_count == 3
+    assert failed_count == 0
     assert "E 100 ST|N" in client.calls
     assert "E  100 ST|N" in client.calls
     assert client.calls.count("EAST  100 STREET|N") == 1
+
+
+class _OneVariantErrorsClient(_StubClient):
+    """Like _StubClient, but a chosen query raises SODAAPIError instead of
+    returning records — for testing resolve_group's error/empty distinction."""
+
+    def __init__(self, failing_query: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._failing_query = failing_query
+
+    async def fetch_signs(self, query: str) -> list[dict]:
+        if query == self._failing_query:
+            self.calls.append(query)
+            raise bcd.SODAAPIError(503, "service unavailable")
+        return await super().fetch_signs(query)
+
+
+async def test_resolve_group_reports_errored_variants_separately_from_empty():
+    """BUG-C-001 regression: a variant query that ERRORS (SODAAPIError) must be
+    counted in failed_count, distinct from a variant that just returned no
+    records — otherwise a SODA outage is indistinguishable from a genuine
+    no-coverage street at every layer above resolve_group."""
+    record = {
+        "sign_description": _PARSEABLE_SIGN,
+        "from_street": "1 ST",
+        "to_street": "2 ST",
+    }
+    # "3 AVE|N" returns real records (success); "3 AVENUE|N" (the canonical
+    # form, also queried) errors instead of returning [].
+    client = _OneVariantErrorsClient(
+        "3 AVENUE|N", records_by_query={"3 AVE|N": [record]}
+    )
+    records, query_count, failed_count = await resolve_group(client, "3 AVE", "N")
+
+    assert records == [record]
+    assert query_count == 2
+    assert failed_count == 1
 
 
 async def test_group_query_tries_every_distinct_raw_spelling_in_group():
@@ -322,6 +363,7 @@ def test_main_writes_canonical_coverage_json(tmp_path, monkeypatch):
         "boroughs",
         "tier_bounds",
         "query_count",
+        "query_failures",
         "segment_count",
         "segments",
     }
@@ -330,8 +372,40 @@ def test_main_writes_canonical_coverage_json(tmp_path, monkeypatch):
     assert len(data["segments"]) == 2
     # query_count is the distinct-group count, strictly below the segment count.
     assert data["query_count"] < data["segment_count"] * 2
+    assert data["query_failures"] == 0
     for entry in data["segments"]:
         assert set(entry.keys()) == _CANONICAL_ENTRY_KEYS
+
+
+class _AllErrorsClient:
+    """Every SODA fetch raises SODAAPIError — simulates a systemic outage
+    (e.g. missing/invalid NYC_OPEN_DATA_APP_TOKEN triggering rate-limiting on
+    every request) so main()'s all-queries-failed self-check can be exercised
+    without a real network call."""
+
+    def build_on_street_query(self, on_street: str, side: str) -> str:
+        return f"{on_street}|{side}"
+
+    async def fetch_signs(self, query: str) -> list[dict]:
+        raise bcd.SODAAPIError(429, "rate limited")
+
+
+def test_main_refuses_to_write_when_every_soda_query_fails(tmp_path, monkeypatch):
+    """BUG-C-001 regression: a systemic SODA outage must abort the build with
+    a non-zero exit code, not silently write a coverage.json where every
+    segment looks like a genuine (rather than erroring) no-match."""
+    seg_path = tmp_path / "segments.json"
+    seg_path.write_text(json.dumps({"1": _seg("BROADWAY", "1 ST", "2 ST")}))
+    out_dir = tmp_path / "out"
+    monkeypatch.setattr(bcd, "SODAClient", lambda *a, **k: _AllErrorsClient())
+
+    try:
+        rc = bcd.main(["--segments", str(seg_path), "--out-dir", str(out_dir)])
+    finally:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    assert rc == 1
+    assert not (out_dir / "coverage.json").exists()
 
 
 def test_grouping_key_and_side_derivation():

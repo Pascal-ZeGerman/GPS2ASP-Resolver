@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import random
+import sys
 import time
 from pathlib import Path
 
@@ -195,23 +196,46 @@ def generate_fixtures(
     return fixtures
 
 
+def _write_fixtures(fixtures: list[dict], path: Path, borough_label: str) -> bool:
+    """Writes ``fixtures`` to ``path`` unless empty. Returns whether it wrote.
+
+    A wholesale geocoding failure (e.g. GeoSearch API down/rate-limited for
+    the whole run) makes ``generate_fixtures`` return ``[]``; writing that
+    unconditionally would silently overwrite a real, committed fixture file
+    with an empty one — mirrors the safety net ``geocode_fixtures.main``
+    already has for the same failure mode.
+    """
+    if not fixtures:
+        print(
+            f"Error: Zero {borough_label} fixtures geocoded. Output file NOT "
+            "written to avoid overwriting existing fixtures.",
+            file=sys.stderr,
+        )
+        return False
+    with open(path, "w") as f:
+        json.dump(fixtures, f, indent=2)
+    print(f"\nWrote {len(fixtures)} {borough_label} fixtures to {path}")
+    return True
+
+
 def main() -> None:
     out_dir = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
     with httpx.Client(timeout=10.0) as client:
         print("\n=== Generating Queens fixtures ===")
         queens = generate_fixtures(client, QUEENS_ADDRESSES, "Queens", 50)
-        queens_path = out_dir / "queens_coverage_50.json"
-        with open(queens_path, "w") as f:
-            json.dump(queens, f, indent=2)
-        print(f"\nWrote {len(queens)} Queens fixtures to {queens_path}")
+        queens_ok = _write_fixtures(
+            queens, out_dir / "queens_coverage_50.json", "Queens"
+        )
 
         print("\n=== Generating Manhattan fixtures ===")
         manhattan = generate_fixtures(client, MANHATTAN_ADDRESSES, "Manhattan", 50)
-        manhattan_path = out_dir / "manhattan_coverage_50.json"
-        with open(manhattan_path, "w") as f:
-            json.dump(manhattan, f, indent=2)
-        print(f"\nWrote {len(manhattan)} Manhattan fixtures to {manhattan_path}")
+        manhattan_ok = _write_fixtures(
+            manhattan, out_dir / "manhattan_coverage_50.json", "Manhattan"
+        )
+
+    if not (queens_ok and manhattan_ok):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

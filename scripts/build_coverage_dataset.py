@@ -60,6 +60,7 @@ from gps2asp.resolver.confidence import DEFAULT_CONFIDENCE_THRESHOLD
 from gps2asp.schedule.next_move import NYC_TZ
 from gps2asp.signs import materialize_cached_records, normalize_street
 from gps2asp.signs.client import SODAClient
+from gps2asp.signs.exceptions import IncompleteResultsError, SODAAPIError
 from gps2asp.signs.normalize import (
     collapse_whitespace_upper,
     name_variants,
@@ -265,7 +266,7 @@ async def resolve_group(
     client: SODAClient,
     on_streets: str | list[str],
     side: str,
-) -> tuple[list[dict], int]:
+) -> tuple[list[dict], int, int]:
     """Issue broad SODA queries for a whole ``(street, side)`` group.
 
     This is the R1 dedup primitive: instead of one exact block query per segment
@@ -295,10 +296,14 @@ async def resolve_group(
         side: Compass side letter ("N", "S", "E", or "W").
 
     Returns:
-        ``(records, query_count)`` — raw SODA record dicts merged across every
-        variant query (``[]`` if every variant query failed or returned
-        nothing), and the number of HTTP queries actually issued (one per
-        distinct ``name_variants`` form across all ``on_streets``).
+        ``(records, query_count, failed_count)`` — raw SODA record dicts merged
+        across every variant query (``[]`` if every variant query failed or
+        returned nothing), the number of HTTP queries actually issued (one per
+        distinct ``name_variants`` form across all ``on_streets``), and how many
+        of those queries errored (SODA outage/rate-limit/incomplete-pagination)
+        rather than genuinely succeeding with zero records — lets the caller
+        tell "this street has no signs" apart from "SODA was unreachable" (see
+        the build-level self-check in ``main``).
     """
     if isinstance(on_streets, str):
         on_streets = [on_streets]
@@ -322,12 +327,17 @@ async def resolve_group(
                 seen_variants.add(variant)
                 variants.append(variant)
 
-    async def _fetch_variant(variant: str) -> list[dict]:
+    async def _fetch_variant(variant: str) -> tuple[list[dict], bool]:
+        """Returns ``(records, failed)``. ``failed`` distinguishes a genuine
+        SODA-reported error (outage/rate-limit/incomplete pagination) from a
+        query that simply had no matching records, so the caller can tell
+        "no coverage here" apart from "SODA was unreachable" instead of both
+        silently collapsing to an empty result (BUG-C-001)."""
         async with _soda_request_semaphore:
             try:
                 query = client.build_on_street_query(variant, side)
-                return await client.fetch_signs(query)
-            except Exception as exc:  # noqa: BLE001 — fail-soft per variant (Pitfall 4)
+                return await client.fetch_signs(query), False
+            except (SODAAPIError, IncompleteResultsError) as exc:
                 logger.warning(
                     "resolve_group: SODA query failed for streets=%r (variant=%r) "
                     "side=%r: %s — treating variant as empty",
@@ -336,13 +346,15 @@ async def resolve_group(
                     side,
                     exc,
                 )
-                return []
+                return [], True
 
     query_count = len(variants)
     variant_results = await asyncio.gather(*(_fetch_variant(v) for v in variants))
-    for variant_records in variant_results:
+    failed_count = 0
+    for variant_records, failed in variant_results:
         records.extend(variant_records)
-    return records, query_count
+        failed_count += failed
+    return records, query_count, failed_count
 
 
 def _exact_cross_match(record: dict, from_street: str, to_street: str) -> bool:
@@ -673,20 +685,22 @@ async def build_coverage(
     # ---- resolve every distinct group concurrently (the R1 dedup) ----
     async def _resolve_one(
         item: tuple[tuple[str, str], list[str]],
-    ) -> tuple[tuple[str, str], list[dict], int]:
+    ) -> tuple[tuple[str, str], list[dict], int, int]:
         gk, group_streets = item
         _, side = gk
-        records, count = await resolve_group(client, group_streets, side)
-        return gk, records, count
+        records, count, failed_count = await resolve_group(client, group_streets, side)
+        return gk, records, count, failed_count
 
     resolved = await bounded_gather(
         distinct_groups.items(), _resolve_one, _GROUP_CONCURRENCY
     )
     group_records: dict[tuple[str, str], list[dict]] = {}
     query_count = 0
-    for gk, records, count in resolved:
+    query_failures = 0
+    for gk, records, count, failed_count in resolved:
         group_records[gk] = records
         query_count += count
+        query_failures += failed_count
 
     # ---- pre-index each group's records once (perf: O(1)-ish per-segment lookup) ----
     group_indexes: dict[tuple[str, str], dict[tuple[str, str], list[dict]]] = {
@@ -734,6 +748,11 @@ async def build_coverage(
         # a "vendored mirror" of TIER_BOUNDS that can silently drift from it.
         "tier_bounds": [[lower, name] for lower, name in TIER_BOUNDS],
         "query_count": query_count,
+        # How many of query_count actually errored (SODA outage/rate-limit/
+        # incomplete pagination) rather than genuinely returning zero records.
+        # Not part of the locked per-segment schema — a build-time-only signal
+        # consumed by main()'s self-check, never surfaced to the explorer UI.
+        "query_failures": query_failures,
         "segment_count": len(segment_entries),
         "segments": segment_entries,
     }
@@ -797,6 +816,25 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"build_coverage_dataset: ERROR — expected {expected_count} segment "
             f"entries but produced {actual}; refusing to write a lossy dataset.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Build-time self-check (BUG-C-001): a per-variant SODA error (outage,
+    # rate-limit, bad/missing NYC_OPEN_DATA_APP_TOKEN) fails soft into an
+    # empty result identical to a genuine "no signs on this street" — so a
+    # systemic outage would otherwise write a coverage.json where every
+    # segment is silently "unresolved" with no error and exit code 0. If
+    # EVERY issued query errored, this can't be a handful of scattered
+    # streets with no coverage; refuse to overwrite the committed dataset.
+    query_count = dataset["query_count"]
+    query_failures = dataset["query_failures"]
+    if query_count > 0 and query_failures == query_count:
+        print(
+            f"build_coverage_dataset: ERROR — all {query_count} SODA queries "
+            "failed (outage, rate limit, or missing/invalid "
+            "NYC_OPEN_DATA_APP_TOKEN?); refusing to write an all-unresolved "
+            "dataset.",
             file=sys.stderr,
         )
         return 1
