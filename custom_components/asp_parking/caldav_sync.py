@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote as _url_quote
+from urllib.parse import urlparse
 
 import caldav  # top-level package — present on all caldav versions
 from caldav.lib import error as caldav_error
@@ -547,17 +548,53 @@ def build_vevent_ical(
 async def _get_calendar(client: Any, calendar_url: str) -> Any:
     """Resolve a calendar by URL using the authenticated principal.
 
-    Uses ``principal.calendar(cal_url=...)`` for single-calendar lookup
-    (no extra collection roundtrip — the principal already knows the
-    calendar-home-set URL after ``get_principal``).
+    Tries ``principal.calendar(cal_url=...)`` first for single-calendar
+    lookup (no extra collection roundtrip — the principal already knows
+    the calendar-home-set URL after ``get_principal``). This is a
+    **synchronous** constructor in both caldav 2.x (via the
+    ``_CompatPrincipal`` shim) and caldav 3.x (``AsyncPrincipal.calendar``):
+    it builds a Calendar object from the URL without any network I/O, so
+    it must NOT be awaited.
 
-    Note: ``principal.calendar()`` is a **synchronous** constructor in both
-    caldav 2.x (via the ``_CompatPrincipal`` shim) and caldav 3.x
-    (``AsyncPrincipal.calendar``). It builds a Calendar object from the URL
-    without any network I/O, so it must NOT be awaited.
+    iCloud shards each account's calendar data onto a per-account host
+    (e.g. ``p117-caldav.icloud.com``) that differs from the generic login
+    entry point (``caldav.icloud.com``) ``client`` is constructed with.
+    caldav 2.x's ``Principal.calendar(cal_url=...)`` resolves the URL via
+    a purely local ``self.client.url.join(cal_url)`` (caldav/lib/url.py)
+    which raises ``ValueError`` whenever the two hosts differ — always,
+    for iCloud, since the stored ``calendar_url`` (captured during
+    ``list_calendars()``, which follows the redirect over the network) is
+    on the sharded host while ``client.url`` stays pinned to the login
+    host. On that specific failure, fall back to ``principal.calendars()``
+    — a real network request that also follows the redirect, so the
+    returned Calendar objects carry the correct host — and match by URL
+    path, the one thing stable across iCloud's host sharding.
+
+    Only the specific ``URL.join`` cross-host failure triggers the
+    fallback — any other ``ValueError`` (e.g. a ``None`` client, or a
+    calendar_url containing spaces) is a genuine, unrelated bug and must
+    propagate unchanged rather than being misreported as "no calendar
+    found".
+
+    Raises:
+        CalDAVWriteError: if the fallback finds no calendar whose path
+            matches ``calendar_url``.
     """
     principal = await client.get_principal()
-    return principal.calendar(cal_url=calendar_url)
+    try:
+        return principal.calendar(cal_url=calendar_url)
+    except ValueError as exc:
+        if "can't be joined with" not in str(exc):
+            raise
+        target_path = urlparse(calendar_url).path.rstrip("/")
+        calendars = await principal.calendars()
+        for cal in calendars:
+            if urlparse(str(cal.url)).path.rstrip("/") == target_path:
+                return cal
+        raise CalDAVWriteError(
+            f"No calendar found matching path {target_path!r} on this "
+            f"principal (configured calendar_url={calendar_url!r})"
+        ) from exc
 
 
 def _build_event_url(calendar_url: Any, uid: str) -> str:
