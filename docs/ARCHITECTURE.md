@@ -504,6 +504,16 @@ Note: `CONF_DEBUG_ENABLED` has been removed from `entry.options` (Phase 29). The
 .venv/bin/python -m pip install -e ".[build]"
 ```
 
+Enable the tracked git hooks (`.githooks/`) once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This runs `scripts/sync_vendored.py` automatically before any commit touching
+`src/gps2asp/`, so the vendored copy under `custom_components/asp_parking/gps2asp/`
+never drifts out of sync (the same check `.github/workflows/vendor-guard.yml` enforces in CI).
+
 ### Build the Spatial Index
 
 Required before any resolver calls. Takes approximately 3–5 minutes and needs internet
