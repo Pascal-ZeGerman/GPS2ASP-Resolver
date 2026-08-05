@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import json
 import random
-import sys
 import time
 from pathlib import Path
-from urllib.request import urlopen, Request
-from urllib.parse import quote
+
+import httpx
+
+from geocode_fixtures import geocode_address
 
 # Queens: neighborhoods with street grids
 QUEENS_ADDRESSES = [
@@ -165,31 +166,8 @@ MANHATTAN_ADDRESSES = [
 ]
 
 
-def geocode(address: str) -> dict | None:
-    """Geocode using NYC Planning GeoSearch API."""
-    url = f"https://geosearch.planninglabs.nyc/v2/search?text={quote(address)}&size=1"
-    req = Request(url, headers={"User-Agent": "GPS2ASP-Coverage-Audit/1.0"})
-    try:
-        with urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-            features = data.get("features", [])
-            if features:
-                coords = features[0]["geometry"]["coordinates"]
-                label = features[0]["properties"].get("label", address)
-                borough = features[0]["properties"].get("borough", "")
-                return {
-                    "description": label.upper(),
-                    "lat": round(coords[1], 6),
-                    "lon": round(coords[0], 6),
-                    "borough": borough,
-                }
-    except Exception as e:  # noqa: BLE001 — best-effort geocode script, skip and keep going
-        print(f"  Failed to geocode {address}: {e}", file=sys.stderr)
-    return None
-
-
 def generate_fixtures(
-    addresses: list[str], borough_name: str, count: int = 50
+    client: httpx.Client, addresses: list[str], borough_name: str, count: int = 50
 ) -> list[dict]:
     """Geocode addresses and return up to `count` unique-block fixtures."""
     random.shuffle(addresses)
@@ -200,7 +178,7 @@ def generate_fixtures(
         if len(fixtures) >= count:
             break
 
-        result = geocode(addr)
+        result = geocode_address(client, addr, borough_name)
         if not result:
             continue
 
@@ -210,13 +188,7 @@ def generate_fixtures(
             continue
         seen_blocks.add(block_key)
 
-        fixtures.append(
-            {
-                "description": result["description"],
-                "lat": result["lat"],
-                "lon": result["lon"],
-            }
-        )
+        fixtures.append(result)
         print(f"  [{len(fixtures):>2}/{count}] {result['description']}")
         time.sleep(0.15)  # Rate limit
 
@@ -226,19 +198,20 @@ def generate_fixtures(
 def main() -> None:
     out_dir = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
-    print("\n=== Generating Queens fixtures ===")
-    queens = generate_fixtures(QUEENS_ADDRESSES, "Queens", 50)
-    queens_path = out_dir / "queens_coverage_50.json"
-    with open(queens_path, "w") as f:
-        json.dump(queens, f, indent=2)
-    print(f"\nWrote {len(queens)} Queens fixtures to {queens_path}")
+    with httpx.Client(timeout=10.0) as client:
+        print("\n=== Generating Queens fixtures ===")
+        queens = generate_fixtures(client, QUEENS_ADDRESSES, "Queens", 50)
+        queens_path = out_dir / "queens_coverage_50.json"
+        with open(queens_path, "w") as f:
+            json.dump(queens, f, indent=2)
+        print(f"\nWrote {len(queens)} Queens fixtures to {queens_path}")
 
-    print("\n=== Generating Manhattan fixtures ===")
-    manhattan = generate_fixtures(MANHATTAN_ADDRESSES, "Manhattan", 50)
-    manhattan_path = out_dir / "manhattan_coverage_50.json"
-    with open(manhattan_path, "w") as f:
-        json.dump(manhattan, f, indent=2)
-    print(f"\nWrote {len(manhattan)} Manhattan fixtures to {manhattan_path}")
+        print("\n=== Generating Manhattan fixtures ===")
+        manhattan = generate_fixtures(client, MANHATTAN_ADDRESSES, "Manhattan", 50)
+        manhattan_path = out_dir / "manhattan_coverage_50.json"
+        with open(manhattan_path, "w") as f:
+            json.dump(manhattan, f, indent=2)
+        print(f"\nWrote {len(manhattan)} Manhattan fixtures to {manhattan_path}")
 
 
 if __name__ == "__main__":
