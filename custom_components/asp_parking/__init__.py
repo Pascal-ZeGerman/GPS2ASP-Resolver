@@ -167,7 +167,7 @@ async def _async_download_index(hass: HomeAssistant) -> None:
             title="ASP Parking: Setup Error",
             notification_id="asp_parking_index_error",
         )
-        logger.error("ASP Parking: index download failed: %s", err)
+        logger.exception("ASP Parking: index download failed: %s", err)
         raise
 
 
@@ -240,7 +240,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         coordinator = ASPParkingCoordinator(hass, entry)
     except ImportError as err:
-        logger.error(
+        logger.exception(
             "ASP Parking: gps2asp vendored package is incomplete -- "
             "reinstall via HACS. (%s)",
             err,
@@ -265,7 +265,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await coordinator.async_start()
     except Exception as err:  # noqa: BLE001 — defence-in-depth: catch all startup failures
-        logger.error(
+        logger.exception(
             "ASP Parking: coordinator.async_start() raised %s: %s; "
             "see HA logs for traceback",
             type(err).__name__,

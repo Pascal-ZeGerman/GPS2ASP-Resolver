@@ -183,7 +183,7 @@ class _CompatAsyncDAVClient:
             try:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, client.close)
-            except Exception:
+            except Exception:  # noqa: BLE001 — close() must never mask the original error
                 # Use DEBUG when we're already inside exception handling (e.g.
                 # CancelledError during HA shutdown) — close failures in that
                 # context are expected and not user-actionable.  Use WARNING

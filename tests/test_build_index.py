@@ -361,7 +361,7 @@ class TestPropagateAspToInteriorBlocks:
             ("BROADWAY", "72 STREET", "75 STREET", "S"),
         }
 
-        expanded, stats = _propagate_asp_to_interior_blocks(
+        expanded, _stats = _propagate_asp_to_interior_blocks(
             asp_lookup, adjacency, intersection_index, cross_streets, gdf_street_names
         )
 
@@ -390,7 +390,7 @@ class TestPropagateAspToInteriorBlocks:
             ("BROADWAY", "99 STREET", "105 STREET", "N"),  # Not in intersection_index
         }
 
-        expanded, stats = _propagate_asp_to_interior_blocks(
+        expanded, _stats = _propagate_asp_to_interior_blocks(
             asp_lookup, adjacency, intersection_index, cross_streets, gdf_street_names
         )
 

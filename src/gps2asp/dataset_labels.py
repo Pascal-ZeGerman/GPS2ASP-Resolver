@@ -41,7 +41,9 @@ SIDE_LABELS: dict[str, str] = {
 }
 
 
-def cleaning_day_names(windows: "list[TimeWindow] | tuple[TimeWindow, ...]") -> list[str]:
+def cleaning_day_names(
+    windows: "list[TimeWindow] | tuple[TimeWindow, ...]",
+) -> list[str]:
     """Ordered-unique cleaning-day display names from a schedule's windows.
 
     ``windows`` is expected pre-sorted by day then start_time (the

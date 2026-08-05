@@ -1183,7 +1183,7 @@ async def test_soda_retry_last_attempt_does_not_log_retry_in() -> None:
 
     import httpx as _httpx
 
-    from gps2asp.signs.client import SODAClient
+    from gps2asp.signs.client import SODAAPIError, SODAClient
 
     client = SODAClient()
 
@@ -1213,7 +1213,7 @@ async def test_soda_retry_last_attempt_does_not_log_retry_in() -> None:
                 await client._fetch_page_with_retry(
                     mock_async_client, {"$where": "x"}, records_fetched_so_far=0
                 )
-            except Exception:
+            except SODAAPIError:
                 pass  # expected: SODAAPIError after all retries fail
     finally:
         signs_logger.removeHandler(log_handler)

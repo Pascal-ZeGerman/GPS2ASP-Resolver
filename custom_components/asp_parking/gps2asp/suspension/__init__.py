@@ -289,7 +289,7 @@ class HolidayCalendar:
             try:
                 self._holidays = _parse_ics(ics_bytes)
                 logger.info("Loaded %d holiday dates from ICS", len(self._holidays))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — any parse failure must fall back, not crash
                 logger.warning(
                     "ICS parse failed for year %d (%s: %s); falling back to hardcoded dates",
                     year,

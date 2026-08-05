@@ -147,7 +147,7 @@ def geocode_address(
             "lat": coords[1],  # GeoJSON: [lon, lat]
             "lon": coords[0],  # GeoJSON: [lon, lat]
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — best-effort geocode script, skip and keep going
         print(
             f"  WARNING: Failed to geocode '{address}': {e} -- skipping",
             file=sys.stderr,
