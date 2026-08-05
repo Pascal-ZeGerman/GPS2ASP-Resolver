@@ -52,7 +52,7 @@ async def diagnose_l3(
     query = client.build_on_street_query(normalized_on, side)
     try:
         records = await client.fetch_signs(query)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — best-effort audit script, skip and keep going
         print(
             f"  WARNING: diagnose_l3 SODA query failed for '{on_street}' {side}: {exc}",
             file=sys.stderr,
@@ -113,7 +113,7 @@ async def audit_fixture(fixture_path: Path, *, verbose: bool = False) -> list[di
                 entry["l3_cscl_to"] = normalize_to_soda(entry["to_street"])
 
             results.append(entry)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort audit script, skip and keep going
             results.append(
                 {
                     "description": loc.get("description", "<unknown>"),

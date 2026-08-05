@@ -36,7 +36,7 @@ It's a plain HTML/CSS/JS page — no build step, no install, no server-side code
 
 **Where the data comes from.** The demo does **not** call any live API from the browser.
 It reads a **dated snapshot** committed to the repo at
-[`docs/demo/data/demo.json`](docs/demo/data/demo.json) (snapshot date: **2026-07-28**),
+[`docs/demo/data/demo.json`](docs/demo/data/demo.json) (snapshot date: **2026-08-02**),
 plus the matched segment geometries in `docs/demo/data/demo-segments.geojson`. The snapshot
 stores *weekly recurring patterns* rather than absolute datetimes, and the page recomputes the
 next move time in your browser at NYC time — so the "next move" stays correct even though the
@@ -52,20 +52,21 @@ needs a token.
 
 This requires two things the demo page itself does not: the **spatial index** must be present
 locally, and the script needs **network access to the NYC Open Data (SODA) API**. The index is
-gitignored (~95 MB), so build it once with `python scripts/build_index.py` **or** download the
+gitignored (~95 MB), so build it once with `.venv/bin/python scripts/build_index.py` **or** download the
 released `index-v1` asset from the [Releases page](https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver/releases).
 Setting a `NYC_OPEN_DATA_APP_TOKEN` environment variable is optional but helps avoid SODA rate
 limiting. The generated `demo.json`/`demo-segments.geojson` are the only files committed — the
 index never is.
 
-**Running it locally.** Serve the folder over HTTP (opening `index.html` via `file://` won't
-let the page `fetch()` its JSON):
+**Running it locally.** Serve the whole `docs/` tree over HTTP (opening `index.html` via `file://`
+won't let the page `fetch()` its JSON, and serving `docs/demo` alone 404s on the shared
+`../common.js`/`../common.css` the page loads):
 
 ```bash
-python -m http.server --directory docs/demo 8000
+.venv/bin/python -m http.server --directory docs 8000
 ```
 
-Then visit <http://localhost:8000/>.
+Then visit <http://localhost:8000/demo/>.
 
 **Hosting it.** The repo ships a [`.github/workflows/pages.yml`](.github/workflows/pages.yml)
 workflow that publishes the committed `docs/` tree to **GitHub Pages** on every push to `docs/`

@@ -12,9 +12,12 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
+  <!-- Shared design tokens + reset/base + typography (kept in sync with docs/explorer/). -->
+  <link rel="stylesheet" href="../common.css">
   <link rel="stylesheet" href="styles.css">
 
-  <!-- Client controller (created in Plan 41-04). Deferred so the DOM is parsed first. -->
+  <!-- Shared DOM helpers, then the page controller (created in Plan 41-04). Deferred so the DOM is parsed first. -->
+  <script src="../common.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>

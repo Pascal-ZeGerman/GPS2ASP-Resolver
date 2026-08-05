@@ -23,11 +23,11 @@ This module is intentionally offline (no ``@pytest.mark.integration``) so CI's
 
 from __future__ import annotations
 
-import importlib.util
+import asyncio
 import re
 from datetime import datetime, time
-from pathlib import Path
 
+import scripts.build_demo_dataset as dumper
 from gps2asp.api_models import ASPDebugResult
 from gps2asp.schedule.models import (
     ASPActiveNow,
@@ -38,20 +38,6 @@ from gps2asp.schedule.models import (
     TimeWindow,
     WeeklySchedule,
 )
-
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "build_demo_dataset.py"
-
-
-def _load_dumper():
-    spec = importlib.util.spec_from_file_location("build_demo_dataset", _MODULE_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-# Loaded at import time — collection FAILS (RED) until the script exists.
-dumper = _load_dumper()
 
 
 # The canonical real HA sensor attribute key sets, transcribed from
@@ -134,6 +120,24 @@ def _make_asp_active_now() -> ASPActiveNow:
             start_datetime=datetime(2026, 7, 30, 11, 0),
             end_datetime=datetime(2026, 7, 30, 14, 0),
             source_signs=["NO PARKING THU 11AM-2PM STREET CLEANING"],
+        ),
+        # Full merged weekly schedule carries BOTH cleaning days (Mon & Thu),
+        # matching the summary — the in-progress active_window is only Thursday.
+        weekly_schedule=WeeklySchedule(
+            windows=(
+                TimeWindow(
+                    day=ASPDay.MONDAY,
+                    start_time=time(11, 0),
+                    end_time=time(14, 0),
+                    source_sign="NO PARKING MON 11AM-2PM STREET CLEANING",
+                ),
+                TimeWindow(
+                    day=ASPDay.THURSDAY,
+                    start_time=time(11, 0),
+                    end_time=time(14, 0),
+                    source_sign="NO PARKING THU 11AM-2PM STREET CLEANING",
+                ),
+            )
         ),
         on_street="ORIENTAL BLVD",
         from_street="",
@@ -297,15 +301,49 @@ def test_asp_active_now_populates_weekly():
 
     assert entry["status"] == "asp_active_now"
     assert entry["summary"] == "MON & THU 11 AM - 2 PM"
-    assert isinstance(entry["weekly"], list) and entry["weekly"]
-    window = entry["weekly"][0]
-    assert window["day"] == ASPDay.THURSDAY.value
-    assert window["start"] == "11:00"
-    assert window["end"] == "14:00"
-    assert "NO PARKING" in window["sign"]
+    # The FULL merged weekly schedule survives — BOTH cleaning days, not just the
+    # single in-progress window (BUG-ASPActiveNow-full-weekly).
+    assert isinstance(entry["weekly"], list) and len(entry["weekly"]) == 2
+    assert {w["day"] for w in entry["weekly"]} == {
+        ASPDay.MONDAY.value,
+        ASPDay.THURSDAY.value,
+    }
+    for window in entry["weekly"]:
+        assert window["start"] == "11:00"
+        assert window["end"] == "14:00"
+        assert "NO PARKING" in window["sign"]
 
     # build_sensor_shapes()/_cleaning_day_names() had the identical ScheduleFound-
     # only gap — cleaning_days/schedule_summary must also populate for asp_active_now.
+    # WeeklySchedule windows are sorted by day (Monday=0 before Thursday=3).
     next_move_attrs = entry["sensors"]["next_move"]["attributes"]
-    assert next_move_attrs["cleaning_days"] == ["Thursday"]
+    assert next_move_attrs["cleaning_days"] == ["Monday", "Thursday"]
     assert next_move_attrs["schedule_summary"] == "MON & THU 11 AM - 2 PM"
+
+
+# --- main()'s broken_profiles self-check -------------------------------------
+
+
+def test_main_catches_every_dump_point_failure_status(monkeypatch, tmp_path):
+    """main()'s broken_profiles self-check must catch every status dump_point()
+    can emit, not just NoSegmentFoundError/resolution_failed/unknown.
+
+    Regression test: a transient SODAAPIError (or OutsideNYCError/
+    IndexNotFoundError/IncompleteResultsError) for a DEMO_PROFILES target
+    previously slipped past the check silently, shipping a demo.json whose
+    "Car B" toggle would render dead in the browser.
+    """
+
+    async def _always_fails(lat, lon, debug=True):
+        raise dumper.SODAAPIError(status_code=503, detail="boom")
+
+    monkeypatch.setattr(dumper, "resolve_asp", _always_fails)
+
+    out_dir = tmp_path / "out"
+    try:
+        rc = dumper.main(["--out-dir", str(out_dir)])
+    finally:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    assert rc == 1
+    assert not (out_dir / "demo.json").exists()

@@ -1,57 +1,11 @@
 /* ==========================================================================
    ASP Parking demo — dark-theme stylesheet (Phase 41, Plan 41-03)
-   Palette + type + spacing adopted verbatim from the project's spike baseline
-   (.planning/spikes/006-sign-coordinate-side/map.html) so the demo reads as
-   part of the same project. Implements the 41-UI-SPEC contract exactly.
+   Design tokens, reset/base, and typography roles live in ../common.css
+   (shared with docs/explorer/styles.css so the two pages stay visually in
+   sync — palette + type + spacing originally adopted from the project's
+   spike baseline, .planning/spikes/006-sign-coordinate-side/map.html). This
+   file holds only the demo-page-specific rules (41-UI-SPEC contract).
    ========================================================================== */
-
-:root {
-  color-scheme: dark;
-
-  /* --- Semantic palette (UI-SPEC Color, 60/30/10 over a dark base) --- */
-  --bg: #0f1115;          /* Dominant 60% — page + map frame */
-  --surface: #141824;     /* Secondary 30% — cards, panels */
-  --border: #262b38;      /* Card borders / dividers */
-  --fg: #e6e8ee;          /* Foreground text (AA on --bg) */
-  --muted: #9aa3b2;       /* Muted meta text (AA on --bg for its sizes) */
-  --accent: #4da3ff;      /* Accent 10% — reserved list only */
-  --warning: #f5a623;     /* Urgency amber — "move today" only */
-  --positive: #35d67f;    /* Safe green — "no restrictions" only */
-
-  /* --- Spacing scale (8-point, multiples of 4) --- */
-  --sp-xs: 4px;
-  --sp-sm: 8px;
-  --sp-md: 16px;
-  --sp-lg: 24px;
-  --sp-xl: 32px;
-  --sp-2xl: 48px;
-  --sp-3xl: 64px;
-
-  /* --- Type families --- */
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-
-  --radius: 10px;
-}
-
-/* --- Reset / base --- */
-*,
-*::before,
-*::after { box-sizing: border-box; }
-
-html { -webkit-text-size-adjust: 100%; }
-
-body {
-  margin: 0;
-  padding: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--font-sans);
-  /* Body role: 16px / 400 / 1.5 */
-  font-size: 16px;
-  font-weight: 400;
-  line-height: 1.5;
-}
 
 a { color: var(--accent); }             /* Accent reserved use #6 — text links */
 a:focus-visible,
@@ -62,41 +16,7 @@ button:focus-visible,
   outline-offset: 2px;
 }
 
-.skip-link {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  background: var(--surface);
-  color: var(--fg);
-  padding: var(--sp-sm) var(--sp-md);
-  border-radius: var(--radius);
-  z-index: 1000;
-}
-.skip-link:focus { left: var(--sp-md); }
-
-/* ==========================================================================
-   Typography roles (exactly 4 roles, 2 weights)
-   ========================================================================== */
-.display { font-size: 28px; font-weight: 600; line-height: 1.2; margin: 0; }
-.heading { font-size: 20px; font-weight: 600; line-height: 1.25; margin: 0 0 var(--sp-sm); }
-.body    { font-size: 16px; font-weight: 400; line-height: 1.5; }
-.label   { font-size: 14px; font-weight: 400; line-height: 1.5; }
-.mono    { font-family: var(--font-mono); font-size: 14px; font-weight: 400; line-height: 1.5; }
-.muted   { color: var(--muted); }
-
-/* ==========================================================================
-   Hero
-   ========================================================================== */
-.hero {
-  padding: var(--sp-3xl) var(--sp-lg) var(--sp-2xl);
-  max-width: 1200px;
-  margin: 0 auto;
-}
-.hero-subhead {
-  color: var(--muted);
-  max-width: 70ch;
-  margin: var(--sp-sm) 0 0;
-}
+/* .hero / .hero-subhead live in ../common.css (shared with explorer). */
 
 .mode-switch {
   display: flex;
@@ -124,50 +44,19 @@ button:focus-visible,
 .mode-option[aria-checked="true"] { color: var(--fg); background: #1b2130; }
 .mode-status { color: var(--muted); }
 
-/* ==========================================================================
-   Layout — desktop two-column, tablet/mobile single-column
-   Default (mobile-first): single column stack.
-   ========================================================================== */
-.layout {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--sp-xl);
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 var(--sp-lg) var(--sp-3xl);
-}
-.panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-md);
-}
+/* .layout / .panel / #map (base rule) / .card live in ../common.css (shared
+   with docs/explorer/styles.css). This file overrides #map's min-height at
+   wider breakpoints below. */
 
 /* --- Map region --- */
 .map-region { display: flex; flex-direction: column; gap: var(--sp-sm); }
 
-/* Explicit map height — Leaflet collapses to 0px otherwise (Pitfall 7). */
-#map {
-  min-height: 320px;              /* below 768px baseline */
-  width: 100%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
 .primary-cta {                    /* Accent reserved use #1 */
   color: var(--accent);
   font-weight: 600;
   margin: 0;
 }
 
-/* ==========================================================================
-   Cards
-   ========================================================================== */
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--sp-lg);
-}
 .restriction-summary { margin: 0 0 var(--sp-xs); }
 .restriction-meta { margin: 0 0 var(--sp-md); }
 
@@ -291,18 +180,7 @@ button:focus-visible,
   100% { box-shadow: 0 0 0 8px rgba(245, 166, 35, 0); }
 }
 
-/* ==========================================================================
-   Footer
-   ========================================================================== */
-.site-footer {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: var(--sp-xl) var(--sp-lg) var(--sp-3xl);
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-xs);
-}
+/* .site-footer lives in ../common.css (shared with explorer). */
 
 /* ==========================================================================
    Responsive — tablet (768–1023px) full-width map, then panels stacked

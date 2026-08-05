@@ -151,6 +151,7 @@ def compute_schedule(
         return ASPActiveNow(
             status="asp_active_now",
             active_window=active,
+            weekly_schedule=merged_schedule,
             on_street=on_street,
             from_street=from_street,
             to_street=to_street,

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Auto-resync the vendored gps2asp/ mirror before commit, so the CI
+# vendor-guard (.github/workflows/vendor-guard.yml) never has to catch
+# drift after the fact. Runs scripts/sync_vendored.py in write mode when
+# the commit touches src/gps2asp/, then stages the resynced output.
+#
+# Tracked at .githooks/pre-commit — enable once per clone with:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '^src/gps2asp/'; then
+    .venv/bin/python scripts/sync_vendored.py
+    git add -A -- custom_components/asp_parking/gps2asp/
+fi

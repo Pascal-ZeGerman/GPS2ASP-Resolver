@@ -1,40 +1,15 @@
 /* ==========================================================================
    Sign-coverage explorer — dark-theme stylesheet (Phase 42, Plan 42-03)
-   Design tokens, reset/base, and typography roles are adopted VERBATIM from
-   docs/demo/styles.css:8-85 (D-15) so the explorer reads with the same polish as
-   the Phase 41 demo — WITHOUT restating the demo's marketing layout. docs/demo/
-   is a separate site and is NOT modified (R6). The explorer-specific rules
-   (legend, filters, tier colors, canvas markers, states) are added below.
+   Design tokens, reset/base, and typography roles live in ../common.css
+   (shared with docs/demo/styles.css, D-15) so the explorer reads with the
+   same polish as the Phase 41 demo — WITHOUT restating the demo's marketing
+   layout. docs/demo/ is a separate site and is NOT modified (R6). This
+   :root only adds the tier/marker tokens common.css doesn't define; the
+   explorer-specific rules (legend, filters, tier colors, canvas markers,
+   states) are added below.
    ========================================================================== */
 
 :root {
-  color-scheme: dark;
-
-  /* --- Semantic palette (UI-SPEC Color, 60/30/10 over a dark base) --- */
-  --bg: #0f1115;          /* Dominant 60% — page + map frame */
-  --surface: #141824;     /* Secondary 30% — cards, panels */
-  --border: #262b38;      /* Card borders / dividers */
-  --fg: #e6e8ee;          /* Foreground text (AA on --bg) */
-  --muted: #9aa3b2;       /* Muted meta text (AA on --bg for its sizes) */
-  --accent: #4da3ff;      /* Accent 10% — reserved list only */
-  --warning: #f5a623;     /* Urgency amber — "move today" only */
-  --positive: #35d67f;    /* Safe green — "no restrictions" only */
-
-  /* --- Spacing scale (8-point, multiples of 4) --- */
-  --sp-xs: 4px;
-  --sp-sm: 8px;
-  --sp-md: 16px;
-  --sp-lg: 24px;
-  --sp-xl: 32px;
-  --sp-2xl: 48px;
-  --sp-3xl: 64px;
-
-  /* --- Type families --- */
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-
-  --radius: 10px;
-
   /* ------------------------------------------------------------------------
      Confidence-tier color scale (red -> green, D-09). Reuses the existing
      semantic tokens where they already map to a tier, and mints only the two
@@ -72,25 +47,6 @@
   --marker-r-high: 2px;
 }
 
-/* --- Reset / base (verbatim from docs/demo/styles.css:37-75) --- */
-*,
-*::before,
-*::after { box-sizing: border-box; }
-
-html { -webkit-text-size-adjust: 100%; }
-
-body {
-  margin: 0;
-  padding: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--font-sans);
-  /* Body role: 16px / 400 / 1.5 */
-  font-size: 16px;
-  font-weight: 400;
-  line-height: 1.5;
-}
-
 a { color: var(--accent); }             /* Accent reserved use #6 — text links */
 a:focus-visible,
 button:focus-visible,
@@ -101,76 +57,19 @@ input:focus-visible,
   outline-offset: 2px;
 }
 
-.skip-link {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  background: var(--surface);
-  color: var(--fg);
-  padding: var(--sp-sm) var(--sp-md);
-  border-radius: var(--radius);
-  z-index: 1000;
-}
-.skip-link:focus { left: var(--sp-md); }
-
-/* ==========================================================================
-   Typography roles (verbatim from docs/demo/styles.css:80-85 — 4 roles, 2 weights)
-   ========================================================================== */
-.display { font-size: 28px; font-weight: 600; line-height: 1.2; margin: 0; }
-.heading { font-size: 20px; font-weight: 600; line-height: 1.25; margin: 0 0 var(--sp-sm); }
-.body    { font-size: 16px; font-weight: 400; line-height: 1.5; }
-.label   { font-size: 14px; font-weight: 400; line-height: 1.5; }
-.mono    { font-family: var(--font-mono); font-size: 14px; font-weight: 400; line-height: 1.5; }
-.muted   { color: var(--muted); }
-
-/* ==========================================================================
-   Hero (coverage-QA copy — same spacing rhythm as the demo, own text)
-   ========================================================================== */
-.hero {
-  padding: var(--sp-3xl) var(--sp-lg) var(--sp-2xl);
-  max-width: 1200px;
-  margin: 0 auto;
-}
-.hero-subhead {
-  color: var(--muted);
-  max-width: 70ch;
-  margin: var(--sp-sm) 0 0;
-}
+/* .hero / .hero-subhead live in ../common.css (shared with demo). */
 .hero-freshness {
   margin: var(--sp-md) 0 0;
 }
 
-/* ==========================================================================
-   Layout — desktop two-column (map ~60% / panel ~40%), single-column on small.
-   Mobile-first: single-column stack.
-   ========================================================================== */
-.layout {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--sp-xl);
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 var(--sp-lg) var(--sp-3xl);
-}
-.panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-md);
-}
+/* .layout / .panel / #map (base rule) live in ../common.css (shared with
+   docs/demo/styles.css). This file overrides #map's min-height at wider
+   breakpoints below. */
 
 /* ==========================================================================
    Map region
    ========================================================================== */
 .map-region { display: flex; flex-direction: column; gap: var(--sp-md); }
-
-/* Explicit map height — Leaflet collapses to 0px otherwise (Pitfall 7). */
-#map {
-  min-height: 320px;              /* below 768px baseline */
-  width: 100%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
 
 /* Canvas circleMarker fill/stroke colors keyed to the tier scale. 42-04 sets
    the fillColor per marker; these classes document the intended mapping and can
@@ -180,6 +79,50 @@ input:focus-visible,
 .marker--medium     { color: var(--tier-medium); }
 .marker--low        { color: var(--tier-low); }
 .marker--unresolved { color: var(--tier-unresolved); }
+
+/* ==========================================================================
+   Marker popups — buildPopup() (42-04) builds this DOM tree via textContent
+   only; Leaflet wraps it in .leaflet-popup-content(-wrapper). The wrapper is
+   re-themed here too (Leaflet's default is a light popup, which would clash
+   with the dark palette and fail contrast against --fg-colored text).
+   ========================================================================== */
+.leaflet-popup-content-wrapper {
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.leaflet-popup-tip { background: var(--surface); }
+.leaflet-popup-close-button { color: var(--muted) !important; }
+.leaflet-popup-content { margin: var(--sp-sm) var(--sp-md); }
+
+.marker-popup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-xs);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.4;
+  max-width: 260px;
+}
+.popup-street { margin: 0; font-size: 16px; font-weight: 600; }
+.popup-cross { margin: 0; color: var(--muted); }
+.popup-attrs { width: 100%; border-collapse: collapse; margin: var(--sp-xs) 0; }
+.popup-attrs td { text-align: left; padding: var(--sp-xs) 0; vertical-align: top; }
+.popup-attrs td:first-child {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding-right: var(--sp-md);
+  white-space: nowrap;
+}
+.popup-attrs td:last-child {
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.popup-status { margin: 0; color: var(--warning); }
+.popup-links { display: flex; gap: var(--sp-md); margin: var(--sp-xs) 0 0; }
 
 /* ==========================================================================
    Legend — ALWAYS visible (D-16). Each row pairs a color swatch (hue) with a
@@ -228,15 +171,7 @@ input:focus-visible,
   line-height: 1.4;
 }
 
-/* ==========================================================================
-   Cards (shared surface for filters / states — mirrors the demo .card)
-   ========================================================================== */
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--sp-lg);
-}
+/* .card lives in ../common.css (shared with docs/demo/styles.css). */
 
 /* ==========================================================================
    Filter panel — label + control rows, 44px touch targets (like the demo's
@@ -296,18 +231,7 @@ input.filter-control::placeholder { color: var(--muted); }
 #error-state,
 .error-state { border-color: var(--warning); }
 
-/* ==========================================================================
-   Footer (mirrors the demo .site-footer)
-   ========================================================================== */
-.site-footer {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: var(--sp-xl) var(--sp-lg) var(--sp-3xl);
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-xs);
-}
+/* .site-footer lives in ../common.css (shared with demo). */
 
 /* ==========================================================================
    Responsive — tablet (768–1023px) taller map

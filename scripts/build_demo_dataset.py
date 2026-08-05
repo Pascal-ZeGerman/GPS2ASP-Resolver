@@ -34,53 +34,24 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 
-from pyproj import Transformer
 from shapely import wkt
 
 from gps2asp import resolve_asp
+from gps2asp.dataset_common import SIDE_LABELS, TO_WGS84, bounded_gather
+from gps2asp.dataset_common import borough_name as _borough_name
+from gps2asp.dataset_common import cleaning_day_names
 from gps2asp.resolver.exceptions import (
     IndexNotFoundError,
     NoSegmentFoundError,
     OutsideNYCError,
 )
+from gps2asp.resolver.spatial_index import SpatialIndex
 from gps2asp.schedule.models import ASPActiveNow, ScheduleFound
+from gps2asp.schedule.next_move import NYC_TZ
 from gps2asp.signs.exceptions import IncompleteResultsError, SODAAPIError
-
-# Reverse of resolver/converter.py's forward transform: EPSG:2263 -> WGS84.
-# always_xy=True yields (lon, lat) — exactly GeoJSON coordinate order.
-_TO_WGS84 = Transformer.from_crs("EPSG:2263", "EPSG:4326", always_xy=True)
-
-# CSCL borough code -> human name (mirrors coordinator._BOROUGH_NAMES).
-_BOROUGH_NAMES: dict[str, str] = {
-    "1": "Manhattan",
-    "2": "Bronx",
-    "3": "Brooklyn",
-    "4": "Queens",
-    "5": "Staten Island",
-}
-
-# side_of_street letter -> display label (mirrors sensor._SIDE_LABELS).
-_SIDE_LABELS: dict[str, str] = {
-    "N": "North side",
-    "S": "South side",
-    "E": "East side",
-    "W": "West side",
-}
-
-# Lazily-loaded segment geometry cache: str(segment_id) -> geometry_wkt.
-_SEGMENTS_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "gps2asp"
-    / "data"
-    / "index"
-    / "segments.json"
-)
-_segments_cache: dict[str, str] | None = None
-
 
 # Hand-picked demo coordinates. Includes the canonical Prospect Pl regression
 # case, a point expected to have no ASP restrictions, and one deliberately
@@ -103,8 +74,8 @@ DEMO_POINTS: list[dict] = [
 # of which (east_village, upper_west_side, central_park_no_restrictions) failed
 # outright because they weren't actually close enough to an indexed segment.
 DEMO_PROFILES: dict[str, dict] = {
-    "A": {"label": "Car A", "point_key": "prospect_pl"},
-    "B": {"label": "Car B", "point_key": "williamsburg"},
+    "A": {"point_key": "prospect_pl"},
+    "B": {"point_key": "williamsburg"},
 }
 
 
@@ -118,31 +89,18 @@ def reproject_wkt_to_wgs84(geometry_wkt: str) -> list[list[float]]:
         List of ``[lon, lat]`` coordinate pairs in GeoJSON order (WGS84).
     """
     line = wkt.loads(geometry_wkt)
-    return [list(_TO_WGS84.transform(x, y)) for (x, y) in line.coords]
-
-
-def _borough_name(borocode: str | None) -> str | None:
-    """Map a CSCL borough code to its human name, or None when unknown."""
-    if borocode is None:
-        return None
-    return _BOROUGH_NAMES.get(str(borocode))
+    return [list(TO_WGS84.transform(x, y)) for (x, y) in line.coords]
 
 
 def _cleaning_day_names(result) -> list[str]:
     """Ordered unique cleaning-day names from a ScheduleFound/ASPActiveNow schedule."""
     schedule = result.schedule
-    if isinstance(schedule, ScheduleFound):
-        windows = schedule.weekly_schedule.windows
-    elif isinstance(schedule, ASPActiveNow):
-        windows = [schedule.active_window]
-    else:
+    if not isinstance(schedule, (ScheduleFound, ASPActiveNow)):
         return []
-    seen: list[str] = []
-    for window in windows:
-        name = window.day.name.title()
-        if name not in seen:
-            seen.append(name)
-    return seen
+    # Use the FULL merged weekly schedule (every cleaning day), not just the
+    # single in-progress active_window — otherwise cleaning_days silently
+    # drops days the summary text lists (BUG-ASPActiveNow-full-weekly).
+    return cleaning_day_names(schedule.weekly_schedule.windows)
 
 
 def build_sensor_shapes(result) -> dict:
@@ -157,47 +115,58 @@ def build_sensor_shapes(result) -> dict:
     """
     borough = _borough_name(result.borocode)
     side = result.side_of_street
-    side_label = _SIDE_LABELS.get(side) if side is not None else None
+    side_label = SIDE_LABELS.get(side) if side is not None else None
+    has_schedule = isinstance(result.schedule, (ScheduleFound, ASPActiveNow))
 
     # --- Next Move Time sensor (primary, user-facing) ---
+    # Location/schedule fields are gated behind has_schedule to mirror
+    # sensor.py's ASPNextMoveTimeSensor.extra_state_attributes, which only
+    # emits cleaning_days/schedule_summary/street_name/cross_streets/
+    # side_of_street/side_label inside its own isinstance(schedule,
+    # (ScheduleFound, ASPActiveNow)) branch.
     next_move_attrs: dict = {}
-    cleaning_days = _cleaning_day_names(result)
-    if cleaning_days:
-        next_move_attrs["cleaning_days"] = cleaning_days
-    if isinstance(result.schedule, (ScheduleFound, ASPActiveNow)):
+    if has_schedule:
+        cleaning_days = _cleaning_day_names(result)
+        if cleaning_days:
+            next_move_attrs["cleaning_days"] = cleaning_days
         next_move_attrs["schedule_summary"] = result.schedule.summary
-    if result.on_street is not None:
-        next_move_attrs["street_name"] = result.on_street
-    if result.from_street is not None and result.to_street is not None:
-        next_move_attrs["cross_streets"] = f"{result.from_street} to {result.to_street}"
-    if side is not None:
-        next_move_attrs["side_of_street"] = side
-    if side_label is not None:
-        next_move_attrs["side_label"] = side_label
+        if result.on_street is not None:
+            next_move_attrs["street_name"] = result.on_street
+        if result.from_street is not None and result.to_street is not None:
+            next_move_attrs["cross_streets"] = (
+                f"{result.from_street} to {result.to_street}"
+            )
+        if side is not None:
+            next_move_attrs["side_of_street"] = side
+        if side_label is not None:
+            next_move_attrs["side_label"] = side_label
     next_move_attrs["confidence_score"] = result.confidence
     if borough is not None:
         next_move_attrs["borough"] = borough
     next_move_attrs["soda_level"] = result.soda_level
 
     # --- Resolved Street sensor (secondary) ---
+    # Mirrors ASPResolvedStreetSensor.extra_state_attributes, which returns {}
+    # entirely unless the schedule is ScheduleFound/ASPActiveNow.
     resolved_attrs: dict = {}
-    if result.from_street is not None:
-        resolved_attrs["from_street"] = result.from_street
-    if result.to_street is not None:
-        resolved_attrs["to_street"] = result.to_street
-    if side is not None:
-        resolved_attrs["side_of_street"] = side
-    resolved_attrs["confidence_score"] = result.confidence
-    if borough is not None:
-        resolved_attrs["borough"] = borough
-    if result.perpendicular_distance_ft is not None:
-        resolved_attrs["distance_ft"] = result.perpendicular_distance_ft
-    if result.street_width_ft is not None:
-        resolved_attrs["street_width_ft"] = result.street_width_ft
-    if result.segment_id is not None:
-        resolved_attrs["segment_id"] = result.segment_id
-    if side_label is not None:
-        resolved_attrs["side_label"] = side_label
+    if has_schedule:
+        if result.from_street is not None:
+            resolved_attrs["from_street"] = result.from_street
+        if result.to_street is not None:
+            resolved_attrs["to_street"] = result.to_street
+        if side is not None:
+            resolved_attrs["side_of_street"] = side
+        resolved_attrs["confidence_score"] = result.confidence
+        if borough is not None:
+            resolved_attrs["borough"] = borough
+        if result.perpendicular_distance_ft is not None:
+            resolved_attrs["distance_ft"] = result.perpendicular_distance_ft
+        if result.street_width_ft is not None:
+            resolved_attrs["street_width_ft"] = result.street_width_ft
+        if result.segment_id is not None:
+            resolved_attrs["segment_id"] = result.segment_id
+        if side_label is not None:
+            resolved_attrs["side_label"] = side_label
 
     return {
         "next_move": {
@@ -228,7 +197,13 @@ def build_point_entry(result, lat: float, lon: float) -> dict:
 
     weekly: list[dict] = []
     summary: str | None = None
-    if isinstance(schedule, ScheduleFound):
+    if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
+        # For ASPActiveNow, the car is parked during an active cleaning window
+        # right now. app.js's hasSchedule() treats "asp_active_now" as a
+        # schedule-bearing status, so summary/weekly must be populated or the
+        # calendar renders empty. Build weekly from the FULL merged
+        # weekly_schedule (all cleaning days), not just the single in-progress
+        # active_window, so the calendar matches the summary text.
         summary = schedule.summary
         weekly = [
             {
@@ -238,21 +213,6 @@ def build_point_entry(result, lat: float, lon: float) -> dict:
                 "sign": window.source_sign,
             }
             for window in schedule.weekly_schedule.windows
-        ]
-    elif isinstance(schedule, ASPActiveNow):
-        # The car is parked during an active cleaning window right now — there is
-        # no weekly_schedule (only the single active_window), but app.js's
-        # hasSchedule() treats "asp_active_now" as a schedule-bearing status, so
-        # summary/weekly must still be populated or the calendar renders empty.
-        summary = schedule.summary
-        window = schedule.active_window
-        weekly = [
-            {
-                "day": window.day.value,
-                "start": window.start_time.strftime("%H:%M"),
-                "end": window.end_time.strftime("%H:%M"),
-                "sign": "; ".join(window.source_signs),
-            }
         ]
 
     side = result.side_of_street
@@ -264,7 +224,7 @@ def build_point_entry(result, lat: float, lon: float) -> dict:
         "from_street": result.from_street,
         "to_street": result.to_street,
         "side_of_street": side,
-        "side_label": _SIDE_LABELS.get(side) if side is not None else None,
+        "side_label": SIDE_LABELS.get(side) if side is not None else None,
         "confidence": result.confidence,
         "borocode": result.borocode,
         "borough": _borough_name(result.borocode),
@@ -276,27 +236,47 @@ def build_point_entry(result, lat: float, lon: float) -> dict:
     }
 
 
-def _load_segments() -> dict[str, str]:
-    """Lazily load ``segments.json`` into a ``segment_id -> geometry_wkt`` map."""
-    global _segments_cache
-    if _segments_cache is None:
-        raw = json.loads(_SEGMENTS_PATH.read_text())
-        _segments_cache = {
-            str(seg_id): rec["geometry_wkt"]
-            for seg_id, rec in raw.items()
-            if isinstance(rec, dict) and "geometry_wkt" in rec
-        }
-    return _segments_cache
+async def _segment_coords(segment_id) -> list[list[float]] | None:
+    """Reprojected WGS84 coords for a segment id, or None when unavailable.
 
-
-def _segment_coords(segment_id) -> list[list[float]] | None:
-    """Reprojected WGS84 coords for a segment id, or None when unavailable."""
+    Reads geometry from the resolver's SpatialIndex singleton — already
+    loaded by the resolve_asp() call in dump_point() — instead of a second,
+    independent parse of segments.json.
+    """
     if segment_id is None:
         return None
-    geometry_wkt = _load_segments().get(str(segment_id))
+    index = await SpatialIndex.get()
+    geometry_wkt = index.get_segment_geometry_wkt(segment_id)
     if geometry_wkt is None:
         return None
     return reproject_wkt_to_wgs84(geometry_wkt)
+
+
+# Every infrastructural exception dump_point() can catch and degrade to a
+# named-status entry. Shared with main()'s broken_profiles self-check so a
+# future exception added here is automatically covered there too (finding:
+# the self-check previously hardcoded only 3 of these 5+2 status strings).
+_DUMP_POINT_FAILURE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    OutsideNYCError,
+    NoSegmentFoundError,
+    IndexNotFoundError,
+    SODAAPIError,
+    IncompleteResultsError,
+)
+
+# Subset of _DUMP_POINT_FAILURE_EXCEPTIONS that names a transient,
+# infrastructural build-time failure (a flaky SODA call, a not-yet-built
+# index) rather than a genuine coverage gap. OutsideNYCError/NoSegmentFoundError
+# are deliberately excluded: the point really is outside NYC or has no nearby
+# indexed segment, and regenerating the dataset would not change that. Emitted
+# into demo.json (see main()) so docs/demo/app.js's isTransientFailure reads
+# this set from the dataset instead of hand-maintaining a vendored mirror that
+# could silently drift from it.
+_TRANSIENT_FAILURE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    IndexNotFoundError,
+    SODAAPIError,
+    IncompleteResultsError,
+)
 
 
 async def dump_point(lat: float, lon: float) -> dict:
@@ -308,13 +288,7 @@ async def dump_point(lat: float, lon: float) -> dict:
     """
     try:
         result = await resolve_asp(lat, lon, debug=True)
-    except (
-        OutsideNYCError,
-        NoSegmentFoundError,
-        IndexNotFoundError,
-        SODAAPIError,
-        IncompleteResultsError,
-    ) as exc:
+    except _DUMP_POINT_FAILURE_EXCEPTIONS as exc:
         print(
             f"build_demo_dataset: WARNING point ({lat}, {lon}) failed: "
             f"{type(exc).__name__}: {exc}",
@@ -329,7 +303,7 @@ async def dump_point(lat: float, lon: float) -> dict:
         return {"entry": entry, "coords": None}
 
     entry = build_point_entry(result, lat, lon)
-    coords = _segment_coords(result.segment_id)
+    coords = await _segment_coords(result.segment_id)
     return {"entry": entry, "coords": coords}
 
 
@@ -345,13 +319,87 @@ def _read_points(points_file: Path | None) -> list[dict]:
     return data
 
 
+def _validate_points(points: list[dict]) -> None:
+    """Fail loud on duplicate ``key``/``profile`` values in a points list.
+
+    ``_run()``'s ``dict(resolved)`` and ``_profiles_for_points()``'s dict
+    comprehension both silently keep only the LAST entry on a repeated
+    ``key``/``profile`` value — a hand-edited ``--points`` file with a
+    copy-paste duplicate would otherwise drop an earlier point's resolved
+    entry or profile assignment with no warning. Raising here instead turns
+    that silent data loss into an immediate, actionable error.
+    """
+    seen_keys: dict[str, int] = {}
+    seen_profiles: dict[str, int] = {}
+    for i, point in enumerate(points):
+        if not isinstance(point, dict):
+            raise SystemExit(
+                f"--points file: entry at index {i} must be a JSON object, "
+                f"got {type(point).__name__}."
+            )
+        missing = [field for field in ("key", "lat", "lon") if field not in point]
+        if missing:
+            raise SystemExit(
+                f"--points file: entry at index {i} is missing required "
+                f'field(s) {missing} — every point needs "key", "lat", '
+                'and "lon".'
+            )
+        key = point.get("key")
+        if key in seen_keys:
+            raise SystemExit(
+                f'--points file: duplicate "key" {key!r} at indices '
+                f"{seen_keys[key]} and {i} — each point needs a unique key."
+            )
+        seen_keys[key] = i
+        profile = point.get("profile")
+        if profile:
+            if profile in seen_profiles:
+                raise SystemExit(
+                    f'--points file: duplicate "profile" {profile!r} at '
+                    f"indices {seen_profiles[profile]} and {i} — each profile "
+                    "letter must map to exactly one point."
+                )
+            seen_profiles[profile] = i
+
+
+def _profiles_for_points(
+    points: list[dict], points_file: Path | None
+) -> dict[str, dict]:
+    """Profile assignments (e.g. ``{"A": {"point_key": ...}}``) to ship and
+    self-check.
+
+    The built-in DEMO_POINTS list is paired with the module-level
+    DEMO_PROFILES. A ``--points`` override supplies its own assignments via
+    each point's optional ``profile`` field instead — DEMO_PROFILES' point
+    keys ("prospect_pl"/"williamsburg") won't generally exist in an override
+    file, so falling back to it would break main()'s broken_profiles
+    self-check for the supplied points.
+    """
+    if points_file is None:
+        return DEMO_PROFILES
+    return {
+        point["profile"]: {"point_key": point["key"]}
+        for point in points
+        if point.get("profile")
+    }
+
+
+# Bound on concurrent point resolves — each is an independent, I/O-bound
+# resolve_asp() call (its own SODA queries). DEMO_POINTS is small (a handful
+# of hand-picked coordinates), so this only needs to keep the build a good
+# citizen of the SODA rate limit, not dedup work like the coverage dumper's
+# per-group concurrency.
+_POINT_CONCURRENCY = 5
+
+
 async def _run(points: list[dict]) -> dict[str, dict]:
-    """Resolve every point, returning ``point_key -> {entry, coords}``."""
-    results: dict[str, dict] = {}
-    for point in points:
-        key = point["key"]
-        results[key] = await dump_point(point["lat"], point["lon"])
-    return results
+    """Resolve every point CONCURRENTLY (bounded), returning ``point_key -> {entry, coords}``."""
+
+    async def _dump_one(point: dict) -> tuple[str, dict]:
+        return point["key"], await dump_point(point["lat"], point["lon"])
+
+    resolved = await bounded_gather(points, _dump_one, _POINT_CONCURRENCY)
+    return dict(resolved)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -376,15 +424,24 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     points = _read_points(args.points)
+    _validate_points(points)
     resolved = asyncio.run(_run(points))
+    profiles = _profiles_for_points(points, args.points)
 
     # Build-time self-check: every DEMO_PROFILES target must have actually
     # resolved to a real, renderable status. Without this check a broken
-    # profile point (e.g. a coordinate too far from any indexed segment)
-    # silently ships and only surfaces as a dead "Car B" toggle in the
-    # browser — this is exactly the class of bug this check exists to catch.
+    # profile point (e.g. a coordinate too far from any indexed segment, or a
+    # transient SODA failure) silently ships and only surfaces as a dead
+    # "Car B" toggle in the browser — this is exactly the class of bug this
+    # check exists to catch. The failure set covers every exception
+    # dump_point() can catch (_DUMP_POINT_FAILURE_EXCEPTIONS) plus the two
+    # non-exception failure statuses build_point_entry() can emit.
+    failure_statuses = {exc.__name__ for exc in _DUMP_POINT_FAILURE_EXCEPTIONS} | {
+        "resolution_failed",
+        "unknown",
+    }
     broken_profiles = []
-    for profile_key, profile in DEMO_PROFILES.items():
+    for profile_key, profile in profiles.items():
         point_key = profile["point_key"]
         entry = resolved.get(point_key, {}).get("entry")
         if entry is None:
@@ -393,14 +450,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             continue
         status = entry.get("status")
-        if status in ("NoSegmentFoundError", "resolution_failed", "unknown"):
+        if status in failure_statuses:
             broken_profiles.append((profile_key, point_key, f"status={status}"))
     if broken_profiles:
         details = "; ".join(
             f"{pk} ({key}): {reason}" for pk, key, reason in broken_profiles
         )
         print(
-            f"build_demo_dataset: ERROR — {len(broken_profiles)} DEMO_PROFILES "
+            f"build_demo_dataset: ERROR — {len(broken_profiles)} profile "
             f"target(s) failed to resolve: {details}",
             file=sys.stderr,
         )
@@ -412,10 +469,20 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # Assemble the committed demo.json (weekly patterns only; no absolute dates).
+    # NYC-pinned "today" (not the build machine's local date — Pitfall 1): a
+    # UTC-clocked CI runner can already be "tomorrow" while it is still
+    # "today" in NYC for the evening hours this matters.
     dataset = {
-        "generation_date": date.today().isoformat(),
-        "profiles": DEMO_PROFILES,
+        "generation_date": datetime.now(NYC_TZ).date().isoformat(),
+        "profiles": profiles,
         "points": {key: payload["entry"] for key, payload in resolved.items()},
+        # Emitted so the client (docs/demo/app.js isTransientFailure) can read
+        # the transient-vs-coverage-gap split from the dataset instead of
+        # hand-maintaining a vendored mirror of _TRANSIENT_FAILURE_EXCEPTIONS
+        # that can silently drift from it.
+        "transient_failure_statuses": sorted(
+            exc.__name__ for exc in _TRANSIENT_FAILURE_EXCEPTIONS
+        ),
     }
 
     # One GeoJSON LineString feature per resolved segment (WGS84).

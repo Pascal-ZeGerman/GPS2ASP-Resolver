@@ -79,7 +79,7 @@ def _background_task_sink(hass, coro, *, name=""):
     """Consume the coroutine to suppress RuntimeWarning."""
     try:
         coro.close()
-    except Exception:
+    except Exception:  # noqa: BLE001 — test stub cleanup, any close failure is a no-op
         pass  # coroutine already closed/consumed elsewhere -- nothing to clean up
     return MagicMock()
 

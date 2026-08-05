@@ -90,7 +90,7 @@ def check_for_updates(
         response.raise_for_status()
         metadata = response.json()
     except requests.RequestException as e:
-        logger.error("Failed to fetch CSCL metadata: %s", e)
+        logger.exception("Failed to fetch CSCL metadata: %s", e)
         # Fail toward "check manually": a swallowed network error must not be
         # reported as "up to date", which would silently suppress every future
         # update notification.

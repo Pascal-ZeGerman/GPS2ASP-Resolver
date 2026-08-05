@@ -20,6 +20,8 @@ from zoneinfo import ZoneInfo
 
 from freezegun import freeze_time
 
+from gps2asp.dataset_labels import SIDE_LABELS as _SIDE_LABELS
+from gps2asp.dataset_labels import cleaning_day_names
 from gps2asp.schedule.models import (
     ASPActiveNow,
     ASPDay,
@@ -37,17 +39,6 @@ from gps2asp.suspension import SuspensionInfo, apply_suspension  # noqa: E402
 
 NYC_TZ = ZoneInfo("America/New_York")
 UTC_TZ = timezone.utc
-
-# Phase 36 SENSOR-01: mirror of custom_components/asp_parking/sensor.py _SIDE_LABELS.
-# Defined here (not imported) to avoid pulling in HA-dependent sensor.py at
-# collection time — test_ha_integration.py is designed to run without HA.
-# IMPORTANT: keep in sync with sensor._SIDE_LABELS manually if labels change.
-_SIDE_LABELS: dict[str, str] = {
-    "N": "North side",
-    "S": "South side",
-    "E": "East side",
-    "W": "West side",
-}
 
 
 def _format_move_time(dt: datetime) -> str:
@@ -185,30 +176,9 @@ def sensor_extra_attributes(data: ASPParkingData) -> dict:
         schedule = apply_suspension(schedule, data.suspension_state)
 
     if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
-        if isinstance(schedule, ScheduleFound):
-            weekly = schedule.weekly_schedule
-        else:
-            weekly = None
+        weekly = schedule.weekly_schedule
 
-        if weekly is not None:
-            day_names = sorted(
-                {w.day.name.title() for w in weekly.windows},
-                key=lambda d: [
-                    "Monday",
-                    "Tuesday",
-                    "Wednesday",
-                    "Thursday",
-                    "Friday",
-                    "Saturday",
-                    "Sunday",
-                ].index(d),
-            )
-            attrs["cleaning_days"] = day_names
-        elif isinstance(schedule, ASPActiveNow):
-            # BUG-T-005 (Phase 35.1-05): mirror sensor.py — surface the active
-            # cleaning day so the UI never loses the cleaning_days chip on
-            # active-now mornings.
-            attrs["cleaning_days"] = [schedule.active_window.day.name.title()]
+        attrs["cleaning_days"] = cleaning_day_names(weekly.windows)
 
         # time_window_start/end: mirror production logic — use next_window (the
         # temporally-next window), not weekly.windows[0] (day-sorted first entry).
@@ -371,6 +341,16 @@ def _make_asp_active_now(
     return ASPActiveNow(
         status="asp_active_now",
         active_window=window,
+        weekly_schedule=WeeklySchedule(
+            windows=(
+                TimeWindow(
+                    day=window.day,
+                    start_time=window.start_time,
+                    end_time=window.end_time,
+                    source_sign="NO PARKING 8:30AM-10AM MON",
+                ),
+            )
+        ),
         on_street="PROSPECT PLACE",
         from_street="VANDERBILT AVENUE",
         to_street="UNDERHILL AVENUE",
@@ -1581,6 +1561,8 @@ def test_resolved_street_sensor_side_label_present_for_asp_active_now() -> None:
         ASPActiveNow as VendoredASPActiveNow,
         CleaningWindow as VendoredCleaningWindow,
         ASPDay as VendoredASPDay,
+        TimeWindow as VendoredTimeWindow,
+        WeeklySchedule as VendoredWeeklySchedule,
     )
 
     now = datetime.now(tz=NYC_TZ)
@@ -1595,6 +1577,16 @@ def test_resolved_street_sensor_side_label_present_for_asp_active_now() -> None:
     schedule = VendoredASPActiveNow(
         status="asp_active_now",
         active_window=cw,
+        weekly_schedule=VendoredWeeklySchedule(
+            windows=(
+                VendoredTimeWindow(
+                    day=VendoredASPDay.MONDAY,
+                    start_time=time(8, 30),
+                    end_time=time(10, 0),
+                    source_sign="NO PARKING 8:30AM-10AM MON",
+                ),
+            )
+        ),
         on_street="PROSPECT PLACE",
         from_street="VANDERBILT AVENUE",
         to_street="UNDERHILL AVENUE",

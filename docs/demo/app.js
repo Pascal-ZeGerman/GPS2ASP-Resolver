@@ -33,18 +33,17 @@
    -------------------------------------------------------------------------- */
 const FULL_RESOLVER_ENDPOINT = null;
 
-const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
+/* TILE_URL / TILE_ATTRIBUTION / MAX_ZOOM live in ../common.js (shared with
+   docs/explorer/app.js). */
 const MAP_CENTER = [40.6776, -73.9685]; // demo dataset centroid (Prospect Pl area)
 const MAP_ZOOM = 15;
-const MAX_ZOOM = 19;
 const ACCENT = '#4da3ff';
 
-/* Python ASPDay convention: Monday = 0 .. Sunday = 6 (matches weekly[].day). */
+/* Python ASPDay convention: Monday = 0 .. Sunday = 6 (matches weekly[].day).
+   DAY_ABBR lives in ../common.js, shared with docs/explorer/app.js. */
 const DAY_NAMES = [
   'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
 ];
-const DAY_ABBR = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 /* Shared runtime state. */
 const state = {
@@ -77,12 +76,24 @@ function nycNowParts() {
   for (const part of fmt.formatToParts(new Date())) {
     p[part.type] = part.value;
   }
+  let year = parseInt(p.year, 10);
+  let month = parseInt(p.month, 10);
+  let day = parseInt(p.day, 10);
   let hour = parseInt(p.hour, 10);
-  if (hour === 24) hour = 0; // some engines emit "24" for midnight
+  if (hour === 24) {
+    // Some engines pair hour="24" with the calendar day that is ENDING (the
+    // ICU h24-cycle convention) rather than the day that is starting — roll
+    // the date forward so midnight lands on the correct NYC calendar day.
+    const rolled = new Date(Date.UTC(year, month - 1, day + 1));
+    year = rolled.getUTCFullYear();
+    month = rolled.getUTCMonth() + 1;
+    day = rolled.getUTCDate();
+    hour = 0;
+  }
   return {
-    year: parseInt(p.year, 10),
-    month: parseInt(p.month, 10),
-    day: parseInt(p.day, 10),
+    year,
+    month,
+    day,
     hour,
     minute: parseInt(p.minute, 10),
   };
@@ -94,12 +105,24 @@ function hhmmToMinutes(hhmm) {
   return h * 60 + m;
 }
 
+/** JS getUTCDay() (Sun=0..Sat=6) -> Python ASPDay convention (Mon=0..Sun=6). */
+function jsDayToPyDay(date) {
+  return (date.getUTCDay() + 6) % 7;
+}
+
 /**
  * Next upcoming ASP window computed from the stored weekly pattern.
  *
+ * demo.json is a static, infrequently-regenerated snapshot, so a window's
+ * "active now" state must be recomputed live from the visitor's actual NYC
+ * clock on every load — never trusted from the build-time status the point
+ * was frozen with (see build_demo_dataset.py's ASPActiveNow branch), or a
+ * window that has long since ended keeps reporting as in-progress.
+ *
  * @param {Array<{day:number,start:string,end:string,sign:string}>} weekly
  * @returns {null | {date:Date, day:number, offset:number, start:string,
- *                   end:string, sign:string, isToday:boolean}}
+ *                   end:string, sign:string, isToday:boolean,
+ *                   isActiveNow:boolean, baseMs:number}}
  */
 function computeNextMove(weekly) {
   if (!Array.isArray(weekly) || weekly.length === 0) return null;
@@ -108,22 +131,29 @@ function computeNextMove(weekly) {
   const nowMinutes = now.hour * 60 + now.minute;
   // Use a UTC Date purely as a calendar for the NYC "today" date so day
   // arithmetic and weekday extraction are immune to the machine's timezone.
+  // Stashed on the returned move (below) so renderCalendar reuses this same
+  // "now" snapshot instead of taking its own read, which could straddle a
+  // midnight rollover and disagree with this one.
   const baseMs = Date.UTC(now.year, now.month - 1, now.day);
 
   for (let offset = 0; offset < 8; offset++) {
     const candidate = new Date(baseMs + offset * 86400000);
-    // JS getDay()/getUTCDay() is Sunday=0..Saturday=6; convert to the Python
-    // Mon=0..Sun=6 ASPDay convention via (getUTCDay() + 6) % 7.
-    const jsDay = candidate.getUTCDay();
-    const pyDay = (jsDay + 6) % 7;
+    const pyDay = jsDayToPyDay(candidate);
 
     // windows_for_day equivalent: preserve stored order (mirrors Python).
     const dayWindows = weekly.filter((w) => w.day === pyDay);
     for (const w of dayWindows) {
       const startMinutes = hhmmToMinutes(w.start);
+      const endMinutes = hhmmToMinutes(w.end);
+      // Live "in progress" check against the visitor's actual current NYC
+      // time — never the frozen build-time status.
+      const activeNow =
+        offset === 0 && startMinutes <= nowMinutes && nowMinutes < endMinutes;
       // Later calendar days are always in the future; today only if the
-      // start is strictly greater than the current NYC time.
-      const isFuture = offset > 0 ? true : startMinutes > nowMinutes;
+      // start is strictly greater than the current NYC time — unless the
+      // window is live-active-now, which must still match today rather than
+      // being skipped to next week.
+      const isFuture = offset > 0 ? true : (activeNow || startMinutes > nowMinutes);
       if (isFuture) {
         return {
           date: candidate,
@@ -133,6 +163,8 @@ function computeNextMove(weekly) {
           end: w.end,
           sign: w.sign,
           isToday: offset === 0,
+          isActiveNow: activeNow,
+          baseMs,
         };
       }
     }
@@ -156,34 +188,48 @@ function to12Hour(hhmm) {
 function relativeDayLabel(move) {
   if (move.isToday) return 'Today';
   if (move.offset === 1) return 'Tomorrow';
+  // offset === 7: a single-cleaning-day block whose window already passed
+  // this week, so the next occurrence wraps to next week (renderCalendar
+  // leaves every cell (0..6) unhighlighted for this case) — the qualifier
+  // keeps the state string from implying an imminent, same-week move.
+  if (move.offset === 7) return `${DAY_NAMES[move.day]} (next week)`;
   return DAY_NAMES[move.day];
 }
 
-/** Whether a point entry carries a real weekly ASP schedule. */
-function hasSchedule(point) {
-  return point.status === 'schedule_found' || point.status === 'asp_active_now';
+/** Whether a point resolved to a real NYC street segment (confidence/borough/
+ * segment_id populated) even without a weekly schedule — e.g. status
+ * 'no_match' (SODA had no sign record for this block). Distinct from a point
+ * that never resolved at all (OutsideNYCError, IndexNotFoundError, etc.),
+ * whose entry never sets `segment_id` (see build_demo_dataset.py
+ * dump_point()'s exception path). */
+function isResolvedNoSchedule(point) {
+  return !hasSchedule(point) && point.status !== 'no_asp' && point.segment_id != null;
+}
+
+/** Transient-failure status names (SODAAPIError etc.). Overwritten from
+ * demo.json's own `transient_failure_statuses` field at load time (see
+ * init()) so this can never drift from build_demo_dataset.py's
+ * _TRANSIENT_FAILURE_EXCEPTIONS — the dataset IS the single source of truth,
+ * mirroring docs/explorer/app.js's TIER_BOUNDS sync. This default covers
+ * demo.json snapshots built before the field existed. */
+let TRANSIENT_FAILURE_STATUSES = new Set([
+  'SODAAPIError', 'IncompleteResultsError', 'IndexNotFoundError',
+]);
+
+/** Whether a point's status names a transient/infrastructural build-time
+ * failure (a flaky SODA call, a not-yet-built index) rather than a genuine
+ * coverage gap (OutsideNYCError/NoSegmentFoundError — the point really is
+ * outside NYC or has no nearby indexed segment). Regenerating the dataset
+ * would likely resolve a transient failure; it would not resolve a true
+ * coverage gap. See build_demo_dataset.py's _TRANSIENT_FAILURE_EXCEPTIONS. */
+function isTransientFailure(point) {
+  return TRANSIENT_FAILURE_STATUSES.has(point.status);
 }
 
 /* ==========================================================================
-   DOM helpers — text-only rendering (never the HTML-parsing sink)
+   DOM helpers — el/setText/show/hide/hasSchedule/buildAttrRow live in
+   ../common.js (shared with docs/explorer/app.js), loaded before this script.
    ========================================================================== */
-
-function el(id) {
-  return document.getElementById(id);
-}
-
-function setText(id, text) {
-  const node = el(id);
-  if (node) node.textContent = text == null ? '' : String(text);
-}
-
-function show(node) {
-  if (node) node.hidden = false;
-}
-
-function hide(node) {
-  if (node) node.hidden = true;
-}
 
 /** Build an attributes <tbody> from a plain object using textContent only. */
 function renderAttrs(tbodyId, attributes) {
@@ -192,14 +238,7 @@ function renderAttrs(tbodyId, attributes) {
   tbody.textContent = ''; // clear via textContent, not the HTML-parsing sink
   if (!attributes) return;
   for (const [key, value] of Object.entries(attributes)) {
-    const tr = document.createElement('tr');
-    const tdKey = document.createElement('td');
-    const tdVal = document.createElement('td');
-    tdKey.textContent = key;
-    tdVal.textContent = Array.isArray(value) ? value.join(', ') : String(value);
-    tr.appendChild(tdKey);
-    tr.appendChild(tdVal);
-    tbody.appendChild(tr);
+    tbody.appendChild(buildAttrRow(key, Array.isArray(value) ? value.join(', ') : value));
   }
 }
 
@@ -216,6 +255,21 @@ function renderReadout(point, move) {
     summary = point.summary || 'Alternate-side parking applies on this block.';
   } else if (point.status === 'no_asp') {
     summary = "No alternate-side rules on this block. The sensor reports 'No restrictions'.";
+  } else if (point.status === 'all_unparseable') {
+    summary = 'This block resolved to a real NYC street and a SODA sign record was found, '
+      + "but its text failed to parse into a schedule. The sensor reports 'No restrictions' "
+      + '(fallback) rather than a confirmed schedule.';
+  } else if (isResolvedNoSchedule(point)) {
+    summary = 'This block resolved to a real NYC street, but no SODA sign record exists '
+      + "for it yet. The sensor reports 'No sign on record' rather than a confirmed schedule.";
+  } else if (point.status === 'resolution_failed') {
+    summary = 'This GPS point sat too close to more than one candidate NYC street segment '
+      + "to confidently resolve. The sensor reports 'No street match' rather than a "
+      + 'confirmed schedule.';
+  } else if (isTransientFailure(point)) {
+    summary = `This point failed to resolve during dataset generation (${point.status}), `
+      + 'a transient build-time error rather than a real coverage gap. '
+      + 'Regenerating the demo dataset would likely resolve it.';
   } else {
     summary = 'This block is outside the demo dataset. In Home Assistant the '
       + "sensor reports 'Outside coverage area'.";
@@ -239,9 +293,24 @@ function renderReadout(point, move) {
     if (point.status === 'no_asp') {
       chipClass = 'chip-positive';
       chipText = 'No restrictions';
+    } else if (point.status === 'all_unparseable') {
+      chipClass = 'chip-neutral';
+      chipText = 'No restrictions';
+    } else if (isResolvedNoSchedule(point)) {
+      chipClass = 'chip-neutral';
+      chipText = 'No sign on record';
+    } else if (point.status === 'resolution_failed') {
+      chipClass = 'chip-neutral';
+      chipText = 'No street match';
+    } else if (isTransientFailure(point)) {
+      chipClass = 'chip-neutral';
+      chipText = 'Resolution error';
     } else if (!hasSchedule(point)) {
       chipClass = 'chip-neutral';
       chipText = 'Outside coverage area';
+    } else if (move && move.isActiveNow) {
+      chipClass = 'chip-warning';
+      chipText = 'Move now';
     } else if (move && move.isToday) {
       chipClass = 'chip-warning';
       chipText = 'Move today';
@@ -335,14 +404,24 @@ function renderCalendar(point, move) {
       ? 'No upcoming move found in the next 8 days.'
       : 'No scheduled move for this block.';
     calendar.appendChild(note);
-    setText('sensor-next-move-state', point.status === 'no_asp'
-      ? 'No restrictions'
-      : 'Outside coverage area');
+    let stateText = 'Outside coverage area';
+    if (point.status === 'no_asp' || point.status === 'all_unparseable') {
+      stateText = 'No restrictions';
+    } else if (isResolvedNoSchedule(point)) {
+      stateText = 'No sign on record';
+    } else if (point.status === 'resolution_failed') {
+      stateText = 'No street match';
+    } else if (isTransientFailure(point)) {
+      stateText = 'Resolution error';
+    }
+    setText('sensor-next-move-state', stateText);
     return;
   }
 
-  const now = nycNowParts();
-  const baseMs = Date.UTC(now.year, now.month - 1, now.day);
+  // Reuse the "now" snapshot computeNextMove already took for `move`, rather
+  // than taking a second independent read here — two reads could straddle a
+  // midnight rollover and disagree on "today" (see computeNextMove).
+  const baseMs = move.baseMs;
   const tooltip = (point.sensors
     && point.sensors.next_move
     && point.sensors.next_move.attributes
@@ -352,12 +431,18 @@ function renderCalendar(point, move) {
   // Seven cells, one per upcoming weekday (offsets 0..6 cover all 7 weekdays).
   for (let offset = 0; offset < 7; offset++) {
     const candidate = new Date(baseMs + offset * 86400000);
-    const pyDay = (candidate.getUTCDay() + 6) % 7;
+    const pyDay = jsDayToPyDay(candidate);
 
     const cell = document.createElement('div');
     cell.className = 'calendar-day';
 
-    const isNext = move.day === pyDay;
+    // Match by the exact resolved offset, NOT weekday alone (move.day): when
+    // a block has only one cleaning day and today's window already passed,
+    // computeNextMove resolves offset=7 (next week, same weekday) — matching
+    // by weekday would then also flag TODAY's cell (offset 0), falsely
+    // implying an imminent move that is really a week away. offset=7 falls
+    // outside this 7-cell (0..6) window, so no cell highlights in that case.
+    const isNext = move.offset === offset;
     if (isNext) {
       cell.classList.add(move.isToday && offset === 0 ? 'is-today' : 'is-next');
       if (tooltip) cell.title = tooltip;
@@ -369,7 +454,10 @@ function renderCalendar(point, move) {
 
     if (isNext) {
       const timeLabel = document.createElement('span');
-      timeLabel.textContent = to12Hour(move.start);
+      // Active-now windows already started; show when they end instead of
+      // a start time that's already in the past (matches the HA sensor's
+      // ASPActiveNow handling in sensor.py, which surfaces active_window.end).
+      timeLabel.textContent = to12Hour(move.isActiveNow ? move.end : move.start);
       cell.appendChild(timeLabel);
     }
 
@@ -379,7 +467,7 @@ function renderCalendar(point, move) {
   // Large date-relative sensor state string (formatted at NYC time).
   const prefix = move.isToday ? '⚠ ' : ''; // ⚠ for "today"
   setText('sensor-next-move-state',
-    `${prefix}${relativeDayLabel(move)}, ${to12Hour(move.start)}`);
+    `${prefix}${relativeDayLabel(move)}, ${to12Hour(move.isActiveNow ? move.end : move.start)}`);
 }
 
 /* ==========================================================================
@@ -471,9 +559,7 @@ function initMap() {
     maxZoom: MAX_ZOOM,
     attribution: TILE_ATTRIBUTION,
   }).addTo(state.map);
-  // Leaflet collapses to 0px if the container was laid out after init (Pitfall 7).
-  state.map.invalidateSize();
-  window.setTimeout(() => state.map.invalidateSize(), 200);
+  invalidateMapSizeSoon(state.map);
 }
 
 /* ==========================================================================
@@ -488,21 +574,28 @@ function setRadioState(groupId, activeId) {
   }
 }
 
-function wireProfileToggle() {
-  const group = el('profile-toggle');
+/** Wire a [role="radio"] group's click + keyboard (Enter/Space) activation.
+ * `datasetKey` names the button's data-* attribute (e.g. 'profile' for
+ * data-profile) whose value is passed to `onActivate(value, btnId)`. */
+function wireRadioGroup(groupId, datasetKey, onActivate) {
+  const group = el(groupId);
   if (!group) return;
   group.addEventListener('click', (e) => {
     const btn = e.target.closest('[role="radio"]');
     if (!btn) return;
-    activateProfile(btn.dataset.profile, btn.id);
+    onActivate(btn.dataset[datasetKey], btn.id);
   });
   group.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
     const btn = e.target.closest('[role="radio"]');
     if (!btn) return;
     e.preventDefault();
-    activateProfile(btn.dataset.profile, btn.id);
+    onActivate(btn.dataset[datasetKey], btn.id);
   });
+}
+
+function wireProfileToggle() {
+  wireRadioGroup('profile-toggle', 'profile', activateProfile);
 }
 
 function activateProfile(profileKey, btnId) {
@@ -515,20 +608,7 @@ function activateProfile(profileKey, btnId) {
 }
 
 function wireModeToggle() {
-  const group = el('mode-toggle');
-  if (!group) return;
-  group.addEventListener('click', (e) => {
-    const btn = e.target.closest('[role="radio"]');
-    if (!btn) return;
-    activateMode(btn.dataset.mode, btn.id);
-  });
-  group.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
-    const btn = e.target.closest('[role="radio"]');
-    if (!btn) return;
-    e.preventDefault();
-    activateMode(btn.dataset.mode, btn.id);
-  });
+  wireRadioGroup('mode-toggle', 'mode', activateMode);
 }
 
 function activateMode(mode, btnId) {
@@ -581,7 +661,9 @@ async function loadDataset() {
     fetch('data/demo-segments.geojson'),
   ]);
   if (!dataRes.ok || !geoRes.ok) {
-    throw new Error('dataset fetch failed');
+    throw new Error(
+      `dataset fetch failed: demo.json HTTP ${dataRes.status}, demo-segments.geojson HTTP ${geoRes.status}`
+    );
   }
   // Parse with the standard JSON parser only — never eval/dynamic evaluation.
   state.data = await dataRes.json();
@@ -592,12 +674,21 @@ async function init() {
   try {
     await loadDataset();
   } catch (err) {
+    console.error('[demo] dataset load failed:', err);
     show(el('error-state'));
     return;
   }
 
   setText('data-freshness',
     `Demo data snapshot: ${state.data.generation_date}. Live results may differ.`);
+
+  // Array.isArray alone (no length check): an authoritative EMPTY array from
+  // demo.json (e.g. a future build reclassifies every transient status as a
+  // real gap) must still overwrite the default, or the dataset stops being
+  // the single source of truth for this set.
+  if (Array.isArray(state.data.transient_failure_statuses)) {
+    TRANSIENT_FAILURE_STATUSES = new Set(state.data.transient_failure_statuses);
+  }
 
   initMap();
   addMarkers();

@@ -42,6 +42,7 @@ from .normalize import name_variants, normalize_to_soda
 __all__ = [
     "retrieve_signs",
     "materialize_cached_records",
+    "normalize_street",
     "SignRetrievalResult",
     "SignRetrievalSuccess",
     "NoASPSigns",
@@ -130,7 +131,7 @@ def materialize_cached_records(
     )
 
 
-def _normalize_street(name: str) -> str:
+def normalize_street(name: str) -> str:
     """Normalize a street name for comparison (uppercase, strip, expand)."""
     return normalize_to_soda(name.upper().strip())
 
@@ -165,8 +166,8 @@ def _cross_streets_match(
         return False
 
     # Normalize the raw SODA record fields (uppercase, strip, expand abbreviations)
-    record_from = _normalize_street(record_from_raw)
-    record_to = _normalize_street(record_to_raw)
+    record_from = normalize_street(record_from_raw)
+    record_to = normalize_street(record_to_raw)
 
     # Generate all known variants of the CSCL cross-street names for matching
     # (name_variants expands abbreviations like AVE→AVENUE, PL→PLACE, etc.)

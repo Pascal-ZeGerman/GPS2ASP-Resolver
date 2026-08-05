@@ -92,7 +92,7 @@ class StreetGraph:
                 )
                 return None
         except (json.JSONDecodeError, zstandard.ZstdError, OSError) as exc:
-            logger.error(
+            logger.exception(
                 "graph.json corrupt or unreadable at %s (%s: %s); "
                 "Level 4 disabled until next rebuild",
                 index_dir,

@@ -50,15 +50,23 @@ class SpatialIndex:
     def __init__(self, index_dir: str | None = None) -> None:
         self._index = None
         self._segments = None
+        self._index_dir = self.resolve_index_dir(index_dir)
 
+    @staticmethod
+    def resolve_index_dir(index_dir: str | None = None) -> Path:
+        """Resolve the index directory using the constructor/env/default precedence.
+
+        Shared with ``dataset_common._default_segments_path`` so the offline
+        dataset dumpers always resolve ``segments.json`` from the same
+        directory the live resolver reads its index from.
+        """
         if index_dir is not None:
-            self._index_dir = Path(index_dir)
-        elif env_dir := os.environ.get("GPS2ASP_INDEX_DIR"):
-            self._index_dir = Path(env_dir)
-        else:
-            # Default: data/index/ relative to the gps2asp package
-            package_dir = Path(__file__).parent.parent
-            self._index_dir = package_dir / "data" / "index"
+            return Path(index_dir)
+        if env_dir := os.environ.get("GPS2ASP_INDEX_DIR"):
+            return Path(env_dir)
+        # Default: data/index/ relative to the gps2asp package
+        package_dir = Path(__file__).parent.parent
+        return package_dir / "data" / "index"
 
     @classmethod
     async def get(cls, index_dir: str | None = None) -> SpatialIndex:
@@ -312,3 +320,26 @@ class SpatialIndex:
         results.sort(key=lambda c: c.distance_ft)
 
         return results
+
+    def get_segment_geometry_wkt(self, segment_id: object) -> str | None:
+        """Return the raw ``geometry_wkt`` for one segment id, or ``None``.
+
+        Reuses the already-loaded ``_segments`` metadata (the same dict
+        ``nearest()``/``query_radius()`` read) instead of re-parsing
+        segments.json. Callers that already resolved a point through this
+        singleton (e.g. dataset dumpers deriving a matched segment's display
+        geometry) get the lookup for free rather than paying a second,
+        independent full parse of the multi-megabyte index file.
+
+        Args:
+            segment_id: A segment id as returned on ``SegmentCandidate.segment_id``
+                (int or str; looked up via ``str(segment_id)``, matching the
+                string keys segments.json is loaded into).
+
+        Returns:
+            The segment's ``geometry_wkt``, or ``None`` if unloaded or not found.
+        """
+        if self._segments is None:
+            return None
+        seg_data = self._segments.get(str(segment_id))
+        return seg_data.get("geometry_wkt") if seg_data else None

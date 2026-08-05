@@ -12,9 +12,12 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
+  <!-- Shared design tokens + reset/base + typography (kept in sync with docs/demo/). -->
+  <link rel="stylesheet" href="../common.css">
   <link rel="stylesheet" href="styles.css">
 
-  <!-- Client controller (created in Plan 42-04). Deferred so the DOM is parsed first. -->
+  <!-- Shared DOM helpers, then the page controller (created in Plan 42-04). Deferred so the DOM is parsed first. -->
+  <script src="../common.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -103,9 +106,11 @@
           <label class="label" for="filter-level">SODA fallback level</label>
           <!--
             SODA-level selector (R4). Level 4 is folded into the Level 3 bucket per
-            Open-Q4 / D-18 (D-18's 0.40 confidence bucket covers levels 3-4), so this
-            selector intentionally offers 0/1/2/3 and has NO separate '4' option.
-            SPEC R4's literal "1-4" is this documented fold, not a dropped requirement.
+            Open-Q4 / D-18 (D-18's 0.00 confidence bucket covers levels 0 and 3-4,
+            deliberately landing in "unresolved" rather than a misleading "low"
+            tier), so this selector intentionally offers 0/1/2/3 and has NO
+            separate '4' option. SPEC R4's literal "1-4" is this documented fold,
+            not a dropped requirement.
           -->
           <select id="filter-level" class="filter-control">
             <option value="">All levels</option>

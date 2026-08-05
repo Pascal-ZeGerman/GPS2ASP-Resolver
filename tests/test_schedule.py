@@ -486,6 +486,25 @@ class TestComputeSchedule:
         assert result.status == "asp_active_now"
         assert result.active_window.day == ASPDay.TUESDAY
 
+    def test_active_now_preserves_full_weekly_schedule(self) -> None:
+        """ASPActiveNow carries the FULL merged weekly schedule (all cleaning
+        days), not just the single in-progress window (BUG-ASPActiveNow-full-weekly).
+        """
+        sign_result = _make_sign_result(
+            "NO PARKING (SANITATION BROOM SYMBOL) TUESDAY FRIDAY 11:30AM-1PM <->"
+        )
+        # Tuesday at noon -- inside 11:30AM-1PM window; 2026-02-24 is a Tuesday.
+        now = datetime(2026, 2, 24, 12, 0, tzinfo=NYC_TZ)
+        result = compute_schedule(sign_result, now=now)
+        assert isinstance(result, ASPActiveNow)
+        # The in-progress window still points at the active day.
+        assert result.active_window.day == ASPDay.TUESDAY
+        # But the full weekly schedule preserves EVERY cleaning day.
+        assert {w.day for w in result.weekly_schedule.windows} == {
+            ASPDay.TUESDAY,
+            ASPDay.FRIDAY,
+        }
+
     def test_street_info_passthrough(self) -> None:
         """Street info passes through from input to output."""
         sign_result = _make_sign_result(
@@ -657,6 +676,7 @@ def test_find_active_window_holiday_two_layer_contract() -> None:
     asp_active_now = ASPActiveNow(
         status="asp_active_now",
         active_window=active,
+        weekly_schedule=schedule,
         on_street="TEST ST",
         from_street="1ST AVE",
         to_street="2ND AVE",

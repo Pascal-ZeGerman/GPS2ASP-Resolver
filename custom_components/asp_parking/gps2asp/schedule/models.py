@@ -173,6 +173,10 @@ class ASPActiveNow:
     Attributes:
         status: Discriminator literal "asp_active_now".
         active_window: The currently active cleaning window.
+        weekly_schedule: Full merged weekly schedule (all cleaning days/windows),
+            mirroring ScheduleFound.weekly_schedule. Preserves every cleaning day
+            even while one window is in progress, so downstream consumers (demo /
+            coverage dumpers, calendars) can render the complete pattern.
         on_street: Street name in CSCL format.
         from_street: Cross street at one end.
         to_street: Cross street at the other end.
@@ -191,6 +195,7 @@ class ASPActiveNow:
 
     status: Literal["asp_active_now"]
     active_window: CleaningWindow
+    weekly_schedule: WeeklySchedule
     on_street: str
     from_street: str
     to_street: str

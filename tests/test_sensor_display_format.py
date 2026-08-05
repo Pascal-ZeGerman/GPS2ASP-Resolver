@@ -55,7 +55,11 @@ from custom_components.asp_parking.sensor import (
 )
 from tests.test_ha_integration import _SIDE_LABELS as _TEST_SIDE_LABELS
 from custom_components.asp_parking.gps2asp.schedule.models import (
+    ASPActiveNow as VendoredASPActiveNow,
+    ASPDay as VendoredASPDay,
+    CleaningWindow as VendoredCleaningWindow,
     ScheduleFound as VendoredScheduleFound,
+    TimeWindow as VendoredTimeWindow,
     WeeklySchedule as VendoredWeeklySchedule,
 )
 from custom_components.asp_parking.gps2asp.suspension import (
@@ -487,17 +491,59 @@ def _build_vendored_schedule_found(side_of_street: str) -> VendoredScheduleFound
     )
 
 
-def _build_next_move_sensor_with_side(side_of_street: str) -> ASPNextMoveTimeSensor:
-    """Build an ASPNextMoveTimeSensor whose schedule has side_of_street=<value>.
+def _build_vendored_asp_active_now_multi_day() -> VendoredASPActiveNow:
+    """Construct a vendored ASPActiveNow whose weekly_schedule spans two days.
 
-    Wires a MagicMock coordinator with a minimal .data namespace that
-    ``extra_state_attributes`` reads (schedule_result + suspension_state +
-    diagnostic fields). The coordinator's ``data.last_gps_update`` is set to
-    None so the available/stale-timeout branches do not fire during attribute
-    reads.
+    Regression fixture for the fix that stopped sensor.py from hard-coding
+    ``cleaning_days`` to only the in-progress active day for ASPActiveNow.
+    active_window is Tuesday (the currently-active window), but
+    weekly_schedule also carries a Friday window — mirroring a real merged
+    Tue/Fri cleaning schedule — so the fix can be told apart from the old
+    single-day behavior.
     """
-    schedule = _build_vendored_schedule_found(side_of_street)
+    active_window = VendoredCleaningWindow(
+        day=VendoredASPDay.TUESDAY,
+        start_time=time(11, 30),
+        end_time=time(13, 0),
+        start_datetime=datetime(2026, 8, 4, 11, 30),
+        end_datetime=datetime(2026, 8, 4, 13, 0),
+        source_signs=["NO PARKING TUE 11:30AM-1PM STREET CLEANING"],
+    )
+    return VendoredASPActiveNow(
+        status="asp_active_now",
+        active_window=active_window,
+        weekly_schedule=VendoredWeeklySchedule(
+            windows=(
+                VendoredTimeWindow(
+                    day=VendoredASPDay.TUESDAY,
+                    start_time=time(11, 30),
+                    end_time=time(13, 0),
+                    source_sign="NO PARKING TUE 11:30AM-1PM STREET CLEANING",
+                ),
+                VendoredTimeWindow(
+                    day=VendoredASPDay.FRIDAY,
+                    start_time=time(11, 30),
+                    end_time=time(13, 0),
+                    source_sign="NO PARKING FRI 11:30AM-1PM STREET CLEANING",
+                ),
+            )
+        ),
+        on_street="PROSPECT PLACE",
+        from_street="VANDERBILT AVENUE",
+        to_street="UNDERHILL AVENUE",
+        side_of_street="N",
+        source_signs=["NO PARKING TUE 11:30AM-1PM STREET CLEANING"],
+        summary="Tue, Fri 11:30am-1pm",
+    )
 
+
+def _build_next_move_sensor_with_schedule(schedule) -> ASPNextMoveTimeSensor:
+    """Build an ASPNextMoveTimeSensor wired to the given (vendored) schedule.
+
+    Same MagicMock-coordinator wiring as ``_build_next_move_sensor_with_side``,
+    parameterized on the schedule so callers can exercise other schedule
+    variants (e.g. ASPActiveNow) against the real sensor.py property.
+    """
     coord = MagicMock()
     coord.entry = MagicMock()
     coord.entry.entry_id = "test_entry_p36"
@@ -532,6 +578,19 @@ def _build_next_move_sensor_with_side(side_of_street: str) -> ASPNextMoveTimeSen
     coord.data = data
 
     return ASPNextMoveTimeSensor(coord)
+
+
+def _build_next_move_sensor_with_side(side_of_street: str) -> ASPNextMoveTimeSensor:
+    """Build an ASPNextMoveTimeSensor whose schedule has side_of_street=<value>.
+
+    Wires a MagicMock coordinator with a minimal .data namespace that
+    ``extra_state_attributes`` reads (schedule_result + suspension_state +
+    diagnostic fields). The coordinator's ``data.last_gps_update`` is set to
+    None so the available/stale-timeout branches do not fire during attribute
+    reads.
+    """
+    schedule = _build_vendored_schedule_found(side_of_street)
+    return _build_next_move_sensor_with_schedule(schedule)
 
 
 @pytest.mark.ha_integration
@@ -612,6 +671,7 @@ class TestSideLabel:
             ASPActiveNow as VendoredASPActiveNow,
             CleaningWindow as VendoredCleaningWindow,
             ASPDay as VendoredASPDay,
+            TimeWindow as VendoredTimeWindow,
         )
 
         _now = datetime.now(tz=NYC_TZ)
@@ -626,6 +686,16 @@ class TestSideLabel:
         schedule = VendoredASPActiveNow(
             status="asp_active_now",
             active_window=_cw,
+            weekly_schedule=VendoredWeeklySchedule(
+                windows=(
+                    VendoredTimeWindow(
+                        day=VendoredASPDay.MONDAY,
+                        start_time=time(8, 30),
+                        end_time=time(10, 0),
+                        source_sign="NO PARKING 8:30AM-10AM MON",
+                    ),
+                )
+            ),
             on_street="PROSPECT PLACE",
             from_street="VANDERBILT AVENUE",
             to_street="UNDERHILL AVENUE",
@@ -1012,4 +1082,32 @@ class TestASPActiveNowExposesCleaningDays:
 
         assert attrs.get("cleaning_days") == ["Thursday"], (
             f"Expected ['Thursday']; got {attrs.get('cleaning_days')!r}"
+        )
+
+    def test_sensor_active_now_exposes_full_weekly_schedule_not_just_active_day(
+        self,
+    ) -> None:
+        """Regression: ASPActiveNow's cleaning_days must reflect the FULL
+        merged weekly_schedule (every cleaning day), not just the single
+        in-progress active_window day.
+
+        Exercises the REAL ``ASPNextMoveTimeSensor.extra_state_attributes``
+        property (not the test-local ``sensor_extra_attributes`` mirror), via
+        the vendored schedule classes sensor.py's isinstance checks require —
+        so this test fails if sensor.py regresses to its pre-fix behavior of
+        hard-coding ``weekly = None`` for ASPActiveNow.
+
+        Fixture: active_window is Tuesday (the currently-in-progress window),
+        but weekly_schedule also carries Friday — a real merged Tue/Fri
+        schedule. Before the fix, cleaning_days was derived solely from
+        active_window.day and would incorrectly report only ['Tuesday'].
+        """
+        schedule = _build_vendored_asp_active_now_multi_day()
+        sensor = _build_next_move_sensor_with_schedule(schedule)
+
+        attrs = sensor.extra_state_attributes
+
+        assert attrs["cleaning_days"] == ["Tuesday", "Friday"], (
+            "cleaning_days must surface every day in weekly_schedule, not just "
+            f"the active_window day; got {attrs['cleaning_days']!r}"
         )

@@ -25,16 +25,12 @@
    Config — tiles and citywide framing (D-14: all five boroughs visible on
    load). NEVER hardcode any token or credential here.
    -------------------------------------------------------------------------- */
-const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
-const MAX_ZOOM = 19;
+/* TILE_URL / TILE_ATTRIBUTION / MAX_ZOOM live in ../common.js (shared with
+   docs/demo/app.js). */
 
 // Citywide view so all five boroughs are visible on load (D-14).
 const CITY_CENTER = [40.70, -73.94];
 const CITY_ZOOM = 11;
-
-/* Python ASPDay convention: Monday = 0 .. Sunday = 6 (matches wk[].d). */
-const DAY_ABBR = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 /* Standard NYC borocode -> name fallback (top-level coverage.json `boroughs`
    map is the source of truth; this only backstops a missing map). */
@@ -43,44 +39,82 @@ const BOROUGH_FALLBACK = {
 };
 
 /* --------------------------------------------------------------------------
-   Confidence-tier scale — VENDORED MIRROR of scripts/build_coverage_dataset.py
-   TIER_BOUNDS / tier_for_confidence (42-01). These half-open boundaries MUST
-   stay in sync with that Python source: it is the single authority and this is
-   its client-side mirror (vendored-mirror discipline). One rule, four tiers.
+   Confidence-tier scale (42-01). ``TIER_BOUNDS`` is overwritten from
+   coverage.json's own `tier_bounds` field at load time (see init()) so the
+   tier partition can never silently drift from scripts/build_coverage_
+   dataset.py's TIER_BOUNDS / tier_for_confidence — the dataset IS the single
+   authority. This literal is only the fallback for a dataset predating the
+   `tier_bounds` field. One rule, four tiers, ordered high -> low so the
+   first matching lower bound wins:
      [0.00, 0.33) -> 'unresolved'
      [0.33, 0.50) -> 'low'
      [0.50, 0.75) -> 'medium'
      [0.75, 1.00] -> 'high'
    -------------------------------------------------------------------------- */
+let TIER_BOUNDS = [
+  [0.75, 'high'],
+  [0.50, 'medium'],
+  [0.33, 'low'],
+  [0.00, 'unresolved'],
+];
+
 function tierForConfidence(v) {
   const n = Number(v);
   if (!(n >= 0)) return 'unresolved'; // NaN / negative -> treat as a gap
-  if (n >= 0.75) return 'high';
-  if (n >= 0.50) return 'medium';
-  if (n >= 0.33) return 'low';
+  for (const [lower, name] of TIER_BOUNDS) {
+    if (n >= lower) return name;
+  }
   return 'unresolved';
+}
+
+/* HUE + radius channels read live from styles.css's --tier-* and --marker-r-*
+   custom properties (D-09) instead of hardcoding a second copy of the same
+   values here — CSS stays the single source of truth, so a future palette
+   or radius change in styles.css can never silently desync the legend
+   swatches (CSS) from the actual on-map canvas markers (this file). Read
+   once and cached: getComputedStyle is a layout-triggering call and these
+   tokens never change at runtime. */
+let _tierStyleCache = null;
+function _cssRadius(computed, varName, fallback) {
+  const parsed = parseFloat(computed.getPropertyValue(varName));
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
+function _tierStyle() {
+  if (_tierStyleCache) return _tierStyleCache;
+  const computed = getComputedStyle(document.documentElement);
+  _tierStyleCache = {
+    high: {
+      color: computed.getPropertyValue('--tier-high').trim() || '#35d67f',
+      radius: _cssRadius(computed, '--marker-r-high', 2),
+    },
+    medium: {
+      color: computed.getPropertyValue('--tier-medium').trim() || '#2dd4bf',
+      radius: _cssRadius(computed, '--marker-r-medium', 3),
+    },
+    low: {
+      color: computed.getPropertyValue('--tier-low').trim() || '#f5a623',
+      radius: _cssRadius(computed, '--marker-r-low', 4),
+    },
+    unresolved: {
+      color: computed.getPropertyValue('--tier-unresolved').trim() || '#e5484d',
+      radius: _cssRadius(computed, '--marker-r-unresolved', 5),
+    },
+  };
+  return _tierStyleCache;
 }
 
 /* HUE channel — the four CSS tier colors (styles.css --tier-* tokens, D-09). */
 function colorForTier(tier) {
-  switch (tier) {
-    case 'high': return '#35d67f'; // green — exact block match (--tier-high)
-    case 'medium': return '#2dd4bf'; // teal-green — approximate (--tier-medium)
-    case 'low': return '#f5a623'; // amber — fuzzy/fallback (--tier-low)
-    default: return '#e5484d'; // red — unresolved, the gaps (--tier-unresolved)
-  }
+  const style = _tierStyle();
+  return (style[tier] || style.unresolved).color;
 }
 
 /* SECOND (non-hue) channel — per-tier marker radius (styles.css convention:
    unresolved > low > medium > high, so data gaps pop and are distinguishable
    by SIZE regardless of color vision — Prohibition 3 / T-42-05). */
 function radiusForTier(tier) {
-  switch (tier) {
-    case 'high': return 2;
-    case 'medium': return 3;
-    case 'low': return 4;
-    default: return 5; // unresolved — largest so gaps pop at citywide zoom
-  }
+  const style = _tierStyle();
+  return (style[tier] || style.unresolved).radius;
 }
 
 /* Shared runtime state. */
@@ -95,26 +129,9 @@ const state = {
 };
 
 /* ==========================================================================
-   DOM helpers — text-only rendering (never the HTML-parsing sink)
-   (copied verbatim from docs/demo/app.js:171-186)
+   DOM helpers — el/setText/show/hide live in ../common.js (shared with
+   docs/demo/app.js), loaded before this script.
    ========================================================================== */
-
-function el(id) {
-  return document.getElementById(id);
-}
-
-function setText(id, text) {
-  const node = el(id);
-  if (node) node.textContent = text == null ? '' : String(text);
-}
-
-function show(node) {
-  if (node) node.hidden = false;
-}
-
-function hide(node) {
-  if (node) node.hidden = true;
-}
 
 /* ==========================================================================
    Map + render
@@ -122,6 +139,7 @@ function hide(node) {
 
 /** borocode -> borough name (coverage.json `boroughs` map first, then fallback). */
 function boroughName(bc) {
+  if (bc == null) return '';
   const key = String(bc);
   if (state.boroughByCode && state.boroughByCode[key] != null) {
     return state.boroughByCode[key];
@@ -137,9 +155,7 @@ function initMap() {
   }).addTo(state.map);
   // ONE shared canvas renderer for every circleMarker (RESEARCH: ~105K points).
   state.renderer = L.canvas({ padding: 0.5 });
-  // Leaflet collapses to 0px if the container was laid out after init (Pitfall 7).
-  state.map.invalidateSize();
-  window.setTimeout(() => state.map.invalidateSize(), 200);
+  invalidateMapSizeSoon(state.map);
 }
 
 /**
@@ -177,22 +193,8 @@ function renderMarkers(points) {
    (textContent / DOM node creation ONLY; never an HTML-string assignment)
    ========================================================================== */
 
-/** Whether a point carries a real weekly ASP schedule. */
-function hasSchedule(point) {
-  return point.status === 'schedule_found' || point.status === 'asp_active_now';
-}
-
-/** Build one <tr> with a key cell and a value cell, both textContent-set. */
-function attrRow(key, value) {
-  const tr = document.createElement('tr');
-  const tdKey = document.createElement('td');
-  const tdVal = document.createElement('td');
-  tdKey.textContent = key;
-  tdVal.textContent = value == null ? '' : String(value);
-  tr.appendChild(tdKey);
-  tr.appendChild(tdVal);
-  return tr;
-}
+/* hasSchedule and buildAttrRow (formerly attrRow) live in ../common.js,
+   shared with docs/demo/app.js, loaded before this script. */
 
 /** Human "Mon 08:30–10:00" line for one weekly window ({d,s,e}). */
 function weeklyLine(w) {
@@ -211,9 +213,10 @@ function statusCopy(point) {
       return null; // schedule is shown in the attributes table instead
     case 'no_asp':
       return 'No ASP broom sign found on this block (SODA had records for this street).';
+    case 'all_unparseable':
+      return 'Unresolved — a SODA sign record was found for this block but its text failed to parse (coverage gap; not a confirmed clear street).';
     case 'no_match':
     case 'resolution_failed':
-    case 'all_unparseable':
     default:
       return 'Unresolved — no SODA record for this block (coverage gap; not a confirmed clear street).';
   }
@@ -248,15 +251,15 @@ function buildPopup(point) {
   const tier = tierForConfidence(point.cf);
   const cfNum = Number(point.cf);
   const cfText = Number.isFinite(cfNum) ? cfNum.toFixed(2) : '—';
-  tbody.appendChild(attrRow('Confidence', `${cfText} (${tier})`));
+  tbody.appendChild(buildAttrRow('Confidence', `${cfText} (${tier})`));
 
   const lv = Number(point.lv);
-  tbody.appendChild(attrRow('SODA level', lv === 0 ? '0 (no match)' : String(point.lv)));
+  tbody.appendChild(buildAttrRow('SODA level', lv === 0 ? '0 (no match)' : String(point.lv)));
 
   if (hasSchedule(point)) {
-    if (point.sm) tbody.appendChild(attrRow('Schedule', point.sm));
+    if (point.sm) tbody.appendChild(buildAttrRow('Schedule', point.sm));
     if (Array.isArray(point.wk) && point.wk.length > 0) {
-      tbody.appendChild(attrRow('Cleaning', point.wk.map(weeklyLine).join('; ')));
+      tbody.appendChild(buildAttrRow('Cleaning', point.wk.map(weeklyLine).join('; ')));
     }
   }
 
@@ -343,9 +346,14 @@ function applyFilters() {
  * error and never a silent fall back to the full set (R5).
  */
 function buildFeatureCollection(visible) {
+  // Same numeric-lat/lon guard renderMarkers() applies before drawing (line
+  // ~158) — a point invisible on the map must never be exported either.
+  const exportable = (visible || []).filter(
+    (p) => typeof p.lat === 'number' && typeof p.lon === 'number'
+  );
   return {
     type: 'FeatureCollection',
-    features: (visible || []).map((p) => ({
+    features: exportable.map((p) => ({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
       properties: {
@@ -388,10 +396,31 @@ function exportGeoJSON(visible) {
   return fc;
 }
 
+/**
+ * Return a debounced wrapper around `fn`: a burst of calls within `delayMs`
+ * of each other collapses into ONE trailing call. Used on the street-search
+ * input so typing doesn't redraw the full (up to ~105K point) canvas layer
+ * on every keystroke.
+ */
+function debounce(fn, delayMs) {
+  let timer = null;
+  return (...args) => {
+    if (timer !== null) window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = null;
+      fn(...args);
+    }, delayMs);
+  };
+}
+
+const SEARCH_DEBOUNCE_MS = 200;
+
 /** Wire filter controls and the export button to their handlers. */
 function wireControls() {
   const search = el('filter-search');
-  if (search) search.addEventListener('input', applyFilters);
+  if (search) {
+    search.addEventListener('input', debounce(applyFilters, SEARCH_DEBOUNCE_MS));
+  }
   for (const id of ['filter-borough', 'filter-tier', 'filter-level']) {
     const ctrl = el(id);
     if (ctrl) ctrl.addEventListener('change', applyFilters);
@@ -418,6 +447,7 @@ async function init() {
     await loadDataset();
   } catch (err) {
     // Dataset failed to load — show the visible alert, never a blank map (R2).
+    console.error('[explorer] dataset load failed:', err);
     show(el('error-state'));
     return;
   }
@@ -427,6 +457,11 @@ async function init() {
 
   state.points = Array.isArray(state.data.segments) ? state.data.segments : [];
   state.boroughByCode = state.data.boroughs || null;
+  // The dataset is the single authority on the tier partition (see
+  // tierForConfidence above) — sync it before any marker/popup rendering.
+  if (Array.isArray(state.data.tier_bounds) && state.data.tier_bounds.length > 0) {
+    TIER_BOUNDS = state.data.tier_bounds;
+  }
 
   initMap();
   wireControls();

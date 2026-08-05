@@ -31,6 +31,8 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
+from .gps2asp.dataset_labels import SIDE_LABELS as _SIDE_LABELS
+from .gps2asp.dataset_labels import cleaning_day_names
 from .gps2asp.schedule.models import (
     AllUnparseable,
     ASPActiveNow,
@@ -44,20 +46,12 @@ from .const import CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT, DOMAIN, VERSION
 from .coordinator import ASPParkingCoordinator
 from .util import now_ha_local
 
-
-# Phase 36 SENSOR-01: cardinal-direction → human-readable label mapping.
-# Mirrors the _BOROUGH_NAMES precedent in coordinator.py:117 (typed dict[str, str],
-# module level, hardcoded English). Used by ASPNextMoveTimeSensor and
-# ASPResolvedStreetSensor to surface a display-friendly 'side_label' attribute
-# alongside the raw 'side_of_street' single-letter code (which remains unchanged
-# for backward compatibility). Unrecognized values cause the side_label key to
-# be omitted entirely (not inserted as None) — per locked SPEC edge case.
-_SIDE_LABELS: dict[str, str] = {
-    "N": "North side",
-    "S": "South side",
-    "E": "East side",
-    "W": "West side",
-}
+# Phase 36 SENSOR-01: cardinal-direction → human-readable label mapping. Used
+# by ASPNextMoveTimeSensor and ASPResolvedStreetSensor to surface a
+# display-friendly 'side_label' attribute alongside the raw 'side_of_street'
+# single-letter code (which remains unchanged for backward compatibility).
+# Unrecognized values cause the side_label key to be omitted entirely (not
+# inserted as None) — per locked SPEC edge case.
 
 
 async def async_setup_entry(
@@ -272,32 +266,9 @@ class ASPNextMoveTimeSensor(SensorEntity):
 
         # --- Schedule group ---
         if isinstance(schedule, (ScheduleFound, ASPActiveNow)):
-            if isinstance(schedule, ScheduleFound):
-                weekly = schedule.weekly_schedule
-            else:
-                # ASPActiveNow does not have weekly_schedule; derive from active_window
-                weekly = None
+            weekly = schedule.weekly_schedule
 
-            if weekly is not None:
-                day_names = sorted(
-                    {w.day.name.title() for w in weekly.windows},
-                    key=lambda d: [
-                        "Monday",
-                        "Tuesday",
-                        "Wednesday",
-                        "Thursday",
-                        "Friday",
-                        "Saturday",
-                        "Sunday",
-                    ].index(d),
-                )
-                attrs["cleaning_days"] = day_names
-            elif isinstance(schedule, ASPActiveNow):
-                # BUG-T-005 (Phase 35.1-05): minimum-viable; shows active cleaning day.
-                # When the schedule is ASPActiveNow we have only the active_window;
-                # surface its day so the UI never loses the cleaning_days chip on
-                # active-now mornings.
-                attrs["cleaning_days"] = [schedule.active_window.day.name.title()]
+            attrs["cleaning_days"] = cleaning_day_names(weekly.windows)
 
             # time_window_start/end: use next_window (the temporally-next window)
             # rather than windows[0] (the day-sorted first window), so these

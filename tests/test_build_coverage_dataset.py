@@ -29,6 +29,7 @@ from scripts.build_coverage_dataset import (
     confidence_for_level,
     derive_segment_sides,
     group_key,
+    resolve_group,
     tier_for_confidence,
 )
 
@@ -189,6 +190,148 @@ async def test_no_token_in_output(monkeypatch):
         assert set(window.keys()) == {"d", "s", "e"}
 
 
+async def test_level_3_no_cross_street_match_is_unresolved():
+    """Group has records, but none match this block's cross streets -> level 3,
+    cf 0.0, tier 'unresolved' — NOT the misleading 'low' tier a nonzero
+    confidence would produce for a block whose schedule is genuinely no_match."""
+    segments = {"1": _seg("BROADWAY", "1 ST", "2 ST")}
+    # A real broom record on BROADWAY, but for an unrelated block.
+    record = {
+        "sign_description": _PARSEABLE_SIGN,
+        "from_street": "9 ST",
+        "to_street": "10 ST",
+    }
+    client = _StubClient(default=[record])
+    dataset = await build_coverage(segments, client)
+
+    entry = dataset["segments"][0]
+    assert entry["lv"] == 3
+    assert entry["cf"] == 0.0
+    assert entry["status"] == "no_match"
+    assert tier_for_confidence(entry["cf"]) == "unresolved"
+
+
+async def test_resolve_group_tries_both_name_variants():
+    """resolve_group falls back to the raw CSCL form when the canonical SODA
+    form returns nothing — mirrors production's retrieve_signs Level 3 loop,
+    which tries every name_variants() form instead of only the normalized one."""
+    record = {
+        "sign_description": _PARSEABLE_SIGN,
+        "from_street": "1 ST",
+        "to_street": "2 ST",
+    }
+    # Only the RAW CSCL-form query ("3 AVE") has records; the canonical
+    # SODA-expanded form ("3 AVENUE") returns nothing, simulating a street
+    # whose live SODA on_street field is stored in the unexpanded form.
+    client = _StubClient(records_by_query={"3 AVE|N": [record]})
+    records, query_count, failed_count = await resolve_group(client, "3 AVE", "N")
+
+    assert records == [record]
+    assert query_count == 2  # one query per name_variants() form
+    assert failed_count == 0  # empty result, not an error
+    assert "3 AVE|N" in client.calls
+    assert "3 AVENUE|N" in client.calls  # canonical form tried too, even if empty
+
+
+async def test_resolve_group_accepts_list_of_streets_dedupes_variants():
+    """resolve_group accepts multiple raw spellings for one group (a group can
+    have more than one distinct raw CSCL spelling across its member segments)
+    and queries the union of every spelling's name_variants, deduping the
+    canonical form so it isn't queried once per spelling."""
+    record = {
+        "sign_description": _PARSEABLE_SIGN,
+        "from_street": "1 ST",
+        "to_street": "2 ST",
+    }
+    # Only the second raw spelling's own query has records.
+    client = _StubClient(records_by_query={"E  100 ST|N": [record]})
+    records, query_count, failed_count = await resolve_group(
+        client, ["E 100 ST", "E  100 ST"], "N"
+    )
+
+    assert records == [record]
+    # 3 distinct variants total: shared canonical "EAST  100 STREET" (queried
+    # once, not once per spelling) + each spelling's own raw form.
+    assert query_count == 3
+    assert failed_count == 0
+    assert "E 100 ST|N" in client.calls
+    assert "E  100 ST|N" in client.calls
+    assert client.calls.count("EAST  100 STREET|N") == 1
+
+
+class _OneVariantErrorsClient(_StubClient):
+    """Like _StubClient, but a chosen query raises SODAAPIError instead of
+    returning records — for testing resolve_group's error/empty distinction."""
+
+    def __init__(self, failing_query: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._failing_query = failing_query
+
+    async def fetch_signs(self, query: str) -> list[dict]:
+        if query == self._failing_query:
+            self.calls.append(query)
+            raise bcd.SODAAPIError(503, "service unavailable")
+        return await super().fetch_signs(query)
+
+
+async def test_resolve_group_reports_errored_variants_separately_from_empty():
+    """BUG-C-001 regression: a variant query that ERRORS (SODAAPIError) must be
+    counted in failed_count, distinct from a variant that just returned no
+    records — otherwise a SODA outage is indistinguishable from a genuine
+    no-coverage street at every layer above resolve_group."""
+    record = {
+        "sign_description": _PARSEABLE_SIGN,
+        "from_street": "1 ST",
+        "to_street": "2 ST",
+    }
+    # "3 AVE|N" returns real records (success); "3 AVENUE|N" (the canonical
+    # form, also queried) errors instead of returning [].
+    client = _OneVariantErrorsClient(
+        "3 AVENUE|N", records_by_query={"3 AVE|N": [record]}
+    )
+    records, query_count, failed_count = await resolve_group(client, "3 AVE", "N")
+
+    assert records == [record]
+    assert query_count == 2
+    assert failed_count == 1
+
+
+async def test_group_query_tries_every_distinct_raw_spelling_in_group():
+    """Two segments share a (street, side) group via normalize_to_soda but carry
+    DIFFERENT non-canonical raw spellings that differ only by internal
+    whitespace ('E 100 ST' vs 'E  100 ST') — regression test for a bug where
+    only the FIRST non-canonical spelling observed became the group's
+    permanent SODA-query representative, so a sibling segment's own raw
+    spelling was never queried and could silently zero out the whole group."""
+    segments = {
+        "1": _seg("E 100 ST", "1 AVE", "2 AVE"),
+        "2": _seg("E  100 ST", "3 AVE", "4 AVE"),
+    }
+    client = _StubClient()  # every query returns [] — only the calls matter here
+    await build_coverage(segments, client)
+
+    assert any(c.startswith("E 100 ST|") for c in client.calls), client.calls
+    assert any(c.startswith("E  100 ST|") for c in client.calls), client.calls
+
+
+async def test_swapped_cross_streets_still_match_via_index():
+    """cross_streets_match's swapped-order semantics still hold through the
+    pre-built group index: a record's from/to can be in the opposite order
+    from the block's own from/to and still count as a match (level 1)."""
+    segments = {"1": _seg("BROADWAY", "1 ST", "2 ST")}
+    record = {
+        "sign_description": _PARSEABLE_SIGN,
+        "from_street": "2 ST",  # swapped relative to the segment's from/to
+        "to_street": "1 ST",
+    }
+    client = _StubClient(default=[record])
+    dataset = await build_coverage(segments, client)
+
+    entry = dataset["segments"][0]
+    assert entry["status"] == "schedule_found"
+    assert entry["lv"] == 1
+
+
 def test_main_writes_canonical_coverage_json(tmp_path, monkeypatch):
     """main() writes coverage.json with the canonical top-level + entry schema."""
     seg_path = tmp_path / "segments.json"
@@ -218,16 +361,51 @@ def test_main_writes_canonical_coverage_json(tmp_path, monkeypatch):
     assert set(data) == {
         "generation_date",
         "boroughs",
+        "tier_bounds",
         "query_count",
+        "query_failures",
         "segment_count",
         "segments",
     }
+    assert data["tier_bounds"] == [[lower, name] for lower, name in bcd.TIER_BOUNDS]
     assert data["segment_count"] == 2
     assert len(data["segments"]) == 2
     # query_count is the distinct-group count, strictly below the segment count.
     assert data["query_count"] < data["segment_count"] * 2
+    assert data["query_failures"] == 0
     for entry in data["segments"]:
         assert set(entry.keys()) == _CANONICAL_ENTRY_KEYS
+
+
+class _AllErrorsClient:
+    """Every SODA fetch raises SODAAPIError — simulates a systemic outage
+    (e.g. missing/invalid NYC_OPEN_DATA_APP_TOKEN triggering rate-limiting on
+    every request) so main()'s all-queries-failed self-check can be exercised
+    without a real network call."""
+
+    def build_on_street_query(self, on_street: str, side: str) -> str:
+        return f"{on_street}|{side}"
+
+    async def fetch_signs(self, query: str) -> list[dict]:
+        raise bcd.SODAAPIError(429, "rate limited")
+
+
+def test_main_refuses_to_write_when_every_soda_query_fails(tmp_path, monkeypatch):
+    """BUG-C-001 regression: a systemic SODA outage must abort the build with
+    a non-zero exit code, not silently write a coverage.json where every
+    segment looks like a genuine (rather than erroring) no-match."""
+    seg_path = tmp_path / "segments.json"
+    seg_path.write_text(json.dumps({"1": _seg("BROADWAY", "1 ST", "2 ST")}))
+    out_dir = tmp_path / "out"
+    monkeypatch.setattr(bcd, "SODAClient", lambda *a, **k: _AllErrorsClient())
+
+    try:
+        rc = bcd.main(["--segments", str(seg_path), "--out-dir", str(out_dir)])
+    finally:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    assert rc == 1
+    assert not (out_dir / "coverage.json").exists()
 
 
 def test_grouping_key_and_side_derivation():
@@ -287,12 +465,78 @@ def test_tier_boundary_partition():
 
     # --- confidence_for_level maps SODA level deterministically (D-18) ---
     assert confidence_for_level(1) == 0.90
-    assert confidence_for_level(2) == 0.66
-    assert confidence_for_level(3) == 0.40
+    # Level 2 (abbreviation-variant-only match) must land in "low", not
+    # "medium" -- the explorer UI's "Low" filter is documented and labeled
+    # as "fuzzy or fallback match", which is exactly what level 2 is.
+    assert confidence_for_level(2) == 0.40
+    # Level 3 (street present in SODA, but no record matches this block's
+    # cross streets) always resolves to an empty filter -> NoMatchFound, the
+    # same as level 0 -- so it carries the SAME 0.00 confidence, landing in
+    # "unresolved" rather than the misleading "low" tier a nonzero value would
+    # produce for a block with no schedule at all.
+    assert confidence_for_level(3) == 0.00
     assert confidence_for_level(0) == 0.00
 
     # ...and each level's confidence lands in the expected tier.
     assert tier_for_confidence(confidence_for_level(1)) == "high"
-    assert tier_for_confidence(confidence_for_level(2)) == "medium"
-    assert tier_for_confidence(confidence_for_level(3)) == "low"
+    assert tier_for_confidence(confidence_for_level(2)) == "low"
+    assert tier_for_confidence(confidence_for_level(3)) == "unresolved"
     assert tier_for_confidence(confidence_for_level(0)) == "unresolved"
+
+
+def test_summary_and_weekly_asp_active_now_keeps_all_days():
+    """_summary_and_weekly() on a multi-day ASPActiveNow must emit EVERY cleaning
+    day, not just the single in-progress window (BUG-ASPActiveNow-full-weekly).
+    """
+    from datetime import datetime, time
+
+    from scripts.build_coverage_dataset import _summary_and_weekly
+    from gps2asp.schedule.models import (
+        ASPActiveNow,
+        ASPDay,
+        CleaningWindow,
+        TimeWindow,
+        WeeklySchedule,
+    )
+
+    schedule = ASPActiveNow(
+        status="asp_active_now",
+        active_window=CleaningWindow(
+            day=ASPDay.THURSDAY,
+            start_time=time(11, 0),
+            end_time=time(14, 0),
+            start_datetime=datetime(2026, 7, 30, 11, 0),
+            end_datetime=datetime(2026, 7, 30, 14, 0),
+            source_signs=["NO PARKING THU 11AM-2PM STREET CLEANING"],
+        ),
+        weekly_schedule=WeeklySchedule(
+            windows=(
+                TimeWindow(
+                    day=ASPDay.MONDAY,
+                    start_time=time(11, 0),
+                    end_time=time(14, 0),
+                    source_sign="NO PARKING MON 11AM-2PM STREET CLEANING",
+                ),
+                TimeWindow(
+                    day=ASPDay.THURSDAY,
+                    start_time=time(11, 0),
+                    end_time=time(14, 0),
+                    source_sign="NO PARKING THU 11AM-2PM STREET CLEANING",
+                ),
+            )
+        ),
+        on_street="ORIENTAL BLVD",
+        from_street="",
+        to_street="DECATUR AVE",
+        side_of_street="N",
+        source_signs=["NO PARKING THU 11AM-2PM STREET CLEANING"],
+        summary="MON & THU 11 AM - 2 PM",
+    )
+
+    summary, wk = _summary_and_weekly(schedule)
+    assert summary == "MON & THU 11 AM - 2 PM"
+    assert len(wk) == 2
+    assert {entry["d"] for entry in wk} == {ASPDay.MONDAY.value, ASPDay.THURSDAY.value}
+    # Compact coverage schema: {d, s, e} only, never a sign text (D-04).
+    for entry in wk:
+        assert set(entry.keys()) == {"d", "s", "e"}
