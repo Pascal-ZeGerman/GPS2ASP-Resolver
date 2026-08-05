@@ -85,6 +85,15 @@ _BUILD_REFERENCE_TIME = datetime(2025, 1, 1, 4, 0)
 # citizen of the SODA rate limit.
 _GROUP_CONCURRENCY = 10
 
+# Bounds the actual in-flight SODA HTTP requests, shared across every group.
+# _GROUP_CONCURRENCY alone only caps how many resolve_group() calls run at
+# once — each call's own asyncio.gather over its street-name variants is
+# unbounded, so a group with multiple raw CSCL spellings (or several
+# concurrently-running groups that each have >1 variant) can multiply
+# in-flight requests well past _GROUP_CONCURRENCY. This semaphore is the one
+# true cap on concurrent SODA requests regardless of grouping.
+_soda_request_semaphore = asyncio.Semaphore(_GROUP_CONCURRENCY)
+
 # SODA fallback level -> confidence (D-18). Level 0 (street absent from SODA)
 # and level 3 (street present but no record matches this block's cross streets)
 # both represent a true no-match for THIS block — resolve_side's materialized
@@ -92,8 +101,12 @@ _GROUP_CONCURRENCY = 10
 # "unresolved" tier. Any unexpected level also maps to 0.00 via the .get
 # default. These are geometry-independent proxies: they express "how directly
 # did the block match a SODA sign", NOT the GPS-point-relative resolver
-# confidence (which needs a live fix — Pitfall 2).
-CONFIDENCE_BY_LEVEL: dict[int, float] = {1: 0.90, 2: 0.66, 3: 0.00, 0: 0.00}
+# confidence (which needs a live fix — Pitfall 2). Level 2 (abbreviation-
+# variant-only match) must land in the "low" tier band, not "medium" — the
+# explorer UI's "Low" filter is explicitly documented and labeled as "fuzzy
+# or fallback match" (docs/explorer/index.html), which is exactly what
+# level 2 represents.
+CONFIDENCE_BY_LEVEL: dict[int, float] = {1: 0.90, 2: 0.40, 3: 0.00, 0: 0.00}
 
 # The ONE half-open partition rule of the closed interval [0, 1]. Each tier owns
 # [lower, upper): lower-inclusive, upper-exclusive — EXCEPT the top tier, which is
@@ -205,7 +218,7 @@ def group_key(full_street_name: str, side: str) -> tuple[str, str]:
 def confidence_for_level(level: int) -> float:
     """Map a SODA fallback level to its geometry-independent confidence (D-18).
 
-    Levels 1/2 -> 0.90/0.66; level 3 (street present but no record matches this
+    Levels 1/2 -> 0.90/0.40; level 3 (street present but no record matches this
     block), level 0 (street absent from SODA), and any unexpected value all
     -> 0.00. This is NOT the GPS-point resolver confidence (Pitfall 2).
     """
@@ -310,19 +323,20 @@ async def resolve_group(
                 variants.append(variant)
 
     async def _fetch_variant(variant: str) -> list[dict]:
-        try:
-            query = client.build_on_street_query(variant, side)
-            return await client.fetch_signs(query)
-        except Exception as exc:  # noqa: BLE001 — fail-soft per variant (Pitfall 4)
-            logger.warning(
-                "resolve_group: SODA query failed for streets=%r (variant=%r) "
-                "side=%r: %s — treating variant as empty",
-                on_streets,
-                variant,
-                side,
-                exc,
-            )
-            return []
+        async with _soda_request_semaphore:
+            try:
+                query = client.build_on_street_query(variant, side)
+                return await client.fetch_signs(query)
+            except Exception as exc:  # noqa: BLE001 — fail-soft per variant (Pitfall 4)
+                logger.warning(
+                    "resolve_group: SODA query failed for streets=%r (variant=%r) "
+                    "side=%r: %s — treating variant as empty",
+                    on_streets,
+                    variant,
+                    side,
+                    exc,
+                )
+                return []
 
     query_count = len(variants)
     variant_results = await asyncio.gather(*(_fetch_variant(v) for v in variants))

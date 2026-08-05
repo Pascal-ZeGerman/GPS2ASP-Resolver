@@ -682,8 +682,11 @@ async function init() {
   setText('data-freshness',
     `Demo data snapshot: ${state.data.generation_date}. Live results may differ.`);
 
-  if (Array.isArray(state.data.transient_failure_statuses)
-    && state.data.transient_failure_statuses.length > 0) {
+  // Array.isArray alone (no length check): an authoritative EMPTY array from
+  // demo.json (e.g. a future build reclassifies every transient status as a
+  // real gap) must still overwrite the default, or the dataset stops being
+  // the single source of truth for this set.
+  if (Array.isArray(state.data.transient_failure_statuses)) {
     TRANSIENT_FAILURE_STATUSES = new Set(state.data.transient_failure_statuses);
   }
 

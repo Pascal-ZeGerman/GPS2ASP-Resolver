@@ -391,7 +391,10 @@ def test_tier_boundary_partition():
 
     # --- confidence_for_level maps SODA level deterministically (D-18) ---
     assert confidence_for_level(1) == 0.90
-    assert confidence_for_level(2) == 0.66
+    # Level 2 (abbreviation-variant-only match) must land in "low", not
+    # "medium" -- the explorer UI's "Low" filter is documented and labeled
+    # as "fuzzy or fallback match", which is exactly what level 2 is.
+    assert confidence_for_level(2) == 0.40
     # Level 3 (street present in SODA, but no record matches this block's
     # cross streets) always resolves to an empty filter -> NoMatchFound, the
     # same as level 0 -- so it carries the SAME 0.00 confidence, landing in
@@ -402,7 +405,7 @@ def test_tier_boundary_partition():
 
     # ...and each level's confidence lands in the expected tier.
     assert tier_for_confidence(confidence_for_level(1)) == "high"
-    assert tier_for_confidence(confidence_for_level(2)) == "medium"
+    assert tier_for_confidence(confidence_for_level(2)) == "low"
     assert tier_for_confidence(confidence_for_level(3)) == "unresolved"
     assert tier_for_confidence(confidence_for_level(0)) == "unresolved"
 
