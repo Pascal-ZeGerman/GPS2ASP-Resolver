@@ -845,6 +845,13 @@ class ASPParkingCoordinator:
 
             except Exception as err:  # noqa: BLE001
                 pn_dismiss(self.hass, "asp_parking_index_rebuild")
+                # WR-04: dismiss the "index is stale, auto-rebuilding" banner
+                # on failure too -- otherwise it lingers alongside the new
+                # "Rebuild Failed" notification until the next stale-check
+                # cycle happens to re-post it. Idempotent to dismiss a
+                # notification that was never posted (button-triggered
+                # rebuilds never create this one).
+                pn_dismiss(self.hass, "asp_parking_index_stale")
                 if isinstance(err, OSError):
                     if err.strerror and err.filename:
                         _err_summary = f"{err.strerror} ({err.filename})"

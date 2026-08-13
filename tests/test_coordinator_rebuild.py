@@ -516,6 +516,50 @@ async def test_async_do_rebuild_failure_path_creates_error_notification_with_dis
     )
 
 
+async def test_async_do_rebuild_failure_path_dismisses_stale_notification(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """WR-01/WR-04 (38-REVIEW.md): a failed rebuild MUST also dismiss the
+    'asp_parking_index_stale' banner, not just 'asp_parking_index_rebuild'.
+
+    Before the WR-04 fix, only the success path dismissed
+    'asp_parking_index_stale'. A rebuild triggered by the stale-check flow
+    that then FAILED would leave the "auto-rebuilding" banner dangling
+    alongside the new "Rebuild Failed" notification.
+    """
+    stub = _make_coord_stub(is_rebuilding=True)
+    spies = _install_executor_spies(
+        monkeypatch,
+        download_raises=RuntimeError("network down"),
+    )
+
+    async def _executor_dispatch(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    stub.hass.async_add_executor_job.side_effect = _executor_dispatch
+
+    do_rebuild = _bind(stub, "_async_do_rebuild")
+    await do_rebuild(triggered_by="stale_check")  # MUST NOT raise
+
+    dismiss_ids_positional = {
+        c.args[1] for c in spies["pn_dismiss"].call_args_list if len(c.args) > 1
+    }
+    dismiss_ids_kwarg = {
+        c.kwargs.get("notification_id")
+        for c in spies["pn_dismiss"].call_args_list
+        if "notification_id" in c.kwargs
+    }
+    all_dismiss_ids = dismiss_ids_positional | dismiss_ids_kwarg
+
+    assert "asp_parking_index_stale" in all_dismiss_ids, (
+        "WR-04: a failed rebuild MUST dismiss 'asp_parking_index_stale' too, "
+        f"got: {all_dismiss_ids}"
+    )
+    assert "asp_parking_index_rebuild" in all_dismiss_ids, (
+        f"In-progress notification must still be dismissed; got: {all_dismiss_ids}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # New edge-case tests (appended)
 # ---------------------------------------------------------------------------
