@@ -88,6 +88,10 @@ STALE_CHECK_INTERVAL_HOURS = 24
 MAX_CSCL_PAGES = 30
 CSCL_BATCH_SIZE = 10000
 SIGNS_BATCH_SIZE = 50000
+# WR-02 (38-REVIEW.md): SODA ASP-signs pagination DoS guard, mirroring
+# MAX_CSCL_PAGES -- without this, a misbehaving/compromised SODA endpoint
+# that keeps returning exactly SIGNS_BATCH_SIZE records loops forever.
+MAX_SIGNS_PAGES = 30
 
 # Vehicular street filter (CSCL RW_TYPE codes)
 VEHICULAR_RW_TYPES = frozenset({1, 2, 3, 4, 5})

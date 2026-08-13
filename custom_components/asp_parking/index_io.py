@@ -53,6 +53,7 @@ from .const import (
     CSCL_BATCH_SIZE,
     CSCL_GEOJSON_URL,
     MAX_CSCL_PAGES,
+    MAX_SIGNS_PAGES,
     SIGNS_BATCH_SIZE,
     SODA_PARKING_SIGNS_URL,
     VEHICULAR_RW_TYPES,
@@ -780,12 +781,29 @@ def _sync_fetch_asp_signs(
     """Fetch ASP sign block-faces. Fail-soft on httpx.HTTPError (T-38-01-02)."""
     asp_tuples: set[tuple[str, str, str, str]] = set()
     offset = 0
+    page_count = 0
 
     try:
         with httpx.Client(
             timeout=300, headers=headers, follow_redirects=True
         ) as client:
             while True:
+                # WR-02 (38-REVIEW.md): mirror the CSCL fetcher's
+                # MAX_CSCL_PAGES DoS guard. Without a cap, a misbehaving or
+                # compromised SODA endpoint that keeps returning exactly
+                # SIGNS_BATCH_SIZE records loops forever in the executor
+                # thread -- unlike CSCL (fail-hard RuntimeError), the
+                # signs fetch is fail-soft, so this breaks with partial
+                # results instead of raising.
+                if page_count >= MAX_SIGNS_PAGES:
+                    logger.warning(
+                        "SODA ASP signs pagination exceeded MAX_SIGNS_PAGES=%d "
+                        "(offset=%d); using partial results",
+                        MAX_SIGNS_PAGES,
+                        offset,
+                    )
+                    break
+
                 params = {
                     "$where": (
                         "sign_description LIKE '%SANITATION BROOM%'"
@@ -810,6 +828,7 @@ def _sync_fetch_asp_signs(
                     side = (record.get("side_of_street") or "").upper().strip()
                     if on_street and side:
                         asp_tuples.add((on_street, from_street, to_street, side))
+                page_count += 1
                 if len(records) < SIGNS_BATCH_SIZE:
                     break
                 offset += SIGNS_BATCH_SIZE
