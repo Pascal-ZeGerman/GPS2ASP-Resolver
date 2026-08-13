@@ -233,6 +233,25 @@ def test_soda_signs_pagination_cap_stops_instead_of_looping_forever(
 
 
 @respx.mock
+def test_soda_signs_non_list_response_treated_as_no_more_data(
+    monkeypatch,
+) -> None:
+    """WR-03 (38-REVIEW.md): a truthy non-list JSON body (e.g. an error dict on
+    an HTTP-200 soft error) must be treated as "no more data", not iterated
+    as if it were a list of records (which would AttributeError on
+    ``record.get(...)`` when iterating a dict's string keys).
+    """
+    monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
+    respx.get(SODA_PARKING_SIGNS_URL).mock(
+        return_value=httpx.Response(200, json={"error": "soft failure"})
+    )
+
+    # Must not raise AttributeError/TypeError -- fail-soft contract (T-38-01-02).
+    result = _sync_fetch_asp_signs(headers={})
+    assert result == set()
+
+
+@respx.mock
 def test_soda_failure_is_fail_soft(tmp_path: Path, monkeypatch) -> None:
     """SODA HTTP 500 must NOT raise — has_asp lookup is empty but the build completes."""
     monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)

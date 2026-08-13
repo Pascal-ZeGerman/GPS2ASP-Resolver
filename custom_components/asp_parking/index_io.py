@@ -817,6 +817,23 @@ def _sync_fetch_asp_signs(
                 resp = client.get(SODA_PARKING_SIGNS_URL, params=params)
                 resp.raise_for_status()
                 records = resp.json()
+                # WR-03 (38-REVIEW.md): mirror the CSCL fetcher's body-shape
+                # guard. SODA can return a truthy non-list JSON body (e.g.
+                # ``{"error": "..."}`` on an HTTP-200 soft error). Without
+                # this guard, `not records` is False for such a body, so
+                # the loop falls into `for record in records:` -- which
+                # iterates a dict's string KEYS, and `record.get(...)` then
+                # raises AttributeError (not in the caught exception tuple
+                # below), turning a fail-soft SODA outage into a hard
+                # failure of the entire from-source rebuild (T-38-01-02).
+                if not isinstance(records, list):
+                    logger.warning(
+                        "SODA ASP signs response was not a list (offset=%d): "
+                        "%r -- treating as no more data",
+                        offset,
+                        type(records).__name__,
+                    )
+                    break
                 if not records:
                     break
                 for record in records:
