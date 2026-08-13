@@ -53,6 +53,7 @@ from .const import (
     CSCL_BATCH_SIZE,
     CSCL_GEOJSON_URL,
     MAX_CSCL_PAGES,
+    MAX_SIGNS_PAGES,
     SIGNS_BATCH_SIZE,
     SODA_PARKING_SIGNS_URL,
     VEHICULAR_RW_TYPES,
@@ -182,13 +183,33 @@ def _sync_cleanup_stale(index_dir: Path) -> None:
             except OSError as exc:
                 logger.error(
                     "cleanup_stale: could not restore backup index from %s to %s (%s) — "
-                    "destroying backup; the index will need to be rebuilt",
+                    "attempting copy-based fallback recovery",
                     bak,
                     index_dir,
                     exc,
                     exc_info=True,
                 )
-                shutil.rmtree(bak, ignore_errors=True)
+                # WR-05 (38-REVIEW.md): os.replace can fail for reasons that
+                # don't affect a plain copy (e.g. EXDEV when _bak and the
+                # parent dir unexpectedly end up on different filesystems,
+                # or a transient EBUSY). Before permanently discarding the
+                # LAST viable copy of the index, try shutil.copytree as a
+                # fallback — it trades a recoverable state (a valid index,
+                # copied instead of renamed) for an avoidable one (forcing
+                # a full rebuild). _bak is wiped either way once we're done
+                # with it: on copy success it is now redundant; on copy
+                # failure it is unusable and there is nothing left to keep.
+                try:
+                    shutil.copytree(bak, index_dir)
+                except OSError as copy_exc:
+                    logger.error(
+                        "cleanup_stale: copytree fallback also failed (%s) — "
+                        "destroying backup; the index will need to be rebuilt",
+                        copy_exc,
+                        exc_info=True,
+                    )
+                finally:
+                    shutil.rmtree(bak, ignore_errors=True)
 
     try:
         download_zip.unlink(missing_ok=True)
@@ -780,12 +801,29 @@ def _sync_fetch_asp_signs(
     """Fetch ASP sign block-faces. Fail-soft on httpx.HTTPError (T-38-01-02)."""
     asp_tuples: set[tuple[str, str, str, str]] = set()
     offset = 0
+    page_count = 0
 
     try:
         with httpx.Client(
             timeout=300, headers=headers, follow_redirects=True
         ) as client:
             while True:
+                # WR-02 (38-REVIEW.md): mirror the CSCL fetcher's
+                # MAX_CSCL_PAGES DoS guard. Without a cap, a misbehaving or
+                # compromised SODA endpoint that keeps returning exactly
+                # SIGNS_BATCH_SIZE records loops forever in the executor
+                # thread -- unlike CSCL (fail-hard RuntimeError), the
+                # signs fetch is fail-soft, so this breaks with partial
+                # results instead of raising.
+                if page_count >= MAX_SIGNS_PAGES:
+                    logger.warning(
+                        "SODA ASP signs pagination exceeded MAX_SIGNS_PAGES=%d "
+                        "(offset=%d); using partial results",
+                        MAX_SIGNS_PAGES,
+                        offset,
+                    )
+                    break
+
                 params = {
                     "$where": (
                         "sign_description LIKE '%SANITATION BROOM%'"
@@ -799,6 +837,23 @@ def _sync_fetch_asp_signs(
                 resp = client.get(SODA_PARKING_SIGNS_URL, params=params)
                 resp.raise_for_status()
                 records = resp.json()
+                # WR-03 (38-REVIEW.md): mirror the CSCL fetcher's body-shape
+                # guard. SODA can return a truthy non-list JSON body (e.g.
+                # ``{"error": "..."}`` on an HTTP-200 soft error). Without
+                # this guard, `not records` is False for such a body, so
+                # the loop falls into `for record in records:` -- which
+                # iterates a dict's string KEYS, and `record.get(...)` then
+                # raises AttributeError (not in the caught exception tuple
+                # below), turning a fail-soft SODA outage into a hard
+                # failure of the entire from-source rebuild (T-38-01-02).
+                if not isinstance(records, list):
+                    logger.warning(
+                        "SODA ASP signs response was not a list (offset=%d): "
+                        "%r -- treating as no more data",
+                        offset,
+                        type(records).__name__,
+                    )
+                    break
                 if not records:
                     break
                 for record in records:
@@ -810,6 +865,7 @@ def _sync_fetch_asp_signs(
                     side = (record.get("side_of_street") or "").upper().strip()
                     if on_street and side:
                         asp_tuples.add((on_street, from_street, to_street, side))
+                page_count += 1
                 if len(records) < SIGNS_BATCH_SIZE:
                     break
                 offset += SIGNS_BATCH_SIZE

@@ -122,6 +122,7 @@ def _install_path_spies(monkeypatch: pytest.MonkeyPatch) -> dict:
     download_and_extract = MagicMock(name="_sync_download_and_extract")
     build_from_source = MagicMock(name="_sync_build_from_source")
     atomic_swap = MagicMock(name="_sync_atomic_swap")
+    verify_index = MagicMock(name="_sync_verify_index")
     read_build_timestamp = MagicMock(
         name="_sync_read_build_timestamp", return_value=None
     )
@@ -134,6 +135,9 @@ def _install_path_spies(monkeypatch: pytest.MonkeyPatch) -> dict:
         coord_mod, "_sync_build_from_source", build_from_source, raising=False
     )
     monkeypatch.setattr(coord_mod, "_sync_atomic_swap", atomic_swap, raising=False)
+    # WR-01: coordinator now verifies the swapped-in index before trusting
+    # it; stub this out so tests don't depend on real on-disk index files.
+    monkeypatch.setattr(coord_mod, "_sync_verify_index", verify_index, raising=False)
     monkeypatch.setattr(
         coord_mod, "_sync_read_build_timestamp", read_build_timestamp, raising=False
     )
@@ -161,6 +165,7 @@ def _install_path_spies(monkeypatch: pytest.MonkeyPatch) -> dict:
         "download_and_extract": download_and_extract,
         "build_from_source": build_from_source,
         "atomic_swap": atomic_swap,
+        "verify_index": verify_index,
         "read_build_timestamp": read_build_timestamp,
         "spatial_index_reset": spatial_index_reset,
         "pn_create": pn_create,
@@ -205,11 +210,20 @@ async def test_press_remote_exactly_30_days_uses_from_source():
 
 
 async def test_double_press_within_24h_uses_from_source():
-    """SPEC AC: second press within 24h -> FROM_SOURCE regardless of remote age."""
+    """SPEC AC: second press within 24h -> FROM_SOURCE regardless of remote age.
+
+    CR-01: ``previous_button_press`` is now an explicit argument (the
+    caller's snapshot of the PRIOR press) rather than being re-read from
+    ``self._last_button_press`` — see 38-REVIEW.md CR-01. This isolated
+    unit test exercises the decision function's contract directly; the
+    end-to-end double-press behavior through the real
+    ``async_request_rebuild`` call chain is covered by
+    ``test_coordinator_button_double_press_e2e.py``.
+    """
     recent = datetime.now(timezone.utc) - timedelta(hours=2)
     stub = _make_coord_stub(remote_age_days=5.0, last_button_press=recent)
     decide = _bind(stub, "_async_decide_rebuild_path")
-    path, reason = await decide("button")
+    path, reason = await decide("button", recent)
     assert path == RebuildPath.FROM_SOURCE
     assert reason == "double_press"
 
@@ -219,7 +233,7 @@ async def test_press_after_24h_window_uses_download():
     past = datetime.now(timezone.utc) - timedelta(hours=25)
     stub = _make_coord_stub(remote_age_days=5.0, last_button_press=past)
     decide = _bind(stub, "_async_decide_rebuild_path")
-    path, reason = await decide("button")
+    path, reason = await decide("button", past)
     assert path == RebuildPath.DOWNLOAD
     assert reason == "remote_fresh"
 
@@ -229,7 +243,7 @@ async def test_stale_check_triggered_by_skips_24h_override():
     recent = datetime.now(timezone.utc) - timedelta(hours=2)
     stub = _make_coord_stub(remote_age_days=5.0, last_button_press=recent)
     decide = _bind(stub, "_async_decide_rebuild_path")
-    path, reason = await decide("stale_check")
+    path, reason = await decide("stale_check", recent)
     assert path == RebuildPath.DOWNLOAD
     assert reason == "remote_fresh"
 
@@ -550,4 +564,83 @@ async def test_do_rebuild_logs_path_decision_info(
     assert matching, (
         f"Expected INFO log matching {pattern.pattern!r}; got "
         f"{[r.getMessage() for r in caplog.records]!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# WR-01: newly-swapped-in index must be integrity-checked before trust
+# ---------------------------------------------------------------------------
+
+
+async def test_do_rebuild_verifies_index_after_atomic_swap(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """_sync_verify_index MUST run after _sync_atomic_swap, before success."""
+    stub = _make_coord_stub(is_rebuilding=True)
+    spies = _install_path_spies(monkeypatch)
+
+    async def _executor_dispatch(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    stub.hass.async_add_executor_job.side_effect = _executor_dispatch
+    stub._async_decide_rebuild_path = AsyncMock(
+        return_value=(RebuildPath.DOWNLOAD, "remote_fresh")
+    )
+
+    call_order: list[str] = []
+    spies["atomic_swap"].side_effect = lambda *a, **k: call_order.append(
+        "atomic_swap"
+    )
+    spies["verify_index"].side_effect = lambda *a, **k: call_order.append(
+        "verify_index"
+    )
+
+    do_rebuild = _bind(stub, "_async_do_rebuild")
+    await do_rebuild(triggered_by="button")
+
+    assert spies["verify_index"].call_count == 1, (
+        "WR-01: _sync_verify_index MUST be called once after the atomic swap"
+    )
+    assert call_order == ["atomic_swap", "verify_index"], (
+        f"verify_index MUST run AFTER atomic_swap, got order {call_order!r}"
+    )
+    assert spies["pn_create"].call_args_list[-1].kwargs.get(
+        "notification_id"
+    ) == "asp_parking_index_rebuild_success", (
+        "A valid index MUST still post the success notification"
+    )
+
+
+async def test_do_rebuild_treats_integrity_failure_as_rebuild_failure(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """WR-01: a raised IndexIntegrityError is reported as a rebuild failure,
+    not silently promoted to a success notification.
+    """
+    from custom_components.asp_parking.index_io import IndexIntegrityError
+
+    stub = _make_coord_stub(is_rebuilding=True)
+    spies = _install_path_spies(monkeypatch)
+
+    async def _executor_dispatch(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    stub.hass.async_add_executor_job.side_effect = _executor_dispatch
+    stub._async_decide_rebuild_path = AsyncMock(
+        return_value=(RebuildPath.DOWNLOAD, "remote_fresh")
+    )
+    spies["verify_index"].side_effect = IndexIntegrityError("corrupt rtree")
+
+    do_rebuild = _bind(stub, "_async_do_rebuild")
+    await do_rebuild(triggered_by="button")
+
+    notification_ids = [
+        call.kwargs.get("notification_id")
+        for call in spies["pn_create"].call_args_list
+    ]
+    assert "asp_parking_index_rebuild_error" in notification_ids, (
+        "A corrupt post-swap index MUST post the rebuild-error notification"
+    )
+    assert "asp_parking_index_rebuild_success" not in notification_ids, (
+        "A corrupt post-swap index MUST NOT post the success notification"
     )

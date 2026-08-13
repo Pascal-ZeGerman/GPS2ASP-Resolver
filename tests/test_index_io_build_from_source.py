@@ -33,7 +33,10 @@ from custom_components.asp_parking.const import (
     MAX_CSCL_PAGES,
     SODA_PARKING_SIGNS_URL,
 )
-from custom_components.asp_parking.index_io import _sync_build_from_source
+from custom_components.asp_parking.index_io import (
+    _sync_build_from_source,
+    _sync_fetch_asp_signs,
+)
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
@@ -181,6 +184,71 @@ def test_pagination_cap_raises(tmp_path: Path, monkeypatch) -> None:
     index_dir = tmp_path / "idx"
     with pytest.raises(RuntimeError, match="MAX_CSCL_PAGES"):
         _sync_build_from_source(index_dir)
+
+
+@respx.mock
+def test_soda_signs_pagination_cap_stops_instead_of_looping_forever(
+    monkeypatch,
+) -> None:
+    """WR-02 (38-REVIEW.md): a misbehaving SODA endpoint that keeps returning
+    full-size batches must stop at the pagination cap instead of looping
+    forever.
+
+    Unlike the CSCL fetcher (fail-hard RuntimeError), the SODA signs fetch is
+    fail-soft (T-38-01-02) -- it must return partial results, not raise.
+
+    Batch size / page cap are monkeypatched small (5 records / 3 pages) so
+    this test runs fast while still exercising the real cap-check codepath
+    in ``_sync_fetch_asp_signs`` (which reads the module-level constants at
+    call time).
+    """
+    monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
+    small_batch_size = 5
+    small_page_cap = 3
+    monkeypatch.setattr(
+        "custom_components.asp_parking.index_io.SIGNS_BATCH_SIZE", small_batch_size
+    )
+    monkeypatch.setattr(
+        "custom_components.asp_parking.index_io.MAX_SIGNS_PAGES", small_page_cap
+    )
+
+    base_record = _load_soda_fixture()[0]
+    full_batch = [dict(base_record) for _ in range(small_batch_size)]
+
+    # Mount enough full-batch responses to exceed the cap; if the guard is
+    # missing, respx will exhaust these routes and raise instead of hanging,
+    # which is itself proof the guard is required.
+    responses = [
+        httpx.Response(200, json=full_batch) for _ in range(small_page_cap + 2)
+    ]
+    route = respx.get(SODA_PARKING_SIGNS_URL).mock(side_effect=responses)
+
+    result = _sync_fetch_asp_signs(headers={})
+
+    assert route.call_count == small_page_cap, (
+        f"Expected pagination to stop at exactly the page cap="
+        f"{small_page_cap} requests, got {route.call_count}"
+    )
+    assert isinstance(result, set)
+
+
+@respx.mock
+def test_soda_signs_non_list_response_treated_as_no_more_data(
+    monkeypatch,
+) -> None:
+    """WR-03 (38-REVIEW.md): a truthy non-list JSON body (e.g. an error dict on
+    an HTTP-200 soft error) must be treated as "no more data", not iterated
+    as if it were a list of records (which would AttributeError on
+    ``record.get(...)`` when iterating a dict's string keys).
+    """
+    monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
+    respx.get(SODA_PARKING_SIGNS_URL).mock(
+        return_value=httpx.Response(200, json={"error": "soft failure"})
+    )
+
+    # Must not raise AttributeError/TypeError -- fail-soft contract (T-38-01-02).
+    result = _sync_fetch_asp_signs(headers={})
+    assert result == set()
 
 
 @respx.mock
