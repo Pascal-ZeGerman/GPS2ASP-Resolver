@@ -120,6 +120,7 @@ from .index_io import (
     _sync_cleanup_stale,
     _sync_download_and_extract,
     _sync_read_build_timestamp,
+    _sync_verify_index,
 )
 
 if TYPE_CHECKING:
@@ -799,6 +800,15 @@ class ASPParkingCoordinator:
                     )
 
                 await self.hass.async_add_executor_job(_sync_atomic_swap, INDEX_DIR)
+
+                # WR-01: verify the newly-swapped-in index BEFORE trusting it
+                # and posting a success notification. A partial/corrupt write
+                # (disk full mid-write, SD-card corruption, truncated
+                # extraction) must be caught here -- not later as an opaque
+                # IndexIntegrityError/rtree crash from the resolve pipeline.
+                # A raised IndexIntegrityError is caught by the ``except``
+                # block below and reported as a normal rebuild failure.
+                await self.hass.async_add_executor_job(_sync_verify_index, INDEX_DIR)
 
                 # RESEARCH Pitfall 2: reset MUST happen AFTER atomic_swap so the
                 # next SpatialIndex.get() re-opens the new files. reset() just

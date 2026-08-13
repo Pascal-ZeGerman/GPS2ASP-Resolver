@@ -191,6 +191,7 @@ def _install_executor_spies(
     cleanup_stale = MagicMock(name="_sync_cleanup_stale")
     download_and_extract = MagicMock(name="_sync_download_and_extract")
     atomic_swap = MagicMock(name="_sync_atomic_swap")
+    verify_index = MagicMock(name="_sync_verify_index")
     read_build_timestamp = MagicMock(
         name="_sync_read_build_timestamp", return_value=build_timestamp_return
     )
@@ -203,6 +204,9 @@ def _install_executor_spies(
         coord_mod, "_sync_download_and_extract", download_and_extract, raising=False
     )
     monkeypatch.setattr(coord_mod, "_sync_atomic_swap", atomic_swap, raising=False)
+    # WR-01: coordinator now verifies the swapped-in index before trusting
+    # it; stub this out so tests don't depend on real on-disk index files.
+    monkeypatch.setattr(coord_mod, "_sync_verify_index", verify_index, raising=False)
     monkeypatch.setattr(
         coord_mod, "_sync_read_build_timestamp", read_build_timestamp, raising=False
     )
@@ -232,6 +236,7 @@ def _install_executor_spies(
         "cleanup_stale": cleanup_stale,
         "download_and_extract": download_and_extract,
         "atomic_swap": atomic_swap,
+        "verify_index": verify_index,
         "read_build_timestamp": read_build_timestamp,
         "spatial_index_reset": spatial_index_reset,
         "pn_create": pn_create,
