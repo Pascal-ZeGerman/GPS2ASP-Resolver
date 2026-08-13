@@ -183,13 +183,33 @@ def _sync_cleanup_stale(index_dir: Path) -> None:
             except OSError as exc:
                 logger.error(
                     "cleanup_stale: could not restore backup index from %s to %s (%s) — "
-                    "destroying backup; the index will need to be rebuilt",
+                    "attempting copy-based fallback recovery",
                     bak,
                     index_dir,
                     exc,
                     exc_info=True,
                 )
-                shutil.rmtree(bak, ignore_errors=True)
+                # WR-05 (38-REVIEW.md): os.replace can fail for reasons that
+                # don't affect a plain copy (e.g. EXDEV when _bak and the
+                # parent dir unexpectedly end up on different filesystems,
+                # or a transient EBUSY). Before permanently discarding the
+                # LAST viable copy of the index, try shutil.copytree as a
+                # fallback — it trades a recoverable state (a valid index,
+                # copied instead of renamed) for an avoidable one (forcing
+                # a full rebuild). _bak is wiped either way once we're done
+                # with it: on copy success it is now redundant; on copy
+                # failure it is unusable and there is nothing left to keep.
+                try:
+                    shutil.copytree(bak, index_dir)
+                except OSError as copy_exc:
+                    logger.error(
+                        "cleanup_stale: copytree fallback also failed (%s) — "
+                        "destroying backup; the index will need to be rebuilt",
+                        copy_exc,
+                        exc_info=True,
+                    )
+                finally:
+                    shutil.rmtree(bak, ignore_errors=True)
 
     try:
         download_zip.unlink(missing_ok=True)
