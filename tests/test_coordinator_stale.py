@@ -633,3 +633,45 @@ async def test_store_corrupt_payload_falls_back_to_none(
         f"Corrupt payload should emit a WARNING about index_stale store; "
         f"got {[r.getMessage() for r in caplog.records]!r}"
     )
+
+
+async def test_pre_import_exception_posts_error_notification_not_unbound_local(
+    pn_module: SimpleNamespace, caplog: pytest.LogCaptureFixture
+):
+    """Regression: an exception raised BEFORE the lazy pn_create import must
+    still reach the error-notification path.
+
+    The lazy ``from ... import async_create as pn_create`` lives inside the
+    ``try`` block, which makes ``pn_create`` a function-local name for the
+    WHOLE method scope.  When the exception fires before that import runs, the
+    ``except`` handler used to die with ``UnboundLocalError`` instead of
+    posting its notification.
+
+    A tz-naive ``_last_rebuilt`` is the trigger: ``dt_util.utcnow() - naive``
+    raises TypeError at the subtraction, which precedes the lazy import.
+    ``index_io._sync_read_build_timestamp`` normalises to tz-aware so this is
+    not reachable via ``async_start`` today, but the handler must not depend on
+    that upstream guarantee.
+    """
+    stub = _make_coord_stub_stale(last_rebuilt=datetime(2020, 1, 1, 0, 0, 0))
+    check = _bind(stub, "_async_check_stale_and_rebuild")
+    caplog.set_level(logging.ERROR, logger="custom_components.asp_parking.coordinator")
+
+    # Must not propagate (UnboundLocalError previously escaped the handler).
+    await check()
+
+    # The error notification actually fired, with its own distinct id.
+    error_calls = [
+        c
+        for c in pn_module.async_create.call_args_list
+        if c.kwargs.get("notification_id") == "asp_parking_index_stale_check_error"
+    ]
+    assert len(error_calls) == 1, (
+        f"Expected exactly one stale-check-error notification; got "
+        f"{pn_module.async_create.call_args_list!r}"
+    )
+
+    # No rebuild triggered, but last_stale_check still persisted (finally block).
+    assert stub.async_request_rebuild.await_count == 0
+    assert stub._index_stale_store.async_save.await_count == 1
+    assert caplog.records, "Unexpected-error path should log at ERROR"

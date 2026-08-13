@@ -1098,6 +1098,16 @@ class ASPParkingCoordinator:
                 "ASP Parking: stale-check/rebuild encountered unexpected error",
                 exc_info=True,
             )
+            # Re-import locally: the lazy import above lives inside the try
+            # block, so `pn_create` is a function-local name that is still
+            # UNBOUND whenever the exception was raised before that import ran
+            # (e.g. a TypeError from the `_last_rebuilt` subtraction).  Without
+            # this, the handler itself dies with UnboundLocalError and the
+            # error notification is never posted.
+            from homeassistant.components.persistent_notification import (
+                async_create as pn_create,
+            )
+
             pn_create(
                 self.hass,
                 "The automatic stale-index check failed unexpectedly. "
