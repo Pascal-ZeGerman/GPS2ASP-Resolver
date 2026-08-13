@@ -205,11 +205,20 @@ async def test_press_remote_exactly_30_days_uses_from_source():
 
 
 async def test_double_press_within_24h_uses_from_source():
-    """SPEC AC: second press within 24h -> FROM_SOURCE regardless of remote age."""
+    """SPEC AC: second press within 24h -> FROM_SOURCE regardless of remote age.
+
+    CR-01: ``previous_button_press`` is now an explicit argument (the
+    caller's snapshot of the PRIOR press) rather than being re-read from
+    ``self._last_button_press`` — see 38-REVIEW.md CR-01. This isolated
+    unit test exercises the decision function's contract directly; the
+    end-to-end double-press behavior through the real
+    ``async_request_rebuild`` call chain is covered by
+    ``test_coordinator_button_double_press_e2e.py``.
+    """
     recent = datetime.now(timezone.utc) - timedelta(hours=2)
     stub = _make_coord_stub(remote_age_days=5.0, last_button_press=recent)
     decide = _bind(stub, "_async_decide_rebuild_path")
-    path, reason = await decide("button")
+    path, reason = await decide("button", recent)
     assert path == RebuildPath.FROM_SOURCE
     assert reason == "double_press"
 
@@ -219,7 +228,7 @@ async def test_press_after_24h_window_uses_download():
     past = datetime.now(timezone.utc) - timedelta(hours=25)
     stub = _make_coord_stub(remote_age_days=5.0, last_button_press=past)
     decide = _bind(stub, "_async_decide_rebuild_path")
-    path, reason = await decide("button")
+    path, reason = await decide("button", past)
     assert path == RebuildPath.DOWNLOAD
     assert reason == "remote_fresh"
 
@@ -229,7 +238,7 @@ async def test_stale_check_triggered_by_skips_24h_override():
     recent = datetime.now(timezone.utc) - timedelta(hours=2)
     stub = _make_coord_stub(remote_age_days=5.0, last_button_press=recent)
     decide = _bind(stub, "_async_decide_rebuild_path")
-    path, reason = await decide("stale_check")
+    path, reason = await decide("stale_check", recent)
     assert path == RebuildPath.DOWNLOAD
     assert reason == "remote_fresh"
 

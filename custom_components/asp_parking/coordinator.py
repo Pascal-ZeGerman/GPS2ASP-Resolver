@@ -685,7 +685,15 @@ class ASPParkingCoordinator:
         # write cannot bypass the IDX-02 concurrent-press guard (CR-01).
         self._is_rebuilding = True
 
+        # CR-01: snapshot the PREVIOUS press before overwriting so the
+        # 24h double-press check in ``_async_decide_rebuild_path`` compares
+        # "now" against the prior press, not against itself. Threading this
+        # through as an argument (rather than re-reading the mutated
+        # ``self._last_button_press`` instance attribute later) is what
+        # makes the check correct -- see 38-REVIEW.md CR-01.
+        previous_button_press: datetime | None = None
         if triggered_by == "button":
+            previous_button_press = self._last_button_press
             self._last_button_press = dt_util.utcnow()
             if self._index_stale_store is not None:
                 try:
@@ -714,12 +722,19 @@ class ASPParkingCoordinator:
         # self._async_do_rebuild() since `self` is an ASPParkingCoordinator.
         self._rebuild_task = self.entry.async_create_background_task(
             self.hass,
-            ASPParkingCoordinator._async_do_rebuild(self, triggered_by=triggered_by),
+            ASPParkingCoordinator._async_do_rebuild(
+                self,
+                triggered_by=triggered_by,
+                previous_button_press=previous_button_press,
+            ),
             name="asp_parking_index_rebuild",
         )
 
     async def _async_do_rebuild(
-        self, *, triggered_by: Literal["button", "stale_check"] = "button"
+        self,
+        *,
+        triggered_by: Literal["button", "stale_check"] = "button",
+        previous_button_press: datetime | None = None,
     ) -> None:
         """Background task body — performs the full rebuild lifecycle.
 
@@ -760,7 +775,9 @@ class ASPParkingCoordinator:
                 # Phase 38 (IDX-05): decide which executor strategy to run
                 # BEFORE doing any work so the INFO log records intent even
                 # if the chosen path fails.
-                path, reason = await self._async_decide_rebuild_path(triggered_by)
+                path, reason = await self._async_decide_rebuild_path(
+                    triggered_by, previous_button_press
+                )
                 logger.info(
                     "asp_parking: index rebuild path=%s reason=%s",
                     path.value,
@@ -864,7 +881,7 @@ class ASPParkingCoordinator:
     # ------------------------------------------------------------------
 
     async def _async_decide_rebuild_path(
-        self, triggered_by: str
+        self, triggered_by: str, previous_button_press: datetime | None = None
     ) -> tuple[RebuildPath, str]:
         """Return ``(path, reason_log_tag)`` for the rebuild router.
 
@@ -876,9 +893,17 @@ class ASPParkingCoordinator:
 
         D-03: ``triggered_by="stale_check"`` SKIPS the 24h double-press
         override entirely — that rule is button-only.
+
+        CR-01: ``previous_button_press`` is the value of
+        ``self._last_button_press`` from BEFORE the current press
+        overwrote it (snapshotted by the caller in
+        ``async_request_rebuild``). Re-reading the mutated instance
+        attribute here would always compare "now" against itself, making
+        every button press look like a double-press — see 38-REVIEW.md
+        CR-01.
         """
-        if triggered_by == "button" and self._last_button_press is not None:
-            window = dt_util.utcnow() - self._last_button_press
+        if triggered_by == "button" and previous_button_press is not None:
+            window = dt_util.utcnow() - previous_button_press
             if window < timedelta(hours=BUTTON_DOUBLE_PRESS_WINDOW_HOURS):
                 return RebuildPath.FROM_SOURCE, "double_press"
 
