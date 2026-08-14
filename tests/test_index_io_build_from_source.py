@@ -24,6 +24,7 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
+from rtree import index as rtree_index
 
 # Imports targeted at the future symbol Plan 38-01 Task 2 must implement.
 # Collection MUST fail with ImportError until Task 2 lands the function.
@@ -304,3 +305,95 @@ def test_trafdir_nv_excluded(tmp_path: Path, monkeypatch) -> None:
 
     segments = json.loads((tmp_path / "idx_tmp" / "segments.json").read_text())
     assert "10006" not in segments, "TRAFDIR=NV segment must be filtered out"
+
+
+@respx.mock
+def test_rtree_non_empty(tmp_path: Path, monkeypatch) -> None:
+    """Nyquist gap 38-01-03: segments.idx/.dat must form a POPULATED R-tree.
+
+    Guards against rtree bug #159 -- using the generator-constructor form
+    (instead of an insert loop inside try/finally) silently writes an empty
+    index while the .idx/.dat files still exist on disk, so a mere
+    ``.exists()`` check on the files is not sufficient coverage.
+    """
+    monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
+    _route_cscl_two_pages(_load_cscl_fixture())
+    _route_soda_ok()
+
+    index_dir = tmp_path / "idx"
+    _sync_build_from_source(index_dir)
+
+    tmp = tmp_path / "idx_tmp"
+    assert (tmp / "segments.idx").exists()
+    assert (tmp / "segments.dat").exists()
+
+    idx = rtree_index.Index(str(tmp / "segments"))
+    try:
+        assert idx.count(idx.bounds) > 0, (
+            "R-tree at "
+            f"{tmp / 'segments'} is empty despite .idx/.dat files existing "
+            "on disk (rtree bug #159 -- generator constructor instead of "
+            "insert loop)"
+        )
+        hits = list(idx.intersection(idx.bounds))
+        assert len(hits) > 0
+    finally:
+        idx.close()
+
+
+@respx.mock
+def test_graph_json_zst_round_trip(tmp_path: Path, monkeypatch) -> None:
+    """Nyquist gap 38-01-04: graph.json.zst must be parseable by StreetGraph.load
+    and contain at least one segment/adjacency entry -- not merely exist on disk.
+    """
+    from custom_components.asp_parking.gps2asp.signs.graph import StreetGraph
+
+    monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
+    _route_cscl_two_pages(_load_cscl_fixture())
+    _route_soda_ok()
+
+    index_dir = tmp_path / "idx"
+    _sync_build_from_source(index_dir)
+
+    tmp = tmp_path / "idx_tmp"
+    assert (tmp / "graph.json.zst").exists()
+
+    graph = StreetGraph.load(tmp)
+    assert graph is not None, (
+        "StreetGraph.load returned None for a freshly-built graph.json.zst "
+        "-- either the file is corrupt/unreadable or empty"
+    )
+    assert len(graph.segment_streets) > 0, "graph has zero segment_streets entries"
+    assert len(graph.adjacency) > 0, "graph has zero adjacency entries"
+
+
+def test_manifest_no_heavy_gis_dependency() -> None:
+    """Nyquist gap 38-01-06: manifest.json requirements must never gain a heavy
+    GIS/GDAL dependency (geopandas, GDAL, fiona, pyogrio).
+
+    Evergreen regression test -- not a git-diff/byte-identical check, which
+    has no meaning outside the PR that originally introduced this plan.
+    Per 38-01-SUMMARY.md: "geopandas pulls GDAL (~500MB) into the HA Python
+    environment, violating the manifest.json 'no new external deps'
+    constraint."
+    """
+    manifest_path = (
+        Path(__file__).parent.parent
+        / "custom_components"
+        / "asp_parking"
+        / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text())
+    requirements = manifest.get("requirements", [])
+    assert isinstance(requirements, list) and requirements, (
+        "manifest.json requirements array is missing or empty"
+    )
+
+    banned_substrings = ("geopandas", "gdal", "fiona", "pyogrio")
+    for req in requirements:
+        req_lower = str(req).lower()
+        for banned in banned_substrings:
+            assert banned not in req_lower, (
+                f"manifest.json requirements contains a banned heavy GIS "
+                f"dependency: {req!r} (matched {banned!r})"
+            )
