@@ -583,12 +583,19 @@ def test_cleanup_stale_restores_empty_bak_when_index_absent(tmp_path: Path) -> N
     assert not bak.exists(), "_bak must be gone after restore"
 
 
-def test_cleanup_stale_wipes_bak_when_os_replace_raises(tmp_path: Path) -> None:
-    """When os.replace raises OSError during _bak restore, _bak is wiped.
+def test_cleanup_stale_copytree_fallback_recovers_index_when_os_replace_raises(
+    tmp_path: Path,
+) -> None:
+    """WR-05 (38-REVIEW.md): when os.replace raises OSError during _bak
+    restore, _sync_cleanup_stale falls back to shutil.copytree instead of
+    immediately discarding the LAST viable copy of the index. If the copy
+    succeeds, index_dir ends up populated and _bak is wiped (now redundant).
 
-    Edge-case 5: _sync_cleanup_stale catches the OSError and falls back to
-    shutil.rmtree(_bak), so _bak disappears and index_dir remains absent.
-    The function must not re-raise.
+    Supersedes the old "always wipe _bak on os.replace failure" contract —
+    the review flagged that behavior as trading a recoverable state (rebuild
+    forced) for an avoidable one, since a same-filesystem `rename` failure
+    (e.g. transient EBUSY) does not necessarily mean a `copytree` would also
+    fail.
     """
     from unittest.mock import patch
 
@@ -603,10 +610,43 @@ def test_cleanup_stale_wipes_bak_when_os_replace_raises(tmp_path: Path) -> None:
         "custom_components.asp_parking.index_io.os.replace",
         side_effect=OSError("EBUSY"),
     ):
-        # Must not raise.
+        # Must not raise. Only os.replace is patched to fail — the
+        # shutil.copytree fallback runs for real against tmp_path.
         _sync_cleanup_stale(index_dir)
 
-    assert not bak.exists(), "_bak must be wiped after os.replace failure"
+    assert index_dir.exists(), "index_dir must be recovered via the copytree fallback"
+    assert (index_dir / "segments.idx").read_text() == "data"
+    assert not bak.exists(), "_bak must be wiped once the copy fallback succeeds"
+
+
+def test_cleanup_stale_wipes_bak_when_both_replace_and_copytree_raise(
+    tmp_path: Path,
+) -> None:
+    """WR-05 (38-REVIEW.md): when BOTH os.replace and the copytree fallback
+    raise OSError, _bak is wiped as a last resort (unusable either way) and
+    index_dir remains absent. The function must not re-raise.
+    """
+    from unittest.mock import patch
+
+    index_dir = tmp_path / "index"
+    bak = tmp_path / "index_bak"
+    bak.mkdir()
+    (bak / "segments.idx").write_text("data")
+
+    assert not index_dir.exists()
+
+    with patch(
+        "custom_components.asp_parking.index_io.os.replace",
+        side_effect=OSError("EBUSY"),
+    ):
+        with patch(
+            "custom_components.asp_parking.index_io.shutil.copytree",
+            side_effect=OSError("disk full"),
+        ):
+            # Must not raise.
+            _sync_cleanup_stale(index_dir)
+
+    assert not bak.exists(), "_bak must be wiped after both fallbacks fail"
     assert not index_dir.exists(), "index_dir must remain absent"
 
 

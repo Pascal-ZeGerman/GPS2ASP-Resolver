@@ -24,6 +24,7 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
+from rtree import index as rtree_index
 
 # Imports targeted at the future symbol Plan 38-01 Task 2 must implement.
 # Collection MUST fail with ImportError until Task 2 lands the function.
@@ -33,7 +34,10 @@ from custom_components.asp_parking.const import (
     MAX_CSCL_PAGES,
     SODA_PARKING_SIGNS_URL,
 )
-from custom_components.asp_parking.index_io import _sync_build_from_source
+from custom_components.asp_parking.index_io import (
+    _sync_build_from_source,
+    _sync_fetch_asp_signs,
+)
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
@@ -184,6 +188,71 @@ def test_pagination_cap_raises(tmp_path: Path, monkeypatch) -> None:
 
 
 @respx.mock
+def test_soda_signs_pagination_cap_stops_instead_of_looping_forever(
+    monkeypatch,
+) -> None:
+    """WR-02 (38-REVIEW.md): a misbehaving SODA endpoint that keeps returning
+    full-size batches must stop at the pagination cap instead of looping
+    forever.
+
+    Unlike the CSCL fetcher (fail-hard RuntimeError), the SODA signs fetch is
+    fail-soft (T-38-01-02) -- it must return partial results, not raise.
+
+    Batch size / page cap are monkeypatched small (5 records / 3 pages) so
+    this test runs fast while still exercising the real cap-check codepath
+    in ``_sync_fetch_asp_signs`` (which reads the module-level constants at
+    call time).
+    """
+    monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
+    small_batch_size = 5
+    small_page_cap = 3
+    monkeypatch.setattr(
+        "custom_components.asp_parking.index_io.SIGNS_BATCH_SIZE", small_batch_size
+    )
+    monkeypatch.setattr(
+        "custom_components.asp_parking.index_io.MAX_SIGNS_PAGES", small_page_cap
+    )
+
+    base_record = _load_soda_fixture()[0]
+    full_batch = [dict(base_record) for _ in range(small_batch_size)]
+
+    # Mount enough full-batch responses to exceed the cap; if the guard is
+    # missing, respx will exhaust these routes and raise instead of hanging,
+    # which is itself proof the guard is required.
+    responses = [
+        httpx.Response(200, json=full_batch) for _ in range(small_page_cap + 2)
+    ]
+    route = respx.get(SODA_PARKING_SIGNS_URL).mock(side_effect=responses)
+
+    result = _sync_fetch_asp_signs(headers={})
+
+    assert route.call_count == small_page_cap, (
+        f"Expected pagination to stop at exactly the page cap="
+        f"{small_page_cap} requests, got {route.call_count}"
+    )
+    assert isinstance(result, set)
+
+
+@respx.mock
+def test_soda_signs_non_list_response_treated_as_no_more_data(
+    monkeypatch,
+) -> None:
+    """WR-03 (38-REVIEW.md): a truthy non-list JSON body (e.g. an error dict on
+    an HTTP-200 soft error) must be treated as "no more data", not iterated
+    as if it were a list of records (which would AttributeError on
+    ``record.get(...)`` when iterating a dict's string keys).
+    """
+    monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
+    respx.get(SODA_PARKING_SIGNS_URL).mock(
+        return_value=httpx.Response(200, json={"error": "soft failure"})
+    )
+
+    # Must not raise AttributeError/TypeError -- fail-soft contract (T-38-01-02).
+    result = _sync_fetch_asp_signs(headers={})
+    assert result == set()
+
+
+@respx.mock
 def test_soda_failure_is_fail_soft(tmp_path: Path, monkeypatch) -> None:
     """SODA HTTP 500 must NOT raise — has_asp lookup is empty but the build completes."""
     monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
@@ -236,3 +305,95 @@ def test_trafdir_nv_excluded(tmp_path: Path, monkeypatch) -> None:
 
     segments = json.loads((tmp_path / "idx_tmp" / "segments.json").read_text())
     assert "10006" not in segments, "TRAFDIR=NV segment must be filtered out"
+
+
+@respx.mock
+def test_rtree_non_empty(tmp_path: Path, monkeypatch) -> None:
+    """Nyquist gap 38-01-03: segments.idx/.dat must form a POPULATED R-tree.
+
+    Guards against rtree bug #159 -- using the generator-constructor form
+    (instead of an insert loop inside try/finally) silently writes an empty
+    index while the .idx/.dat files still exist on disk, so a mere
+    ``.exists()`` check on the files is not sufficient coverage.
+    """
+    monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
+    _route_cscl_two_pages(_load_cscl_fixture())
+    _route_soda_ok()
+
+    index_dir = tmp_path / "idx"
+    _sync_build_from_source(index_dir)
+
+    tmp = tmp_path / "idx_tmp"
+    assert (tmp / "segments.idx").exists()
+    assert (tmp / "segments.dat").exists()
+
+    idx = rtree_index.Index(str(tmp / "segments"))
+    try:
+        assert idx.count(idx.bounds) > 0, (
+            "R-tree at "
+            f"{tmp / 'segments'} is empty despite .idx/.dat files existing "
+            "on disk (rtree bug #159 -- generator constructor instead of "
+            "insert loop)"
+        )
+        hits = list(idx.intersection(idx.bounds))
+        assert len(hits) > 0
+    finally:
+        idx.close()
+
+
+@respx.mock
+def test_graph_json_zst_round_trip(tmp_path: Path, monkeypatch) -> None:
+    """Nyquist gap 38-01-04: graph.json.zst must be parseable by StreetGraph.load
+    and contain at least one segment/adjacency entry -- not merely exist on disk.
+    """
+    from custom_components.asp_parking.gps2asp.signs.graph import StreetGraph
+
+    monkeypatch.delenv("NYC_OPEN_DATA_APP_TOKEN", raising=False)
+    _route_cscl_two_pages(_load_cscl_fixture())
+    _route_soda_ok()
+
+    index_dir = tmp_path / "idx"
+    _sync_build_from_source(index_dir)
+
+    tmp = tmp_path / "idx_tmp"
+    assert (tmp / "graph.json.zst").exists()
+
+    graph = StreetGraph.load(tmp)
+    assert graph is not None, (
+        "StreetGraph.load returned None for a freshly-built graph.json.zst "
+        "-- either the file is corrupt/unreadable or empty"
+    )
+    assert len(graph.segment_streets) > 0, "graph has zero segment_streets entries"
+    assert len(graph.adjacency) > 0, "graph has zero adjacency entries"
+
+
+def test_manifest_no_heavy_gis_dependency() -> None:
+    """Nyquist gap 38-01-06: manifest.json requirements must never gain a heavy
+    GIS/GDAL dependency (geopandas, GDAL, fiona, pyogrio).
+
+    Evergreen regression test -- not a git-diff/byte-identical check, which
+    has no meaning outside the PR that originally introduced this plan.
+    Per 38-01-SUMMARY.md: "geopandas pulls GDAL (~500MB) into the HA Python
+    environment, violating the manifest.json 'no new external deps'
+    constraint."
+    """
+    manifest_path = (
+        Path(__file__).parent.parent
+        / "custom_components"
+        / "asp_parking"
+        / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text())
+    requirements = manifest.get("requirements", [])
+    assert isinstance(requirements, list) and requirements, (
+        "manifest.json requirements array is missing or empty"
+    )
+
+    banned_substrings = ("geopandas", "gdal", "fiona", "pyogrio")
+    for req in requirements:
+        req_lower = str(req).lower()
+        for banned in banned_substrings:
+            assert banned not in req_lower, (
+                f"manifest.json requirements contains a banned heavy GIS "
+                f"dependency: {req!r} (matched {banned!r})"
+            )

@@ -191,6 +191,7 @@ def _install_executor_spies(
     cleanup_stale = MagicMock(name="_sync_cleanup_stale")
     download_and_extract = MagicMock(name="_sync_download_and_extract")
     atomic_swap = MagicMock(name="_sync_atomic_swap")
+    verify_index = MagicMock(name="_sync_verify_index")
     read_build_timestamp = MagicMock(
         name="_sync_read_build_timestamp", return_value=build_timestamp_return
     )
@@ -203,6 +204,9 @@ def _install_executor_spies(
         coord_mod, "_sync_download_and_extract", download_and_extract, raising=False
     )
     monkeypatch.setattr(coord_mod, "_sync_atomic_swap", atomic_swap, raising=False)
+    # WR-01: coordinator now verifies the swapped-in index before trusting
+    # it; stub this out so tests don't depend on real on-disk index files.
+    monkeypatch.setattr(coord_mod, "_sync_verify_index", verify_index, raising=False)
     monkeypatch.setattr(
         coord_mod, "_sync_read_build_timestamp", read_build_timestamp, raising=False
     )
@@ -232,6 +236,7 @@ def _install_executor_spies(
         "cleanup_stale": cleanup_stale,
         "download_and_extract": download_and_extract,
         "atomic_swap": atomic_swap,
+        "verify_index": verify_index,
         "read_build_timestamp": read_build_timestamp,
         "spatial_index_reset": spatial_index_reset,
         "pn_create": pn_create,
@@ -508,6 +513,50 @@ async def test_async_do_rebuild_failure_path_creates_error_notification_with_dis
     # Entities notified in finally (entry notify moved to async_request_rebuild)
     assert stub._async_notify_entities.call_count >= 1, (
         "Entities notified at least once in finally block even on failure"
+    )
+
+
+async def test_async_do_rebuild_failure_path_dismisses_stale_notification(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """WR-01/WR-04 (38-REVIEW.md): a failed rebuild MUST also dismiss the
+    'asp_parking_index_stale' banner, not just 'asp_parking_index_rebuild'.
+
+    Before the WR-04 fix, only the success path dismissed
+    'asp_parking_index_stale'. A rebuild triggered by the stale-check flow
+    that then FAILED would leave the "auto-rebuilding" banner dangling
+    alongside the new "Rebuild Failed" notification.
+    """
+    stub = _make_coord_stub(is_rebuilding=True)
+    spies = _install_executor_spies(
+        monkeypatch,
+        download_raises=RuntimeError("network down"),
+    )
+
+    async def _executor_dispatch(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    stub.hass.async_add_executor_job.side_effect = _executor_dispatch
+
+    do_rebuild = _bind(stub, "_async_do_rebuild")
+    await do_rebuild(triggered_by="stale_check")  # MUST NOT raise
+
+    dismiss_ids_positional = {
+        c.args[1] for c in spies["pn_dismiss"].call_args_list if len(c.args) > 1
+    }
+    dismiss_ids_kwarg = {
+        c.kwargs.get("notification_id")
+        for c in spies["pn_dismiss"].call_args_list
+        if "notification_id" in c.kwargs
+    }
+    all_dismiss_ids = dismiss_ids_positional | dismiss_ids_kwarg
+
+    assert "asp_parking_index_stale" in all_dismiss_ids, (
+        "WR-04: a failed rebuild MUST dismiss 'asp_parking_index_stale' too, "
+        f"got: {all_dismiss_ids}"
+    )
+    assert "asp_parking_index_rebuild" in all_dismiss_ids, (
+        f"In-progress notification must still be dismissed; got: {all_dismiss_ids}"
     )
 
 

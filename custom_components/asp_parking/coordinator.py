@@ -120,6 +120,7 @@ from .index_io import (
     _sync_cleanup_stale,
     _sync_download_and_extract,
     _sync_read_build_timestamp,
+    _sync_verify_index,
 )
 
 if TYPE_CHECKING:
@@ -685,7 +686,15 @@ class ASPParkingCoordinator:
         # write cannot bypass the IDX-02 concurrent-press guard (CR-01).
         self._is_rebuilding = True
 
+        # CR-01: snapshot the PREVIOUS press before overwriting so the
+        # 24h double-press check in ``_async_decide_rebuild_path`` compares
+        # "now" against the prior press, not against itself. Threading this
+        # through as an argument (rather than re-reading the mutated
+        # ``self._last_button_press`` instance attribute later) is what
+        # makes the check correct -- see 38-REVIEW.md CR-01.
+        previous_button_press: datetime | None = None
         if triggered_by == "button":
+            previous_button_press = self._last_button_press
             self._last_button_press = dt_util.utcnow()
             if self._index_stale_store is not None:
                 try:
@@ -714,12 +723,19 @@ class ASPParkingCoordinator:
         # self._async_do_rebuild() since `self` is an ASPParkingCoordinator.
         self._rebuild_task = self.entry.async_create_background_task(
             self.hass,
-            ASPParkingCoordinator._async_do_rebuild(self, triggered_by=triggered_by),
+            ASPParkingCoordinator._async_do_rebuild(
+                self,
+                triggered_by=triggered_by,
+                previous_button_press=previous_button_press,
+            ),
             name="asp_parking_index_rebuild",
         )
 
     async def _async_do_rebuild(
-        self, *, triggered_by: Literal["button", "stale_check"] = "button"
+        self,
+        *,
+        triggered_by: Literal["button", "stale_check"] = "button",
+        previous_button_press: datetime | None = None,
     ) -> None:
         """Background task body — performs the full rebuild lifecycle.
 
@@ -760,7 +776,9 @@ class ASPParkingCoordinator:
                 # Phase 38 (IDX-05): decide which executor strategy to run
                 # BEFORE doing any work so the INFO log records intent even
                 # if the chosen path fails.
-                path, reason = await self._async_decide_rebuild_path(triggered_by)
+                path, reason = await self._async_decide_rebuild_path(
+                    triggered_by, previous_button_press
+                )
                 logger.info(
                     "asp_parking: index rebuild path=%s reason=%s",
                     path.value,
@@ -782,6 +800,15 @@ class ASPParkingCoordinator:
                     )
 
                 await self.hass.async_add_executor_job(_sync_atomic_swap, INDEX_DIR)
+
+                # WR-01: verify the newly-swapped-in index BEFORE trusting it
+                # and posting a success notification. A partial/corrupt write
+                # (disk full mid-write, SD-card corruption, truncated
+                # extraction) must be caught here -- not later as an opaque
+                # IndexIntegrityError/rtree crash from the resolve pipeline.
+                # A raised IndexIntegrityError is caught by the ``except``
+                # block below and reported as a normal rebuild failure.
+                await self.hass.async_add_executor_job(_sync_verify_index, INDEX_DIR)
 
                 # RESEARCH Pitfall 2: reset MUST happen AFTER atomic_swap so the
                 # next SpatialIndex.get() re-opens the new files. reset() just
@@ -818,6 +845,13 @@ class ASPParkingCoordinator:
 
             except Exception as err:  # noqa: BLE001
                 pn_dismiss(self.hass, "asp_parking_index_rebuild")
+                # WR-04: dismiss the "index is stale, auto-rebuilding" banner
+                # on failure too -- otherwise it lingers alongside the new
+                # "Rebuild Failed" notification until the next stale-check
+                # cycle happens to re-post it. Idempotent to dismiss a
+                # notification that was never posted (button-triggered
+                # rebuilds never create this one).
+                pn_dismiss(self.hass, "asp_parking_index_stale")
                 if isinstance(err, OSError):
                     if err.strerror and err.filename:
                         _err_summary = f"{err.strerror} ({err.filename})"
@@ -864,7 +898,7 @@ class ASPParkingCoordinator:
     # ------------------------------------------------------------------
 
     async def _async_decide_rebuild_path(
-        self, triggered_by: str
+        self, triggered_by: str, previous_button_press: datetime | None = None
     ) -> tuple[RebuildPath, str]:
         """Return ``(path, reason_log_tag)`` for the rebuild router.
 
@@ -876,9 +910,17 @@ class ASPParkingCoordinator:
 
         D-03: ``triggered_by="stale_check"`` SKIPS the 24h double-press
         override entirely — that rule is button-only.
+
+        CR-01: ``previous_button_press`` is the value of
+        ``self._last_button_press`` from BEFORE the current press
+        overwrote it (snapshotted by the caller in
+        ``async_request_rebuild``). Re-reading the mutated instance
+        attribute here would always compare "now" against itself, making
+        every button press look like a double-press — see 38-REVIEW.md
+        CR-01.
         """
-        if triggered_by == "button" and self._last_button_press is not None:
-            window = dt_util.utcnow() - self._last_button_press
+        if triggered_by == "button" and previous_button_press is not None:
+            window = dt_util.utcnow() - previous_button_press
             if window < timedelta(hours=BUTTON_DOUBLE_PRESS_WINDOW_HOURS):
                 return RebuildPath.FROM_SOURCE, "double_press"
 
@@ -1098,6 +1140,16 @@ class ASPParkingCoordinator:
                 "ASP Parking: stale-check/rebuild encountered unexpected error",
                 exc_info=True,
             )
+            # Re-import locally: the lazy import above lives inside the try
+            # block, so `pn_create` is a function-local name that is still
+            # UNBOUND whenever the exception was raised before that import ran
+            # (e.g. a TypeError from the `_last_rebuilt` subtraction).  Without
+            # this, the handler itself dies with UnboundLocalError and the
+            # error notification is never posted.
+            from homeassistant.components.persistent_notification import (
+                async_create as pn_create,
+            )
+
             pn_create(
                 self.hass,
                 "The automatic stale-index check failed unexpectedly. "
