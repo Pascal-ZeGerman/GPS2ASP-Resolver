@@ -588,9 +588,7 @@ async def test_do_rebuild_verifies_index_after_atomic_swap(
     )
 
     call_order: list[str] = []
-    spies["atomic_swap"].side_effect = lambda *a, **k: call_order.append(
-        "atomic_swap"
-    )
+    spies["atomic_swap"].side_effect = lambda *a, **k: call_order.append("atomic_swap")
     spies["verify_index"].side_effect = lambda *a, **k: call_order.append(
         "verify_index"
     )
@@ -604,11 +602,10 @@ async def test_do_rebuild_verifies_index_after_atomic_swap(
     assert call_order == ["atomic_swap", "verify_index"], (
         f"verify_index MUST run AFTER atomic_swap, got order {call_order!r}"
     )
-    assert spies["pn_create"].call_args_list[-1].kwargs.get(
-        "notification_id"
-    ) == "asp_parking_index_rebuild_success", (
-        "A valid index MUST still post the success notification"
-    )
+    assert (
+        spies["pn_create"].call_args_list[-1].kwargs.get("notification_id")
+        == "asp_parking_index_rebuild_success"
+    ), "A valid index MUST still post the success notification"
 
 
 async def test_do_rebuild_treats_integrity_failure_as_rebuild_failure(
@@ -635,8 +632,7 @@ async def test_do_rebuild_treats_integrity_failure_as_rebuild_failure(
     await do_rebuild(triggered_by="button")
 
     notification_ids = [
-        call.kwargs.get("notification_id")
-        for call in spies["pn_create"].call_args_list
+        call.kwargs.get("notification_id") for call in spies["pn_create"].call_args_list
     ]
     assert "asp_parking_index_rebuild_error" in notification_ids, (
         "A corrupt post-swap index MUST post the rebuild-error notification"

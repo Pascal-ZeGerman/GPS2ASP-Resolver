@@ -614,9 +614,7 @@ def test_cleanup_stale_copytree_fallback_recovers_index_when_os_replace_raises(
         # shutil.copytree fallback runs for real against tmp_path.
         _sync_cleanup_stale(index_dir)
 
-    assert index_dir.exists(), (
-        "index_dir must be recovered via the copytree fallback"
-    )
+    assert index_dir.exists(), "index_dir must be recovered via the copytree fallback"
     assert (index_dir / "segments.idx").read_text() == "data"
     assert not bak.exists(), "_bak must be wiped once the copy fallback succeeds"
 
