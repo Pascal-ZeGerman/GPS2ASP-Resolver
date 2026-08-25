@@ -7,20 +7,24 @@ Guards the contract that lets a user swap the vehicle's GPS source
   Reconfigure action is offered (``ConfigEntry.supports_reconfigure``);
 * the form renders pre-filled with the currently configured entity;
 * ``manifest.json``'s ``single_config_entry: true`` does not abort the flow;
-* a submit persists into ``entry.data``, merges rather than replaces, schedules
-  a reload, and leaves ``entry.options`` (thresholds, NYC 311 key, notify
-  service, parking area, CalDAV binding) bit-for-bit untouched;
-* re-saving the same entity is a true no-op with no reload.
+* a submit persists into ``entry.data``, merges rather than replaces, notifies
+  the entry's registered update listener exactly once, and leaves
+  ``entry.options`` (thresholds, NYC 311 key, notify service, parking area,
+  CalDAV binding) bit-for-bit untouched;
+* re-saving the same entity is a true no-op with no listener notification.
 
-``hass.config_entries.async_schedule_reload`` is patched in every submit test:
-the ``MockConfigEntry`` here is added to hass but never set up, so an actual
-scheduled reload would invoke the real ``async_setup_entry`` and load the
-spatial index. It is a synchronous ``@callback``, hence ``MagicMock``.
+The reconfigure step deliberately relies on ``async_update_entry``'s own
+update-listener notification for the reload -- it must NOT also call
+``async_schedule_reload`` itself, or a real submission would reload the
+integration twice. Tests that need to observe "was a reload triggered"
+therefore register their own fake update listener on the entry (real
+``async_setup_entry`` is never invoked here, so the production listener,
+``_async_options_updated``, is never registered).
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.data_entry_flow import FlowResultType
@@ -36,16 +40,6 @@ from custom_components.asp_parking.const import (
 )
 
 pytestmark = pytest.mark.ha_integration
-
-
-# A fully populated options dict: three thresholds plus one non-threshold key,
-# so Test 6 proves the reconfigure step never reaches into entry.options.
-_OPTIONS: dict = {
-    CONF_MOVEMENT_THRESHOLD: 50,
-    CONF_REFRESH_INTERVAL: 8,
-    CONF_STALE_TIMEOUT: 8,
-    CONF_NOTIFY_SERVICE: "notify.mobile_app_phone",
-}
 
 
 def _make_entry(hass, data: dict | None = None, options: dict | None = None):
@@ -64,19 +58,22 @@ def _make_entry(hass, data: dict | None = None, options: dict | None = None):
 
 
 async def _submit_reconfigure(hass, entry, new_entity_id: str):
-    """Run the reconfigure flow to completion with async_schedule_reload patched.
+    """Run the reconfigure flow to completion and return its result.
 
-    Returns ``(result, mock_reload)`` so callers can assert on both the flow
-    result and whether a reload was actually scheduled.
+    Registers a fake update listener on the entry beforehand so callers can
+    observe whether the submission notified it (real ``async_setup_entry``,
+    and thus the production listener, is never invoked in these tests).
+    Returns ``(result, listener)``.
     """
-    with patch.object(
-        hass.config_entries, "async_schedule_reload", MagicMock()
-    ) as mock_reload:
-        result = await entry.start_reconfigure_flow(hass)
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_DEVICE_TRACKER: new_entity_id}
-        )
-    return result, mock_reload
+    listener = AsyncMock(return_value=None)
+    entry.async_on_unload(entry.add_update_listener(listener))
+
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_DEVICE_TRACKER: new_entity_id}
+    )
+    await hass.async_block_till_done()
+    return result, listener
 
 
 def test_handler_advertises_reconfigure_step() -> None:
@@ -140,25 +137,41 @@ async def test_submit_persists_new_tracker_and_aborts_successfully(
     assert entry.data[CONF_DEVICE_TRACKER] == "device_tracker.new_car"
 
 
-async def test_submit_schedules_entry_reload(hass, enable_custom_integrations) -> None:
-    """A real change reloads the entry so the coordinator picks up the new source."""
+async def test_submit_notifies_entry_update_listener_once(
+    hass, enable_custom_integrations
+) -> None:
+    """A real change notifies the entry's update listener exactly once.
+
+    Regression guard for a double-reload bug: async_step_reconfigure must
+    update entry.data via async_update_entry -- which drives HA's own
+    update-listener notification -- rather than also scheduling a reload
+    itself, which would reload the integration twice for one submission.
+    """
     entry = _make_entry(hass)
 
-    _, mock_reload = await _submit_reconfigure(hass, entry, "device_tracker.new_car")
+    _, listener = await _submit_reconfigure(hass, entry, "device_tracker.new_car")
 
-    mock_reload.assert_called_once_with(entry.entry_id)
+    listener.assert_called_once_with(hass, entry)
 
 
 async def test_reconfigure_leaves_options_untouched(
     hass, enable_custom_integrations
 ) -> None:
     """Thresholds, notify service and friends survive a tracker swap."""
-    entry = _make_entry(hass, options=dict(_OPTIONS))
+    # A fully populated options dict: three thresholds plus one non-threshold
+    # key, to prove the reconfigure step never reaches into entry.options.
+    options = {
+        CONF_MOVEMENT_THRESHOLD: 50,
+        CONF_REFRESH_INTERVAL: 8,
+        CONF_STALE_TIMEOUT: 8,
+        CONF_NOTIFY_SERVICE: "notify.mobile_app_phone",
+    }
+    entry = _make_entry(hass, options=options)
 
     result, _ = await _submit_reconfigure(hass, entry, "device_tracker.new_car")
 
     assert result["type"] == FlowResultType.ABORT
-    assert dict(entry.options) == _OPTIONS
+    assert dict(entry.options) == options
 
 
 async def test_reconfigure_merges_data_instead_of_replacing_it(
@@ -184,13 +197,14 @@ async def test_resubmitting_same_tracker_is_a_no_op(
 ) -> None:
     """Re-saving the identical entity must not reload the spatial index.
 
-    Pins ``reload_even_if_entry_is_unchanged=False``.
+    ``async_update_entry`` only notifies update listeners when a value
+    actually changed, so resubmitting the same tracker must not fire one.
     """
     entry = _make_entry(hass)
 
-    result, mock_reload = await _submit_reconfigure(hass, entry, "device_tracker.car")
+    result, listener = await _submit_reconfigure(hass, entry, "device_tracker.car")
 
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     assert entry.data[CONF_DEVICE_TRACKER] == "device_tracker.car"
-    mock_reload.assert_not_called()
+    listener.assert_not_called()
