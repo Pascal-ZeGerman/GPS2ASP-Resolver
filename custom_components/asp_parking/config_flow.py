@@ -8,6 +8,10 @@ Three-step setup wizard:
 Options flow allows reconfiguring thresholds and API key without removing
 the integration. Shared helpers (_settings_schema, _validate_settings) keep
 both flows in sync.
+
+A separate single-step reconfigure flow (async_step_reconfigure) re-shows the
+device_tracker picker so the vehicle's GPS source can be swapped after setup;
+it writes only entry.data and leaves every option untouched.
 """
 
 from __future__ import annotations
@@ -196,6 +200,11 @@ class ASPParkingConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     Step 1 (user): Select device_tracker entity via dropdown.
     Step 2 (settings): Configure movement threshold, refresh interval, stale timeout.
+
+    Also exposes a standalone reconfigure step (async_step_reconfigure) that
+    re-shows only the device_tracker picker for an existing entry. Defining that
+    method is what makes the Reconfigure action appear on the integration card;
+    it shares no state with the setup wizard above.
     """
 
     VERSION = 2
@@ -288,6 +297,42 @@ class ASPParkingConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, str] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Re-show only the device_tracker picker for an existing entry.
+
+        Standalone single-step flow: it reads from and writes to the config
+        entry directly and deliberately shares no state with the setup wizard
+        above (no self._device_tracker / self._settings). Only entry.data is
+        touched -- thresholds, NYC 311 key, notify service, parking area and
+        CalDAV binding all live in entry.options and survive untouched.
+        """
+        entry = self._get_reconfigure_entry()
+
+        if user_input is not None:
+            # data_updates= merges into entry.data (data= would replace it);
+            # reason defaults to "reconfigure_successful" for this source.
+            return self.async_update_reload_and_abort(
+                entry,
+                data_updates={CONF_DEVICE_TRACKER: user_input[CONF_DEVICE_TRACKER]},
+                reload_even_if_entry_is_unchanged=False,
+            )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_DEVICE_TRACKER,
+                        default=entry.data[CONF_DEVICE_TRACKER],
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="device_tracker"),
+                    ),
+                }
+            ),
         )
 
     @staticmethod
