@@ -31,6 +31,16 @@
         "data_description": {
           "nyc311_api_key": "Get a free key at api-portal.nyc.gov. Enables real-time weather/emergency suspension detection."
         }
+      },
+      "reconfigure": {
+        "title": "Change Vehicle GPS Source",
+        "description": "Pick a different device tracker for your car's GPS location — useful after a new phone, a renamed tracker entity, or a switch to a built-in car tracker. Saving reloads the integration; every other setting is preserved.",
+        "data": {
+          "device_tracker": "Device tracker"
+        },
+        "data_description": {
+          "device_tracker": "The device tracker whose GPS coordinates decide which street the car is parked on."
+        }
       }
     },
     "error": {
@@ -40,7 +50,8 @@
       "invalid_api_key": "Invalid API key — check your NYC 311 API portal subscription key."
     },
     "abort": {
-      "already_configured": "ASP Parking Monitor is already configured."
+      "already_configured": "ASP Parking Monitor is already configured.",
+      "reconfigure_successful": "Vehicle GPS source updated. ASP Parking Monitor is reloading with the new device tracker; all other settings were kept."
     }
   },
   "options": {
