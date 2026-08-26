@@ -339,15 +339,16 @@ class ASPParkingConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self.hass.config_entries.async_update_entry(
                 entry,
-                data={**entry.data, CONF_DEVICE_TRACKER: user_input[CONF_DEVICE_TRACKER]},
+                data={
+                    **entry.data,
+                    CONF_DEVICE_TRACKER: user_input[CONF_DEVICE_TRACKER],
+                },
             )
             return self.async_abort(reason="reconfigure_successful")
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=_device_tracker_schema(
-                default=entry.data[CONF_DEVICE_TRACKER]
-            ),
+            data_schema=_device_tracker_schema(default=entry.data[CONF_DEVICE_TRACKER]),
         )
 
     @staticmethod
