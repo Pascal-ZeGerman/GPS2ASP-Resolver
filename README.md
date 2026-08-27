@@ -27,12 +27,21 @@ Supports all five NYC boroughs. Data is fetched live from NYC Open Data.
 
 ## Live Demo
 
-Want to see what the integration produces before installing anything? A self-contained
-demo page lives under [`docs/demo/`](docs/demo/). Open it in a browser, click a block on the
-Leaflet map, and you'll see exactly what ASP Parking resolves for that location: the parking
-rule for the block, the next time you'd need to move your car, the exact Home Assistant sensor
-entities and states it would create, and an animated calendar of the weekly cleaning windows.
-It's a plain HTML/CSS/JS page — no build step, no install, no server-side code.
+Want to see what the integration produces before installing anything? Two static pages are
+hosted at **<https://pascal-zegerman.github.io/GPS2ASP-Resolver/>** — pick the one for you:
+
+- **[Try the demo](https://pascal-zegerman.github.io/GPS2ASP-Resolver/demo/)** — for everyone.
+  Click a block on the Leaflet map and see exactly what ASP Parking resolves for that location:
+  the parking rule for the block, the next time you'd need to move your car, the exact Home
+  Assistant sensor entities and states it would create, and an animated calendar of the weekly
+  cleaning windows.
+- **[Explore sign coverage](https://pascal-zegerman.github.io/GPS2ASP-Resolver/explorer/)** —
+  for maintainers and technical users. A citywide map of all ~105K street segments colored by
+  SODA-match confidence, with filters by borough/tier/level and GeoJSON export, for inspecting
+  data coverage and gaps.
+
+Both are plain HTML/CSS/JS pages under [`docs/`](docs/) — no build step, no install, no
+server-side code. [`docs/index.html`](docs/index.html) is the landing page linking to both.
 
 **Where the data comes from.** The demo does **not** call any live API from the browser.
 It reads a **dated snapshot** committed to the repo at
@@ -66,14 +75,13 @@ won't let the page `fetch()` its JSON, and serving `docs/demo` alone 404s on the
 .venv/bin/python -m http.server --directory docs 8000
 ```
 
-Then visit <http://localhost:8000/demo/>.
+Then visit <http://localhost:8000/> for the landing page (or `/demo/`, `/explorer/` directly).
 
 **Hosting it.** The repo ships a [`.github/workflows/pages.yml`](.github/workflows/pages.yml)
 workflow that publishes the committed `docs/` tree to **GitHub Pages** on every push to `docs/`
 (and on demand via *workflow_dispatch*). The workflow publishes the snapshot as-is and never
-runs the precompute. A maintainer only needs to enable Pages once, under
-**Settings → Pages → Source: GitHub Actions**; after that the demo is reachable at the
-repository's GitHub Pages URL.
+runs the precompute. Pages is already enabled for this repo (**Settings → Pages → Source: GitHub
+Actions**), so every push to `docs/` on `main` redeploys automatically.
 
 ---
 
