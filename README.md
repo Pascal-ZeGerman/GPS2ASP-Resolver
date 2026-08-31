@@ -123,7 +123,19 @@ After installation, set up the integration from the HA UI — no YAML required.
 5. **Step 3:** Optionally enter an **NYC311 API key** to receive real-time weather and emergency suspension alerts.
 6. Click **Submit**. The sensors appear immediately under the new device.
 
-After setup you can also configure a **parking area** (lat/lon/radius) and a **push notification service** (e.g., `notify.mobile_app_my_phone` with a configurable lead time, default 120 minutes before the next move) via **Settings → Devices & Services → ASP Parking → Configure**.
+### Changing settings after setup
+
+ASP Parking splits post-setup changes across two different menus on the integration's card
+under **Settings → Devices & Services → ASP Parking** — look for the right one or the option
+you want won't be there:
+
+| Menu | How to open it | What it changes |
+|------|-----------------|------------------|
+| **Configure** | Click the gear icon | Movement threshold, refresh interval, stale timeout, NYC 311 API key/entity, push notification service, parking area, CalDAV sync |
+| **Reconfigure** | Click the **⋮** (three-dot) menu → **Reconfigure** | Only the device tracker — swap which entity's GPS the integration follows (e.g. after switching phones, renaming a tracker entity, or moving to a different GPS source) |
+
+The device tracker picker is **only** under Reconfigure, not Configure — this is the most common
+place people get stuck looking for it.
 
 ---
 
@@ -150,6 +162,8 @@ Three main entities are created for each tracked device:
 The next move time sensor also carries rich attributes including `schedule_summary` (e.g., `"Mon 8–9:30 AM, Thu 11:30 AM–1 PM"`), `cleaning_days`, `side_of_street`, `urgency`, and suspension state.
 
 Eleven additional **diagnostic sensors** are created automatically: car name, VIN, latitude, longitude, resolved street, resolution status, confidence score, SODA level, last resolved timestamp, last error, and index last rebuilt. These are hidden from the default dashboard but available for advanced automations and troubleshooting.
+
+**Car Name** and **VIN** are read directly from your device tracker entity — Car Name from its friendly name, VIN from a `vin` attribute if the entity exposes one. Vehicle-specific integrations (like a manufacturer's connected-car integration) typically provide both. Phone-based trackers (Companion app, OwnTracks, iCloud, Google Maps) usually don't expose a VIN, so that sensor will simply show unavailable — this doesn't affect any other functionality.
 
 Two additional diagnostic binary sensors track background health: **Index rebuilding** (ON while a spatial-index rebuild is in progress) and **GPS pipeline healthy** (ON while the resolution pipeline is functioning normally). A **Rebuild index** button is also available for triggering an on-demand index rebuild.
 
