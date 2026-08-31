@@ -27,12 +27,21 @@ Supports all five NYC boroughs. Data is fetched live from NYC Open Data.
 
 ## Live Demo
 
-Want to see what the integration produces before installing anything? A self-contained
-demo page lives under [`docs/demo/`](docs/demo/). Open it in a browser, click a block on the
-Leaflet map, and you'll see exactly what ASP Parking resolves for that location: the parking
-rule for the block, the next time you'd need to move your car, the exact Home Assistant sensor
-entities and states it would create, and an animated calendar of the weekly cleaning windows.
-It's a plain HTML/CSS/JS page — no build step, no install, no server-side code.
+Want to see what the integration produces before installing anything? Two static pages are
+hosted at **<https://pascal-zegerman.github.io/GPS2ASP-Resolver/>** — pick the one for you:
+
+- **[Try the demo](https://pascal-zegerman.github.io/GPS2ASP-Resolver/demo/)** — for everyone.
+  Click a block on the Leaflet map and see exactly what ASP Parking resolves for that location:
+  the parking rule for the block, the next time you'd need to move your car, the exact Home
+  Assistant sensor entities and states it would create, and an animated calendar of the weekly
+  cleaning windows.
+- **[Explore sign coverage](https://pascal-zegerman.github.io/GPS2ASP-Resolver/explorer/)** —
+  for maintainers and technical users. A citywide map of all ~105K street segments colored by
+  SODA-match confidence, with filters by borough/tier/level and GeoJSON export, for inspecting
+  data coverage and gaps.
+
+Both are plain HTML/CSS/JS pages under [`docs/`](docs/) — no build step, no install, no
+server-side code. [`docs/index.html`](docs/index.html) is the landing page linking to both.
 
 **Where the data comes from.** The demo does **not** call any live API from the browser.
 It reads a **dated snapshot** committed to the repo at
@@ -66,14 +75,13 @@ won't let the page `fetch()` its JSON, and serving `docs/demo` alone 404s on the
 .venv/bin/python -m http.server --directory docs 8000
 ```
 
-Then visit <http://localhost:8000/demo/>.
+Then visit <http://localhost:8000/> for the landing page (or `/demo/`, `/explorer/` directly).
 
 **Hosting it.** The repo ships a [`.github/workflows/pages.yml`](.github/workflows/pages.yml)
 workflow that publishes the committed `docs/` tree to **GitHub Pages** on every push to `docs/`
 (and on demand via *workflow_dispatch*). The workflow publishes the snapshot as-is and never
-runs the precompute. A maintainer only needs to enable Pages once, under
-**Settings → Pages → Source: GitHub Actions**; after that the demo is reachable at the
-repository's GitHub Pages URL.
+runs the precompute. Pages is already enabled for this repo (**Settings → Pages → Source: GitHub
+Actions**), so every push to `docs/` on `main` redeploys automatically.
 
 ---
 
@@ -115,7 +123,19 @@ After installation, set up the integration from the HA UI — no YAML required.
 5. **Step 3:** Optionally enter an **NYC311 API key** to receive real-time weather and emergency suspension alerts.
 6. Click **Submit**. The sensors appear immediately under the new device.
 
-After setup you can also configure a **parking area** (lat/lon/radius) and a **push notification service** (e.g., `notify.mobile_app_my_phone` with a configurable lead time, default 120 minutes before the next move) via **Settings → Devices & Services → ASP Parking → Configure**.
+### Changing settings after setup
+
+ASP Parking splits post-setup changes across two different menus on the integration's card
+under **Settings → Devices & Services → ASP Parking** — look for the right one or the option
+you want won't be there:
+
+| Menu | How to open it | What it changes |
+|------|-----------------|------------------|
+| **Configure** | Click the gear icon | Movement threshold, refresh interval, stale timeout, NYC 311 API key/entity, push notification service, parking area, CalDAV sync |
+| **Reconfigure** | Click the **⋮** (three-dot) menu → **Reconfigure** | Only the device tracker — swap which entity's GPS the integration follows (e.g. after switching phones, renaming a tracker entity, or moving to a different GPS source) |
+
+The device tracker picker is **only** under Reconfigure, not Configure — this is the most common
+place people get stuck looking for it.
 
 ---
 
@@ -142,6 +162,8 @@ Three main entities are created for each tracked device:
 The next move time sensor also carries rich attributes including `schedule_summary` (e.g., `"Mon 8–9:30 AM, Thu 11:30 AM–1 PM"`), `cleaning_days`, `side_of_street`, `urgency`, and suspension state.
 
 Eleven additional **diagnostic sensors** are created automatically: car name, VIN, latitude, longitude, resolved street, resolution status, confidence score, SODA level, last resolved timestamp, last error, and index last rebuilt. These are hidden from the default dashboard but available for advanced automations and troubleshooting.
+
+**Car Name** and **VIN** are read directly from your device tracker entity — Car Name from its friendly name, VIN from a `vin` attribute if the entity exposes one. Vehicle-specific integrations (like a manufacturer's connected-car integration) typically provide both. Phone-based trackers (Companion app, OwnTracks, iCloud, Google Maps) usually don't expose a VIN, so that sensor will simply show unavailable — this doesn't affect any other functionality.
 
 Two additional diagnostic binary sensors track background health: **Index rebuilding** (ON while a spatial-index rebuild is in progress) and **GPS pipeline healthy** (ON while the resolution pipeline is functioning normally). A **Rebuild index** button is also available for triggering an on-demand index rebuild.
 
