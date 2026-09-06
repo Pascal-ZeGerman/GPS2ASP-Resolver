@@ -164,8 +164,14 @@ class ASPGpsPipelineHealthBinarySensor(BinarySensorEntity):
 
     OFF when:
     - ``last_gps_update`` is None (no GPS fix yet)
+    - the tracked device_tracker self-reports ``unavailable`` / ``unknown``
     - GPS age >= stale_timeout * 3600 seconds (GPS has gone silent)
     - ``_last_pipeline_error`` is True (last pipeline run raised an exception)
+
+    The tracker-health check is what keeps this entity a useful diagnostic now
+    that ``stale_timeout`` defaults to 7 days: the age test alone would stay ON
+    for a week after the source integration died. Silence means "parked"; an
+    explicit unavailable state means "broken".
     """
 
     _attr_has_entity_name = True
@@ -207,6 +213,8 @@ class ASPGpsPipelineHealthBinarySensor(BinarySensorEntity):
         """Return True when GPS is recent and the last pipeline run succeeded."""
         last = self._coordinator.data.last_gps_update
         if last is None:
+            return False
+        if self._coordinator.tracker_unavailable:
             return False
         age = (dt_util.utcnow() - last).total_seconds()
         if age >= self._coordinator.stale_timeout * 3600:

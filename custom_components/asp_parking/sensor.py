@@ -211,17 +211,36 @@ class ASPNextMoveTimeSensor(SensorEntity):
     def available(self) -> bool:
         """Return True if the sensor is available.
 
-        Becomes unavailable when GPS data is stale (exceeds stale_timeout hours)
-        or when the last pipeline run failed. Without the pipeline-error check the
-        sensor would keep presenting the retained (stale) schedule as if fresh,
-        i.e. a confident wrong "next move time" / "No restrictions" -> the user
-        skips moving the car and gets ticketed.
+        Three gates, in order of decreasing confidence:
+
+        1. The last pipeline run failed. A failed run retains the previous
+           ``schedule_result``, so without this check the sensor would keep
+           presenting stale data as if fresh -- a confident wrong "next move
+           time" / "No restrictions" -> the user skips moving the car and gets
+           ticketed.
+        2. The device_tracker itself reports ``unavailable`` / ``unknown``. Its
+           own integration is telling us it is broken, so the retained position
+           has no backing source.
+        3. Nothing at all has been heard from the tracker for ``stale_timeout``
+           hours (default 168 h / 7 days).
+
+        Gate 3 is a BACKSTOP, not a freshness SLA, and the distinction is the
+        whole point. Tracker silence is not evidence of a problem -- it is the
+        normal steady state of a parked car, whose telematics sleep once the
+        ignition is off (as do phone-based trackers that only report on
+        movement). ``last_gps_update`` advances only on a real state_changed
+        event, and the periodic heartbeat re-resolves from cached coordinates
+        without touching it, so a short window here fires on every ordinary
+        overnight park while the resolved curb position is still perfectly
+        correct. Genuine breakage surfaces through gates 1 and 2, which is why
+        gate 3 can afford to wait out a full ASP cycle.
         """
         data = self._coordinator.data
 
-        # A failed pipeline run retains the last schedule_result; surface that as
-        # unavailable rather than serving stale data as current.
         if self._coordinator._last_pipeline_error:
+            return False
+
+        if self._coordinator.tracker_unavailable:
             return False
 
         # Initial state: not yet stale (no GPS update received yet)

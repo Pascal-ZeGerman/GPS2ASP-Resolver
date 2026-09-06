@@ -151,8 +151,18 @@ def binary_sensor_is_on(data: ASPParkingData) -> bool:
     return isinstance(merged, ASPActiveNow) and not merged.suspended
 
 
-def sensor_available(data: ASPParkingData, stale_timeout_hours: int = 8) -> bool:
-    """Replicate ASPNextMoveTimeSensor.available logic."""
+def sensor_available(data: ASPParkingData, stale_timeout_hours: int = 168) -> bool:
+    """Replicate the GPS-age arithmetic of ASPNextMoveTimeSensor.available.
+
+    PARTIAL replica by design: this module is a pure-logic mirror suite that
+    deliberately avoids importing ``custom_components``, so it cannot exercise
+    the pipeline-error gate or the device_tracker health fast path. Those live
+    in tests/test_sensor_availability_backstop.py against the real property.
+
+    The default mirrors ``DEFAULT_STALE_TIMEOUT`` (168 h / 7 days), which is a
+    backstop for total tracker silence rather than a freshness SLA -- a parked
+    car legitimately emits no GPS updates for days.
+    """
     if data.last_gps_update is None:
         return True
     elapsed = (datetime.now(tz=ZoneInfo("UTC")) - data.last_gps_update).total_seconds()

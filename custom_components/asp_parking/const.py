@@ -18,7 +18,29 @@ CONF_STALE_TIMEOUT = "stale_timeout"
 # Default values
 DEFAULT_MOVEMENT_THRESHOLD = 50.0  # meters before re-resolve
 DEFAULT_REFRESH_INTERVAL = 8  # hours between periodic refreshes
-DEFAULT_STALE_TIMEOUT = 8  # hours before marking sensor unavailable
+
+# Hours with NO location event from the device_tracker at all before entities
+# report unavailable.  This is a BACKSTOP, not a freshness SLA.
+#
+# It used to be 8 h, which produced a guaranteed false positive on ordinary
+# parking: once a car is parked the tracker naturally stops emitting new fixes
+# (telematics sleep on an ignition-off vehicle, or a manually-posted /
+# Shortcut-driven tracker that only fires when the phone moves), so HA never
+# raises another state_changed event and `last_gps_update` freezes even though
+# the resolved curb position is still correct.  Every overnight or workday park
+# tripped it.
+#
+# 168 h (7 days) is chosen to match the domain: NYC ASP schedules recur on a
+# 7-day cycle, so a car legitimately sitting untouched in the same spot for a
+# full week is expected behaviour, not an edge case.  Genuine integration
+# failures are caught immediately by the tracker-health fast path
+# (``ASPParkingCoordinator.tracker_unavailable``) rather than by this timer.
+DEFAULT_STALE_TIMEOUT = 168  # hours (7 days) with no location event at all
+
+# The pre-3.3.1 default.  A config entry still carrying exactly this value is
+# assumed never to have been customised and is migrated up to the 7-day
+# backstop by ``async_migrate_entry``; any other stored value is left alone.
+LEGACY_STALE_TIMEOUT_HOURS = 8
 
 # Internal tuning
 GPS_DEBOUNCE_COOLDOWN = 5.0  # seconds (debounce rapid GPS jitter)

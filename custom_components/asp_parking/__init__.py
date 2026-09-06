@@ -21,8 +21,11 @@ from .const import (
     CONF_CALDAV_PASSWORD,
     CONF_CALDAV_URL,
     CONF_CALDAV_USERNAME,
+    CONF_STALE_TIMEOUT,
+    DEFAULT_STALE_TIMEOUT,
     DOMAIN,
     INDEX_DOWNLOAD_URL,
+    LEGACY_STALE_TIMEOUT_HOURS,
     PLATFORMS,
 )
 from .coordinator import ASPParkingCoordinator
@@ -172,13 +175,37 @@ async def _async_download_index(hass: HomeAssistant) -> None:
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
-    """Migrate config entry from version 1 to 2.
+    """Migrate a config entry forward to the current version / minor version.
 
-    No data shape change needed -- NYC311 API key defaults to not-configured.
+    v1 -> v2: no data shape change -- NYC311 API key defaults to not-configured.
+
+    v2.1 -> v2.2: raise the ``stale_timeout`` backstop from the old 8 h default
+    to 168 h (7 days). Changing ``DEFAULT_STALE_TIMEOUT`` alone would not reach
+    anybody, because the options flow writes the value explicitly into
+    ``entry.options`` at setup -- every existing install carries a literal 8
+    that shadows the new default and would keep going unavailable on ordinary
+    overnight parking. Only the exact legacy default is rewritten; any other
+    stored value is treated as a deliberate user choice and left untouched.
     """
     if config_entry.version == 1:
         hass.config_entries.async_update_entry(config_entry, version=2)
         logger.info("Migrated ASP Parking config entry from v1 to v2")
+
+    if config_entry.minor_version < 2:
+        options = dict(config_entry.options)
+        if options.get(CONF_STALE_TIMEOUT) == LEGACY_STALE_TIMEOUT_HOURS:
+            options[CONF_STALE_TIMEOUT] = DEFAULT_STALE_TIMEOUT
+            logger.info(
+                "Migrated ASP Parking stale_timeout from the legacy %s h default "
+                "to the %s h (7-day) backstop; a parked car legitimately reports "
+                "no GPS updates for days",
+                LEGACY_STALE_TIMEOUT_HOURS,
+                DEFAULT_STALE_TIMEOUT,
+            )
+        hass.config_entries.async_update_entry(
+            config_entry, options=options, minor_version=2
+        )
+
     return True
 
 

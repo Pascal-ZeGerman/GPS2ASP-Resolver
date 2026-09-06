@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import httpx
 
-from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE
+from homeassistant.const import (
+    ATTR_LATITUDE,
+    ATTR_LONGITUDE,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import (
     CALLBACK_TYPE,
     Event,
@@ -213,6 +218,23 @@ def _legal_sides_for(candidate) -> tuple[str, ...]:
     return ("N", "S", "E", "W")
 
 
+def _is_failed_tracker_state(state) -> bool:
+    """Return True when a device_tracker state object self-reports a failure.
+
+    Only an explicit ``unavailable`` / ``unknown`` state counts.  A ``None``
+    state (entity not in the state machine) deliberately does NOT: that is the
+    normal shape of a tracker whose integration has not finished setting up, or
+    of a manually-posted / Shortcut-driven tracker whose state was not restored
+    across an HA restart.  Treating that as a failure would flap the sensor to
+    unavailable on every reboot, so it falls through to the long backstop
+    instead.
+
+    Args:
+        state: A ``homeassistant.core.State`` or None.
+    """
+    return state is not None and state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+
+
 class ASPParkingCoordinator:
     """Event-driven coordinator for ASP Parking.
 
@@ -359,6 +381,26 @@ class ASPParkingCoordinator:
     def stale_timeout(self) -> int:
         """Return the stale GPS timeout in hours."""
         return self.entry.options.get(CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT)
+
+    @property
+    def tracker_unavailable(self) -> bool:
+        """Return True when the configured device_tracker self-reports a failure.
+
+        This is the fast path out of the multi-day ``stale_timeout`` backstop.
+        The backstop deliberately tolerates days of silence because a parked car
+        produces exactly that, but a tracker whose own HA state is
+        ``unavailable`` / ``unknown`` is a different thing entirely: the source
+        integration is telling us it is broken (expired OAuth token, API
+        outage), so there is nothing to wait for and the sensor should stop
+        presenting a retained position as current immediately.
+
+        Reads the live state machine rather than a cached flag so the answer is
+        still correct when the tracker was ALREADY unavailable at HA start and
+        has therefore never fired a state_changed event for us to observe.
+        """
+        return _is_failed_tracker_state(
+            self.hass.states.get(self.device_tracker_entity)
+        )
 
     def _get_now(self) -> datetime:
         """Return debug datetime override when active, otherwise real now.
@@ -1603,6 +1645,19 @@ class ASPParkingCoordinator:
             event: State change event from Home Assistant.
         """
         new_state = event.data.get("new_state")
+
+        # Tracker-health fast path: entities read `tracker_unavailable` live, but
+        # they only re-render when something pushes them.  A tracker flipping
+        # into (or back out of) unavailable/unknown carries no location, so the
+        # early return below would otherwise swallow the event and leave the
+        # sensor showing its old availability until the next unrelated pipeline
+        # run.  Push on the transition only -- not on every location-less state
+        # change -- so a zone-only tracker does not trigger a write per update.
+        if _is_failed_tracker_state(new_state) != _is_failed_tracker_state(
+            event.data.get("old_state")
+        ):
+            self._async_notify_entities()
+
         if new_state is None or not has_location(new_state):
             return
 

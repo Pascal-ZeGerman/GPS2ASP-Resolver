@@ -32,6 +32,7 @@ def _make_coordinator(
     last_gps_update: datetime.datetime | None = None,
     stale_timeout: int = 24,
     _last_pipeline_error: bool = False,
+    tracker_unavailable: bool = False,
 ):
     """Build a minimal coordinator stub matching the binary sensor's contract.
 
@@ -39,6 +40,11 @@ def _make_coordinator(
         last_gps_update: UTC-aware datetime of last GPS event, or None.
         stale_timeout: Hours after which GPS is considered stale (default 24).
         _last_pipeline_error: Simulates a pipeline error flag.
+        tracker_unavailable: Simulates the tracked device_tracker reporting its
+            own state as unavailable/unknown. Defaults False (healthy tracker)
+            so the existing age/error assertions are unaffected. Dedicated
+            coverage of the real property lives in
+            tests/test_sensor_availability_backstop.py.
     """
     entry = SimpleNamespace(entry_id="test_entry_feq")
     data = SimpleNamespace(last_gps_update=last_gps_update)
@@ -47,6 +53,7 @@ def _make_coordinator(
         data=data,
         stale_timeout=stale_timeout,
         _last_pipeline_error=_last_pipeline_error,
+        tracker_unavailable=tracker_unavailable,
         async_add_update_callback=MagicMock(),
         async_remove_update_callback=MagicMock(),
     )
@@ -133,6 +140,39 @@ def test_is_on_false_when_pipeline_error():
     )
     bs = ASPGpsPipelineHealthBinarySensor(coord)
     assert bs.is_on is False
+
+
+def test_is_on_false_when_tracker_reports_unavailable():
+    """is_on must be False when the tracked device_tracker self-reports failure.
+
+    With stale_timeout defaulting to a 7-day backstop, the age check alone would
+    keep this diagnostic ON for a week after the source integration died. GPS
+    silence means "parked"; an explicit unavailable state means "broken".
+    """
+    recent_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+        minutes=5
+    )
+    coord = _make_coordinator(
+        last_gps_update=recent_ts,
+        stale_timeout=168,
+        _last_pipeline_error=False,
+        tracker_unavailable=True,
+    )
+    bs = ASPGpsPipelineHealthBinarySensor(coord)
+    assert bs.is_on is False
+
+
+def test_is_on_true_when_tracker_merely_silent_within_backstop():
+    """Days of silence from a healthy tracker still reads healthy."""
+    quiet_ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)
+    coord = _make_coordinator(
+        last_gps_update=quiet_ts,
+        stale_timeout=168,
+        _last_pipeline_error=False,
+        tracker_unavailable=False,
+    )
+    bs = ASPGpsPipelineHealthBinarySensor(coord)
+    assert bs.is_on is True
 
 
 def test_is_on_flips_live():
