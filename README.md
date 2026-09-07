@@ -125,17 +125,23 @@ After installation, set up the integration from the HA UI — no YAML required.
 
 ### Changing settings after setup
 
-ASP Parking splits post-setup changes across two different menus on the integration's card
-under **Settings → Devices & Services → ASP Parking** — look for the right one or the option
-you want won't be there:
+**To switch which device tracker the integration follows** (new phone, renamed entity, moving
+to a built-in car tracker):
 
-| Menu | How to open it | What it changes |
-|------|-----------------|------------------|
-| **Configure** | Click the gear icon | Movement threshold, refresh interval, stale timeout, NYC 311 API key/entity, push notification service, parking area, CalDAV sync |
-| **Reconfigure** | Click the **⋮** (three-dot) menu → **Reconfigure** | Only the device tracker — swap which entity's GPS the integration follows (e.g. after switching phones, renaming a tracker entity, or moving to a different GPS source) |
+1. Go to **Settings → Devices & Services**.
+2. Find the **ASP Parking** card and click it to expand.
+3. Click the **⋮** (three-dot) menu in the top-right corner of the card.
+4. Click **Reconfigure**.
+5. Pick the new device tracker from the dropdown.
+6. Click **Submit**. The integration reloads automatically; every other setting is kept.
 
-The device tracker picker is **only** under Reconfigure, not Configure — this is the most common
-place people get stuck looking for it.
+**For everything else** — movement threshold, refresh interval, stale timeout, NYC 311 API
+key/entity, push notification service, parking area, or CalDAV sync — click the **gear icon**
+on the same card instead (labeled **Configure**).
+
+These two menus look similar but open different forms: the device tracker picker lives
+**only** under **Reconfigure** (⋮ menu), never under **Configure** (gear icon). This is the
+most common place people get stuck looking for it.
 
 ---
 
