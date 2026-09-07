@@ -37,7 +37,7 @@ from shapely.strtree import STRtree
 
 from gps2asp.resolver.curb_calibration import (
     SegmentCalibration,
-    derive_segment_calibration,
+    derive_segment_calibration_with_endpoint_retry,
 )
 from gps2asp.resolver.side_resolver import signed_offset
 from gps2asp.signs.normalize import normalize_to_soda
@@ -1027,8 +1027,15 @@ def _derive_segment_fields(
 
     1. Query the curb STRtree for lines within a bbox of ``max(160, width*4)`` ft
        around the segment.
-    2. Derive ``c`` / width / spreads via :func:`derive_segment_calibration`
-       (spread gate applied inside).
+    2. Derive ``c`` / width / spreads via
+       :func:`derive_segment_calibration_with_endpoint_retry` (spread gate
+       applied inside): the UNTRIMMED derivation runs first and wins outright if
+       it calibrates, and only a failing segment is retried once with a 25 ft
+       along-span endpoint trim that drops the intersection corner-return curves
+       (spike 008). A trim-rescued segment is still subject to the independent
+       roadbed cross-check in step 3, exactly as before — that two-gate pipeline
+       is what spike 008 measured its ~26% yield against, so the reported yield
+       already accounts for roadbed downgrades.
     3. For a calibrated result, compute an independent roadbed ``c`` and DOWNGRADE
        to non-calibrated when the two authoritative sources disagree by more than
        ``ROADBED_DISAGREEMENT_FT`` (the measured spreads are retained so the
@@ -1043,7 +1050,7 @@ def _derive_segment_fields(
     qbox = box(minx - query_pad, miny - query_pad, maxx + query_pad, maxy + query_pad)
     flanking = [curb_lines[i] for i in curb_tree.query(qbox)]
 
-    cal = derive_segment_calibration(geom, flanking, cscl_width_ft)
+    cal = derive_segment_calibration_with_endpoint_retry(geom, flanking, cscl_width_ft)
     if not cal.calibrated:
         return cal
 
@@ -1169,7 +1176,9 @@ def _build_rtree_and_metadata(
             streetwidth = 0.0
 
         # Per-segment curb calibration (SC-1/SC-5). Derive c/width from flanking
-        # curbs, spread-gated (40-05) and roadbed-cross-checked; fall back to the
+        # curbs via derive_segment_calibration_with_endpoint_retry (untrimmed
+        # first, one 25 ft endpoint-trim retry on failure -- spike 008),
+        # spread-gated (40-05) and roadbed-cross-checked; fall back to the
         # non-calibrated defaults when disabled, geometry is missing, or the two
         # sources disagree. The five keys use the EXACT 40-04 name contract.
         if calibrate and geom.geom_type == "LineString":
@@ -1296,7 +1305,8 @@ def build_index(
 
     When curb calibration is enabled (the default) the build ALSO bulk-downloads
     the NYC curb + roadbed planimetric layers ONCE, derives each segment's centre
-    offset ``c`` / true width via :func:`derive_segment_calibration`, cross-checks
+    offset ``c`` / true width via
+    :func:`derive_segment_calibration_with_endpoint_retry`, cross-checks
     ``c`` against the roadbed polygon, and writes the calibration fields into
     ``segments.json`` (SC-1/SC-5).
 
