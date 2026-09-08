@@ -443,6 +443,17 @@ class ASPParkingCoordinator:
         pipeline. See ``ASPNextMoveTimeSensor.available`` for the rationale
         behind each gate and why gate 3 is a multi-day backstop rather than a
         freshness SLA.
+
+        Deliberately checks ``tracker_unavailable`` alone, NOT ``tracker_failed``
+        (which also covers a deleted/renamed tracker entity via
+        ``tracker_registered``). A missing entity is left to the staleness
+        backstop here for the same reason a merely-absent *state* is: it is
+        indistinguishable at this call site from an integration still mid-setup,
+        and gate 2 flapping availability on every reboot is exactly the bug this
+        policy exists to prevent. ``tracker_failed`` is intentionally reserved
+        for the GPS-stale watchdog notification (see ``_gps_watchdog_rearm``),
+        which is a one-shot proactive alert rather than a live-read gate, so it
+        can afford to treat "deleted" as certain rather than ambiguous.
         """
         if self._last_pipeline_error:
             return False
@@ -1749,7 +1760,12 @@ class ASPParkingCoordinator:
         new_lon = new_state.attributes[ATTR_LONGITUDE]
 
         self.data.last_gps_update = dt_util.utcnow()
-        self._gps_watchdog_rearm()  # Cancel prior watchdog, dismiss stale notif, rearm
+        # A fresh GPS fix already proves the tracker is healthy -- an
+        # unavailable/unknown state never carries location attributes, so
+        # `has_gps_location` above already rules that out -- so arm the
+        # backstop directly rather than re-deriving `tracker_failed` (which
+        # would also re-check the entity registry for no reason here).
+        self._gps_watchdog_arm_normal()
 
         # Check movement threshold against last resolved position
         if self.data.last_lat is not None and self.data.last_lon is not None:
@@ -1821,12 +1837,31 @@ class ASPParkingCoordinator:
             cancel()
 
     @callback
-    def _gps_watchdog_rearm(self) -> None:
-        """Cancel prior GPS stale watchdog and either alert now or arm a new timer.
+    def _gps_watchdog_arm_normal(self) -> None:
+        """Cancel prior watchdog, dismiss any stale notification, and arm the backstop.
 
-        Called on every GPS state-change event (a real location update or a
-        tracker-health transition -- see ``_async_on_gps_update``) and once at
-        startup, so the watchdog always reflects the current tracker state.
+        Used whenever the tracker is known (or assumed) healthy: directly by a
+        real GPS location fix in ``_async_on_gps_update`` (which cannot happen
+        while self-reporting unavailable/unknown, so there is nothing to
+        re-check), and by ``_gps_watchdog_rearm`` once ``tracker_failed`` has
+        already been confirmed False.
+        """
+        self._gps_watchdog_cancel()
+        pn_dismiss(self.hass, "asp_parking_gps_stale")
+        delay = float(self.stale_timeout * 3600)
+        self._gps_stale_unsub = async_call_later(
+            self.hass, delay, self._on_gps_stale_timeout
+        )
+
+    @callback
+    def _gps_watchdog_rearm(self) -> None:
+        """Check tracker health and either alert now or arm the backstop timer.
+
+        Called on a tracker-health transition (see
+        ``_async_handle_tracker_health_transition``) and once at startup, so
+        the watchdog always reflects the current tracker state when it is NOT
+        already known from the caller's context (contrast with
+        ``_gps_watchdog_arm_normal``, used directly when it is).
 
         When the tracker is genuinely broken (``tracker_failed``: self-reports
         unavailable/unknown, or has been deleted from the entity registry)
@@ -1835,17 +1870,12 @@ class ASPParkingCoordinator:
         availability gates (see ``tracker_unavailable`` / ``tracker_failed``)
         instead of waiting out the full ``stale_timeout`` backstop.
         """
-        self._gps_watchdog_cancel()
-
         if self.tracker_failed:
+            self._gps_watchdog_cancel()
             self._async_post_gps_stale_notification()
             return
 
-        pn_dismiss(self.hass, "asp_parking_gps_stale")
-        delay = float(self.stale_timeout * 3600)
-        self._gps_stale_unsub = async_call_later(
-            self.hass, delay, self._on_gps_stale_timeout
-        )
+        self._gps_watchdog_arm_normal()
 
     @callback
     def _on_gps_stale_timeout(self, _now: datetime) -> None:

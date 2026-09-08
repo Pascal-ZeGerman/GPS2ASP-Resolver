@@ -26,21 +26,23 @@ from homeassistant.helpers.entity import EntityCategory
 from custom_components.asp_parking.binary_sensor import (
     ASPGpsPipelineHealthBinarySensor,
 )
+from custom_components.asp_parking.coordinator import ASPParkingCoordinator
 
 
 class _StubCoordinator:
     """Minimal coordinator stub matching the binary sensor's contract.
 
-    ``gps_data_available`` mirrors ``ASPParkingCoordinator.gps_data_available``
-    (pipeline-error -> tracker-health -> staleness) as a LIVE property computed
-    from the same inputs ``is_on`` now delegates through, so mutating
-    ``_last_pipeline_error`` / ``tracker_unavailable`` after construction
-    (``test_is_on_flips_live``) is observable, matching the real property.
-    Kept as a hand-rolled stub (rather than rebinding the real descriptor) to
-    match this file's SimpleNamespace-only, no-HA-import pattern -- dedicated
-    coverage of the real property lives in
+    ``gps_data_available`` is the real production property (pipeline-error ->
+    tracker-health -> staleness) rebound onto this class, so its body -- not a
+    hand-rolled copy -- is what ``is_on`` delegates through under test. It
+    reads ``self.tracker_unavailable``/``self._last_pipeline_error`` as plain
+    instance attributes here (rather than the real live-state-reading
+    property), which is exactly the simulated-input design this stub wants;
+    dedicated coverage of ``tracker_unavailable`` itself lives in
     tests/test_sensor_availability_backstop.py.
     """
+
+    gps_data_available = ASPParkingCoordinator.gps_data_available
 
     def __init__(
         self,
@@ -57,17 +59,6 @@ class _StubCoordinator:
         self.tracker_unavailable = tracker_unavailable
         self.async_add_update_callback = MagicMock()
         self.async_remove_update_callback = MagicMock()
-
-    @property
-    def gps_data_available(self) -> bool:
-        if self._last_pipeline_error or self.tracker_unavailable:
-            return False
-        if self.data.last_gps_update is None:
-            return True
-        elapsed = (
-            datetime.datetime.now(datetime.timezone.utc) - self.data.last_gps_update
-        ).total_seconds()
-        return elapsed <= self.stale_timeout * 3600
 
 
 def _make_coordinator(

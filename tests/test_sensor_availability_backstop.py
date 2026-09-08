@@ -62,18 +62,30 @@ TRACKER = "device_tracker.taos_carplay"
 
 
 class _StubCoordinator:
-    """Minimal coordinator exposing the REAL availability-relevant descriptors.
+    """Minimal coordinator exposing the REAL availability/watchdog descriptors.
 
-    ``tracker_unavailable``, ``device_tracker_entity``, ``stale_timeout`` and
-    ``gps_data_available`` are the production property objects rebound onto
-    this class, so their bodies (including ``_is_failed_tracker_state``) are
-    what actually runs under test.
+    ``tracker_unavailable``, ``device_tracker_entity``, ``stale_timeout``,
+    ``gps_data_available``, ``tracker_registered``, ``tracker_failed`` and the
+    watchdog methods are the production objects rebound onto this class, so
+    their bodies (including ``_is_failed_tracker_state``) are what actually
+    run under test. ``hass`` is a bare SimpleNamespace -- entity-registry
+    lookups go through ``er.async_get``, which tests patch directly rather
+    than modelling a real registry.
     """
 
     device_tracker_entity = ASPParkingCoordinator.device_tracker_entity
     tracker_unavailable = ASPParkingCoordinator.tracker_unavailable
+    tracker_registered = ASPParkingCoordinator.tracker_registered
+    tracker_failed = ASPParkingCoordinator.tracker_failed
     stale_timeout = ASPParkingCoordinator.stale_timeout
     gps_data_available = ASPParkingCoordinator.gps_data_available
+    _gps_watchdog_cancel = ASPParkingCoordinator._gps_watchdog_cancel
+    _gps_watchdog_arm_normal = ASPParkingCoordinator._gps_watchdog_arm_normal
+    _gps_watchdog_rearm = ASPParkingCoordinator._gps_watchdog_rearm
+    _on_gps_stale_timeout = ASPParkingCoordinator._on_gps_stale_timeout
+    _async_post_gps_stale_notification = (
+        ASPParkingCoordinator._async_post_gps_stale_notification
+    )
 
     def __init__(
         self,
@@ -99,6 +111,9 @@ class _StubCoordinator:
         )
         self.data = ASPParkingData(last_gps_update=last_gps_update)
         self._last_pipeline_error = pipeline_error
+        # Only exercised by the watchdog tests below, but harmless elsewhere.
+        self._gps_stale_unsub = None
+        self._async_notify_entities = MagicMock()
 
 
 def _tracker_state(state: str) -> State:
@@ -341,6 +356,7 @@ class TestGpsUpdateNotifiesOnHealthTransition:
             data=ASPParkingData(),
             _async_notify_entities=MagicMock(),
             _gps_watchdog_rearm=MagicMock(),
+            _gps_watchdog_arm_normal=MagicMock(),
             movement_threshold=50.0,
             _caldav_uid=None,
             _caldav_store=None,
@@ -374,10 +390,14 @@ class TestGpsUpdateNotifiesOnHealthTransition:
         stub._gps_watchdog_rearm.assert_called_once()
 
     def test_notifies_when_tracker_recovers(self) -> None:
+        """Recovery carries a fresh location fix, so the main path arms the
+        backstop directly via ``_gps_watchdog_arm_normal`` rather than
+        re-deriving tracker health through ``_gps_watchdog_rearm``.
+        """
         stub = self._stub_coordinator_for_event()
         self._fire(stub, State(TRACKER, STATE_UNAVAILABLE), _tracker_state("home"))
         stub._async_notify_entities.assert_called_once()
-        stub._gps_watchdog_rearm.assert_called_once()
+        stub._gps_watchdog_arm_normal.assert_called_once()
 
     def test_no_notify_on_ordinary_location_update(self) -> None:
         """A healthy -> healthy update must not add an extra entity write."""
@@ -404,46 +424,6 @@ class TestGpsUpdateNotifiesOnHealthTransition:
 # ===========================================================================
 
 
-class _WatchdogStubCoordinator:
-    """Coordinator stub exposing the REAL watchdog + tracker-health descriptors.
-
-    ``tracker_registered``, ``tracker_failed``, ``_gps_watchdog_rearm`` and
-    friends are the production objects rebound onto this class, so their
-    bodies are what actually run under test. ``hass`` is a bare SimpleNamespace
-    -- entity-registry lookups go through ``er.async_get``, which tests patch
-    directly rather than modelling a real registry.
-    """
-
-    device_tracker_entity = ASPParkingCoordinator.device_tracker_entity
-    tracker_unavailable = ASPParkingCoordinator.tracker_unavailable
-    tracker_registered = ASPParkingCoordinator.tracker_registered
-    tracker_failed = ASPParkingCoordinator.tracker_failed
-    stale_timeout = ASPParkingCoordinator.stale_timeout
-    _gps_watchdog_cancel = ASPParkingCoordinator._gps_watchdog_cancel
-    _gps_watchdog_rearm = ASPParkingCoordinator._gps_watchdog_rearm
-    _on_gps_stale_timeout = ASPParkingCoordinator._on_gps_stale_timeout
-    _async_post_gps_stale_notification = (
-        ASPParkingCoordinator._async_post_gps_stale_notification
-    )
-
-    def __init__(self, *, tracker_state, stale_timeout: int | None = None) -> None:
-        options: dict = {}
-        if stale_timeout is not None:
-            options[CONF_STALE_TIMEOUT] = stale_timeout
-        self.entry = SimpleNamespace(
-            entry_id="test_entry_watchdog",
-            data={CONF_DEVICE_TRACKER: TRACKER},
-            options=options,
-        )
-        self.hass = SimpleNamespace(
-            states=SimpleNamespace(
-                get=lambda entity_id: tracker_state if entity_id == TRACKER else None
-            )
-        )
-        self._gps_stale_unsub = None
-        self._async_notify_entities = MagicMock()
-
-
 def _patched_registry(*, registered: bool):
     """Patch ``er.async_get`` so ``tracker_registered`` returns ``registered``."""
     fake_registry = SimpleNamespace(
@@ -459,18 +439,18 @@ class TestTrackerRegisteredAndFailed:
     """A deleted/renamed tracker entity is distinguishable from 'not started yet'."""
 
     def test_registered_true_when_entity_registry_has_it(self) -> None:
-        coord = _WatchdogStubCoordinator(tracker_state=_tracker_state("home"))
+        coord = _StubCoordinator(tracker_state=_tracker_state("home"))
         with _patched_registry(registered=True):
             assert coord.tracker_registered is True
 
     def test_registered_false_when_entity_registry_lacks_it(self) -> None:
         """Deleted / renamed / never-existed entities are not in the registry."""
-        coord = _WatchdogStubCoordinator(tracker_state=None)
+        coord = _StubCoordinator(tracker_state=None)
         with _patched_registry(registered=False):
             assert coord.tracker_registered is False
 
     def test_failed_true_when_tracker_reports_unavailable(self) -> None:
-        coord = _WatchdogStubCoordinator(tracker_state=State(TRACKER, STATE_UNAVAILABLE))
+        coord = _StubCoordinator(tracker_state=State(TRACKER, STATE_UNAVAILABLE))
         with _patched_registry(registered=True):
             assert coord.tracker_failed is True
 
@@ -478,18 +458,18 @@ class TestTrackerRegisteredAndFailed:
         """Missing *state* alone is not a failure (see tracker_unavailable), but
         a missing *registry entry* is -- there is no recovering event coming.
         """
-        coord = _WatchdogStubCoordinator(tracker_state=None)
+        coord = _StubCoordinator(tracker_state=None)
         with _patched_registry(registered=False):
             assert coord.tracker_failed is True
 
     def test_failed_false_when_healthy_and_registered(self) -> None:
-        coord = _WatchdogStubCoordinator(tracker_state=_tracker_state("home"))
+        coord = _StubCoordinator(tracker_state=_tracker_state("home"))
         with _patched_registry(registered=True):
             assert coord.tracker_failed is False
 
     def test_failed_false_when_state_missing_but_still_registered(self) -> None:
         """Integration mid-setup: registered, no state yet -- not a failure."""
-        coord = _WatchdogStubCoordinator(tracker_state=None)
+        coord = _StubCoordinator(tracker_state=None)
         with _patched_registry(registered=True):
             assert coord.tracker_failed is False
 
@@ -503,7 +483,7 @@ class TestGpsWatchdogFastPath:
     """
 
     def test_immediate_alert_when_tracker_unavailable(self) -> None:
-        coord = _WatchdogStubCoordinator(
+        coord = _StubCoordinator(
             tracker_state=State(TRACKER, STATE_UNAVAILABLE), stale_timeout=168
         )
         with (
@@ -527,7 +507,7 @@ class TestGpsWatchdogFastPath:
         coord._async_notify_entities.assert_called_once()
 
     def test_immediate_alert_when_tracker_deleted(self) -> None:
-        coord = _WatchdogStubCoordinator(tracker_state=None, stale_timeout=168)
+        coord = _StubCoordinator(tracker_state=None, stale_timeout=168)
         with (
             _patched_registry(registered=False),
             patch(
@@ -548,7 +528,7 @@ class TestGpsWatchdogFastPath:
 
     def test_normal_arm_when_tracker_healthy(self) -> None:
         """A healthy tracker still gets the full-length backstop timer, not an alert."""
-        coord = _WatchdogStubCoordinator(
+        coord = _StubCoordinator(
             tracker_state=_tracker_state("home"), stale_timeout=168
         )
         with (
@@ -572,7 +552,7 @@ class TestGpsWatchdogFastPath:
 
     def test_timeout_fires_generic_stale_message_when_still_healthy(self) -> None:
         """The eventual backstop timeout still uses the plain silence wording."""
-        coord = _WatchdogStubCoordinator(
+        coord = _StubCoordinator(
             tracker_state=_tracker_state("home"), stale_timeout=168
         )
         with (

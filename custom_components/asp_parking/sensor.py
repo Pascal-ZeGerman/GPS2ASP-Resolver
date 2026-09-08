@@ -363,7 +363,22 @@ class ASPNextMoveTimeSensor(SensorEntity):
 
 
 class _ASPDiagnosticSensor(SensorEntity):
-    """Base class for diagnostic sensors sharing coordinator and device info."""
+    """Base class for diagnostic sensors sharing coordinator and device info.
+
+    Diagnostic sensors pick ONE of three availability tiers, in order of how
+    directly their value depends on live GPS/pipeline data:
+
+    - ``_ASPGpsDependentSensor``: value is pipeline output (resolved street,
+      confidence, coordinates, ...) -- full three-gate policy.
+    - ``_ASPTrackerMirrorSensor``: value mirrors a live tracker attribute
+      (name, VIN) -- tracker-health gate only.
+    - This class directly (no override): value is independent of GPS health
+      -- always available. Used deliberately by ``ASPLastErrorSensor`` (must
+      stay visible precisely when the pipeline is unhealthy) and
+      ``ASPIndexLastRebuiltSensor`` (spatial-index build state, unrelated to
+      the GPS pipeline). New diagnostic sensors should subclass one of the
+      two gated bases above unless they have an equally explicit reason not to.
+    """
 
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
