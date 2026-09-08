@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -187,9 +188,10 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     overnight parking. Only the exact legacy default is rewritten; any other
     stored value is treated as a deliberate user choice and left untouched.
     """
+    updates: dict[str, Any] = {}
+
     if config_entry.version == 1:
-        hass.config_entries.async_update_entry(config_entry, version=2)
-        logger.info("Migrated ASP Parking config entry from v1 to v2")
+        updates["version"] = 2
 
     if config_entry.minor_version < 2:
         options = dict(config_entry.options)
@@ -202,9 +204,16 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
                 LEGACY_STALE_TIMEOUT_HOURS,
                 DEFAULT_STALE_TIMEOUT,
             )
-        hass.config_entries.async_update_entry(
-            config_entry, options=options, minor_version=2
-        )
+        updates["options"] = options
+        updates["minor_version"] = 2
+
+    if updates:
+        # Single combined write (rather than one call per version bump) so a
+        # never-migrated entry doesn't trigger two storage writes / reload
+        # listener notifications for what is logically one migration.
+        hass.config_entries.async_update_entry(config_entry, **updates)
+        if "version" in updates:
+            logger.info("Migrated ASP Parking config entry from v1 to v2")
 
     return True
 

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -64,13 +64,16 @@ TRACKER = "device_tracker.taos_carplay"
 class _StubCoordinator:
     """Minimal coordinator exposing the REAL availability-relevant descriptors.
 
-    ``tracker_unavailable`` and ``device_tracker_entity`` are the production
-    property objects rebound onto this class, so their bodies (including
-    ``_is_failed_tracker_state``) are what actually runs under test.
+    ``tracker_unavailable``, ``device_tracker_entity``, ``stale_timeout`` and
+    ``gps_data_available`` are the production property objects rebound onto
+    this class, so their bodies (including ``_is_failed_tracker_state``) are
+    what actually runs under test.
     """
 
     device_tracker_entity = ASPParkingCoordinator.device_tracker_entity
     tracker_unavailable = ASPParkingCoordinator.tracker_unavailable
+    stale_timeout = ASPParkingCoordinator.stale_timeout
+    gps_data_available = ASPParkingCoordinator.gps_data_available
 
     def __init__(
         self,
@@ -310,8 +313,8 @@ class TestGpsPipelineHealthTrackerCheck:
         coord = _StubCoordinator(
             tracker_state=State(TRACKER, STATE_UNAVAILABLE),
             last_gps_update=dt_util.utcnow(),
+            stale_timeout=DEFAULT_STALE_TIMEOUT,
         )
-        coord.stale_timeout = DEFAULT_STALE_TIMEOUT
         assert ASPGpsPipelineHealthBinarySensor(coord).is_on is False
 
     def test_on_when_tracker_is_merely_silent(self) -> None:
@@ -319,8 +322,8 @@ class TestGpsPipelineHealthTrackerCheck:
         coord = _StubCoordinator(
             tracker_state=_tracker_state("home"),
             last_gps_update=_silent_for(days=2),
+            stale_timeout=DEFAULT_STALE_TIMEOUT,
         )
-        coord.stale_timeout = DEFAULT_STALE_TIMEOUT
         assert ASPGpsPipelineHealthBinarySensor(coord).is_on is True
 
 
@@ -334,7 +337,7 @@ class TestGpsUpdateNotifiesOnHealthTransition:
 
     @staticmethod
     def _stub_coordinator_for_event() -> SimpleNamespace:
-        return SimpleNamespace(
+        stub = SimpleNamespace(
             data=ASPParkingData(),
             _async_notify_entities=MagicMock(),
             _gps_watchdog_rearm=MagicMock(),
@@ -345,6 +348,14 @@ class TestGpsUpdateNotifiesOnHealthTransition:
             hass=SimpleNamespace(),
             _debouncer=SimpleNamespace(async_call=MagicMock()),
         )
+        # The real method (not a mock) so its own logic -- deciding whether to
+        # call the two mocks above -- is what actually runs under test.
+        stub._async_handle_tracker_health_transition = (
+            ASPParkingCoordinator._async_handle_tracker_health_transition.__get__(
+                stub
+            )
+        )
+        return stub
 
     @staticmethod
     def _fire(stub: SimpleNamespace, old_state, new_state) -> None:
@@ -357,11 +368,16 @@ class TestGpsUpdateNotifiesOnHealthTransition:
         stub = self._stub_coordinator_for_event()
         self._fire(stub, _tracker_state("home"), State(TRACKER, STATE_UNAVAILABLE))
         stub._async_notify_entities.assert_called_once()
+        # The watchdog must also be poked on this transition (not just
+        # entities) so the "GPS Signal Lost" notification can fire via its
+        # own immediate fast path instead of waiting out stale_timeout.
+        stub._gps_watchdog_rearm.assert_called_once()
 
     def test_notifies_when_tracker_recovers(self) -> None:
         stub = self._stub_coordinator_for_event()
         self._fire(stub, State(TRACKER, STATE_UNAVAILABLE), _tracker_state("home"))
         stub._async_notify_entities.assert_called_once()
+        stub._gps_watchdog_rearm.assert_called_once()
 
     def test_no_notify_on_ordinary_location_update(self) -> None:
         """A healthy -> healthy update must not add an extra entity write."""
@@ -369,12 +385,208 @@ class TestGpsUpdateNotifiesOnHealthTransition:
         self._fire(stub, _tracker_state("not_home"), _tracker_state("home"))
         stub._async_notify_entities.assert_not_called()
 
-    def test_unavailable_event_does_not_advance_last_gps_update(self) -> None:
-        """An unavailable state carries no location, so it is not a GPS fix."""
+    def test_watchdog_rearmed_on_unavailable_transition(self) -> None:
+        """An unavailable state carries no location, so it is not a GPS fix --
+
+        but the watchdog must still be rearmed on this transition (rather than
+        only on a real location update) so a genuinely broken tracker gets the
+        immediate notification fast path instead of waiting out the full
+        stale_timeout backstop.
+        """
         stub = self._stub_coordinator_for_event()
         self._fire(stub, _tracker_state("home"), State(TRACKER, STATE_UNAVAILABLE))
         assert stub.data.last_gps_update is None
-        stub._gps_watchdog_rearm.assert_not_called()
+        stub._gps_watchdog_rearm.assert_called_once()
+
+
+# ===========================================================================
+# Deleted-tracker detection + watchdog notification fast path
+# ===========================================================================
+
+
+class _WatchdogStubCoordinator:
+    """Coordinator stub exposing the REAL watchdog + tracker-health descriptors.
+
+    ``tracker_registered``, ``tracker_failed``, ``_gps_watchdog_rearm`` and
+    friends are the production objects rebound onto this class, so their
+    bodies are what actually run under test. ``hass`` is a bare SimpleNamespace
+    -- entity-registry lookups go through ``er.async_get``, which tests patch
+    directly rather than modelling a real registry.
+    """
+
+    device_tracker_entity = ASPParkingCoordinator.device_tracker_entity
+    tracker_unavailable = ASPParkingCoordinator.tracker_unavailable
+    tracker_registered = ASPParkingCoordinator.tracker_registered
+    tracker_failed = ASPParkingCoordinator.tracker_failed
+    stale_timeout = ASPParkingCoordinator.stale_timeout
+    _gps_watchdog_cancel = ASPParkingCoordinator._gps_watchdog_cancel
+    _gps_watchdog_rearm = ASPParkingCoordinator._gps_watchdog_rearm
+    _on_gps_stale_timeout = ASPParkingCoordinator._on_gps_stale_timeout
+    _async_post_gps_stale_notification = (
+        ASPParkingCoordinator._async_post_gps_stale_notification
+    )
+
+    def __init__(self, *, tracker_state, stale_timeout: int | None = None) -> None:
+        options: dict = {}
+        if stale_timeout is not None:
+            options[CONF_STALE_TIMEOUT] = stale_timeout
+        self.entry = SimpleNamespace(
+            entry_id="test_entry_watchdog",
+            data={CONF_DEVICE_TRACKER: TRACKER},
+            options=options,
+        )
+        self.hass = SimpleNamespace(
+            states=SimpleNamespace(
+                get=lambda entity_id: tracker_state if entity_id == TRACKER else None
+            )
+        )
+        self._gps_stale_unsub = None
+        self._async_notify_entities = MagicMock()
+
+
+def _patched_registry(*, registered: bool):
+    """Patch ``er.async_get`` so ``tracker_registered`` returns ``registered``."""
+    fake_registry = SimpleNamespace(
+        async_get=lambda entity_id: (object() if registered else None)
+    )
+    return patch(
+        "custom_components.asp_parking.coordinator.er.async_get",
+        return_value=fake_registry,
+    )
+
+
+class TestTrackerRegisteredAndFailed:
+    """A deleted/renamed tracker entity is distinguishable from 'not started yet'."""
+
+    def test_registered_true_when_entity_registry_has_it(self) -> None:
+        coord = _WatchdogStubCoordinator(tracker_state=_tracker_state("home"))
+        with _patched_registry(registered=True):
+            assert coord.tracker_registered is True
+
+    def test_registered_false_when_entity_registry_lacks_it(self) -> None:
+        """Deleted / renamed / never-existed entities are not in the registry."""
+        coord = _WatchdogStubCoordinator(tracker_state=None)
+        with _patched_registry(registered=False):
+            assert coord.tracker_registered is False
+
+    def test_failed_true_when_tracker_reports_unavailable(self) -> None:
+        coord = _WatchdogStubCoordinator(tracker_state=State(TRACKER, STATE_UNAVAILABLE))
+        with _patched_registry(registered=True):
+            assert coord.tracker_failed is True
+
+    def test_failed_true_when_entity_deleted(self) -> None:
+        """Missing *state* alone is not a failure (see tracker_unavailable), but
+        a missing *registry entry* is -- there is no recovering event coming.
+        """
+        coord = _WatchdogStubCoordinator(tracker_state=None)
+        with _patched_registry(registered=False):
+            assert coord.tracker_failed is True
+
+    def test_failed_false_when_healthy_and_registered(self) -> None:
+        coord = _WatchdogStubCoordinator(tracker_state=_tracker_state("home"))
+        with _patched_registry(registered=True):
+            assert coord.tracker_failed is False
+
+    def test_failed_false_when_state_missing_but_still_registered(self) -> None:
+        """Integration mid-setup: registered, no state yet -- not a failure."""
+        coord = _WatchdogStubCoordinator(tracker_state=None)
+        with _patched_registry(registered=True):
+            assert coord.tracker_failed is False
+
+
+class TestGpsWatchdogFastPath:
+    """The GPS-stale notification must use the same fast path as availability.
+
+    Regression coverage for the bug where ``_gps_watchdog_rearm`` still waited
+    out the full (now 168 h) ``stale_timeout`` before alerting, even though a
+    genuinely broken tracker is caught immediately everywhere else.
+    """
+
+    def test_immediate_alert_when_tracker_unavailable(self) -> None:
+        coord = _WatchdogStubCoordinator(
+            tracker_state=State(TRACKER, STATE_UNAVAILABLE), stale_timeout=168
+        )
+        with (
+            _patched_registry(registered=True),
+            patch(
+                "custom_components.asp_parking.coordinator.pn_create"
+            ) as mock_create,
+            patch(
+                "custom_components.asp_parking.coordinator.pn_dismiss"
+            ) as mock_dismiss,
+            patch(
+                "custom_components.asp_parking.coordinator.async_call_later"
+            ) as mock_call_later,
+        ):
+            coord._gps_watchdog_rearm()
+
+        mock_create.assert_called_once()
+        assert "unavailable" in mock_create.call_args.args[1]
+        mock_dismiss.assert_not_called()
+        mock_call_later.assert_not_called()
+        coord._async_notify_entities.assert_called_once()
+
+    def test_immediate_alert_when_tracker_deleted(self) -> None:
+        coord = _WatchdogStubCoordinator(tracker_state=None, stale_timeout=168)
+        with (
+            _patched_registry(registered=False),
+            patch(
+                "custom_components.asp_parking.coordinator.pn_create"
+            ) as mock_create,
+            patch(
+                "custom_components.asp_parking.coordinator.async_call_later"
+            ) as mock_call_later,
+        ):
+            coord._gps_watchdog_rearm()
+
+        mock_create.assert_called_once()
+        message = mock_create.call_args.args[1]
+        assert "no longer exists" in message
+        assert TRACKER in message
+        mock_call_later.assert_not_called()
+        coord._async_notify_entities.assert_called_once()
+
+    def test_normal_arm_when_tracker_healthy(self) -> None:
+        """A healthy tracker still gets the full-length backstop timer, not an alert."""
+        coord = _WatchdogStubCoordinator(
+            tracker_state=_tracker_state("home"), stale_timeout=168
+        )
+        with (
+            _patched_registry(registered=True),
+            patch(
+                "custom_components.asp_parking.coordinator.pn_create"
+            ) as mock_create,
+            patch(
+                "custom_components.asp_parking.coordinator.pn_dismiss"
+            ) as mock_dismiss,
+            patch(
+                "custom_components.asp_parking.coordinator.async_call_later"
+            ) as mock_call_later,
+        ):
+            coord._gps_watchdog_rearm()
+
+        mock_create.assert_not_called()
+        mock_dismiss.assert_called_once()
+        mock_call_later.assert_called_once()
+        assert mock_call_later.call_args.args[1] == 168 * 3600
+
+    def test_timeout_fires_generic_stale_message_when_still_healthy(self) -> None:
+        """The eventual backstop timeout still uses the plain silence wording."""
+        coord = _WatchdogStubCoordinator(
+            tracker_state=_tracker_state("home"), stale_timeout=168
+        )
+        with (
+            _patched_registry(registered=True),
+            patch(
+                "custom_components.asp_parking.coordinator.pn_create"
+            ) as mock_create,
+        ):
+            coord._on_gps_stale_timeout(dt_util.utcnow())
+
+        mock_create.assert_called_once()
+        message = mock_create.call_args.args[1]
+        assert "No GPS update has been received" in message
+        coord._async_notify_entities.assert_called_once()
 
 
 # ===========================================================================

@@ -17,7 +17,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import dt as dt_util
 
 from .gps2asp.schedule.models import ASPActiveNow
 from .gps2asp.suspension import apply_suspension
@@ -81,6 +80,17 @@ class ASPActiveNowBinarySensor(BinarySensorEntity):
             model="ASP Schedule Resolver",
             sw_version=VERSION,
         )
+
+    @property
+    def available(self) -> bool:
+        """Return True when the underlying pipeline data should be trusted.
+
+        Shares ``coordinator.gps_data_available`` (the three-gate policy
+        also used by ``ASPNextMoveTimeSensor.available``) so this sensor
+        stops reporting "not active" as a confident answer -- rather than a
+        stale one -- under the same conditions the main sensor does.
+        """
+        return self._coordinator.gps_data_available
 
     @property
     def is_on(self) -> bool:
@@ -160,12 +170,13 @@ class ASPGpsPipelineHealthBinarySensor(BinarySensorEntity):
 
     ON when ``last_gps_update`` is within ``stale_timeout`` hours AND
     ``coordinator._last_pipeline_error`` is False.  Reflects the GPS watchdog
-    and pipeline error state LIVE.
+    and pipeline error state LIVE via ``coordinator.gps_data_available`` --
+    the same three-gate policy used by ``ASPNextMoveTimeSensor.available``.
 
     OFF when:
     - ``last_gps_update`` is None (no GPS fix yet)
     - the tracked device_tracker self-reports ``unavailable`` / ``unknown``
-    - GPS age >= stale_timeout * 3600 seconds (GPS has gone silent)
+    - GPS age > stale_timeout * 3600 seconds (GPS has gone silent)
     - ``_last_pipeline_error`` is True (last pipeline run raised an exception)
 
     The tracker-health check is what keeps this entity a useful diagnostic now
@@ -210,16 +221,17 @@ class ASPGpsPipelineHealthBinarySensor(BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return True when GPS is recent and the last pipeline run succeeded."""
-        last = self._coordinator.data.last_gps_update
-        if last is None:
+        """Return True when GPS is recent and the last pipeline run succeeded.
+
+        Delegates the pipeline-error / tracker-health / staleness checks to
+        ``coordinator.gps_data_available`` -- the same three-gate policy used
+        by ``ASPNextMoveTimeSensor.available`` -- so the two entities cannot
+        silently drift apart. Unlike ``available``, "no GPS fix yet" is
+        reported as unhealthy (False) here rather than as trivially current.
+        """
+        if self._coordinator.data.last_gps_update is None:
             return False
-        if self._coordinator.tracker_unavailable:
-            return False
-        age = (dt_util.utcnow() - last).total_seconds()
-        if age >= self._coordinator.stale_timeout * 3600:
-            return False
-        return not self._coordinator._last_pipeline_error
+        return self._coordinator.gps_data_available
 
     @property
     def extra_state_attributes(self) -> dict[str, bool]:

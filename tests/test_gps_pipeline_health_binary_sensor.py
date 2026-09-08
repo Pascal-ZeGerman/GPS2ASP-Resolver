@@ -28,6 +28,48 @@ from custom_components.asp_parking.binary_sensor import (
 )
 
 
+class _StubCoordinator:
+    """Minimal coordinator stub matching the binary sensor's contract.
+
+    ``gps_data_available`` mirrors ``ASPParkingCoordinator.gps_data_available``
+    (pipeline-error -> tracker-health -> staleness) as a LIVE property computed
+    from the same inputs ``is_on`` now delegates through, so mutating
+    ``_last_pipeline_error`` / ``tracker_unavailable`` after construction
+    (``test_is_on_flips_live``) is observable, matching the real property.
+    Kept as a hand-rolled stub (rather than rebinding the real descriptor) to
+    match this file's SimpleNamespace-only, no-HA-import pattern -- dedicated
+    coverage of the real property lives in
+    tests/test_sensor_availability_backstop.py.
+    """
+
+    def __init__(
+        self,
+        entry: SimpleNamespace,
+        data: SimpleNamespace,
+        stale_timeout: int,
+        _last_pipeline_error: bool,
+        tracker_unavailable: bool,
+    ) -> None:
+        self.entry = entry
+        self.data = data
+        self.stale_timeout = stale_timeout
+        self._last_pipeline_error = _last_pipeline_error
+        self.tracker_unavailable = tracker_unavailable
+        self.async_add_update_callback = MagicMock()
+        self.async_remove_update_callback = MagicMock()
+
+    @property
+    def gps_data_available(self) -> bool:
+        if self._last_pipeline_error or self.tracker_unavailable:
+            return False
+        if self.data.last_gps_update is None:
+            return True
+        elapsed = (
+            datetime.datetime.now(datetime.timezone.utc) - self.data.last_gps_update
+        ).total_seconds()
+        return elapsed <= self.stale_timeout * 3600
+
+
 def _make_coordinator(
     last_gps_update: datetime.datetime | None = None,
     stale_timeout: int = 24,
@@ -48,16 +90,9 @@ def _make_coordinator(
     """
     entry = SimpleNamespace(entry_id="test_entry_feq")
     data = SimpleNamespace(last_gps_update=last_gps_update)
-    coord = SimpleNamespace(
-        entry=entry,
-        data=data,
-        stale_timeout=stale_timeout,
-        _last_pipeline_error=_last_pipeline_error,
-        tracker_unavailable=tracker_unavailable,
-        async_add_update_callback=MagicMock(),
-        async_remove_update_callback=MagicMock(),
+    return _StubCoordinator(
+        entry, data, stale_timeout, _last_pipeline_error, tracker_unavailable
     )
-    return coord
 
 
 # ---------------------------------------------------------------------------

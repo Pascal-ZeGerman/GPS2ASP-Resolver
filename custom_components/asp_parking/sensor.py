@@ -42,7 +42,7 @@ from .gps2asp.schedule.models import (
 )
 from .gps2asp.suspension import apply_suspension
 
-from .const import CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT, DOMAIN, VERSION
+from .const import DOMAIN, VERSION
 from .coordinator import ASPParkingCoordinator
 from .util import now_ha_local
 
@@ -211,7 +211,9 @@ class ASPNextMoveTimeSensor(SensorEntity):
     def available(self) -> bool:
         """Return True if the sensor is available.
 
-        Three gates, in order of decreasing confidence:
+        Delegates to ``coordinator.gps_data_available``, the three-gate policy
+        (pipeline error -> tracker health -> staleness) shared by every entity
+        whose value is derived from the GPS-to-ASP pipeline:
 
         1. The last pipeline run failed. A failed run retains the previous
            ``schedule_result``, so without this check the sensor would keep
@@ -235,23 +237,7 @@ class ASPNextMoveTimeSensor(SensorEntity):
         correct. Genuine breakage surfaces through gates 1 and 2, which is why
         gate 3 can afford to wait out a full ASP cycle.
         """
-        data = self._coordinator.data
-
-        if self._coordinator._last_pipeline_error:
-            return False
-
-        if self._coordinator.tracker_unavailable:
-            return False
-
-        # Initial state: not yet stale (no GPS update received yet)
-        if data.last_gps_update is None:
-            return True
-
-        stale_timeout = self._coordinator.entry.options.get(
-            CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT
-        )
-        elapsed = (dt_util.utcnow() - data.last_gps_update).total_seconds()
-        return elapsed <= stale_timeout * 3600
+        return self._coordinator.gps_data_available
 
     @property
     def extra_state_attributes(self) -> dict[str, str | float | int | list | None]:
@@ -406,7 +392,36 @@ class _ASPDiagnosticSensor(SensorEntity):
         )
 
 
-class ASPCarNameSensor(_ASPDiagnosticSensor):
+class _ASPGpsDependentSensor(_ASPDiagnosticSensor):
+    """Base for diagnostic sensors whose value is derived from the GPS/pipeline data.
+
+    Shares ``ASPNextMoveTimeSensor``'s three-gate availability policy (pipeline
+    error -> tracker health -> staleness) via ``coordinator.gps_data_available``
+    so these sensors stop presenting stale pipeline output as current under the
+    same conditions the main sensor does, instead of only 2 of 15 entities
+    reflecting genuine tracker breakage.
+    """
+
+    @property
+    def available(self) -> bool:
+        """Return True when the underlying pipeline data should be trusted."""
+        return self._coordinator.gps_data_available
+
+
+class _ASPTrackerMirrorSensor(_ASPDiagnosticSensor):
+    """Base for diagnostic sensors that mirror a live device_tracker attribute.
+
+    Gated only on tracker health (not pipeline error / staleness, which are
+    irrelevant to a name or VIN read straight off the tracker's own state).
+    """
+
+    @property
+    def available(self) -> bool:
+        """Return True when the configured tracker is not self-reporting failure."""
+        return not self._coordinator.tracker_unavailable
+
+
+class ASPCarNameSensor(_ASPTrackerMirrorSensor):
     """Diagnostic sensor showing the friendly name of the tracked device."""
 
     _attr_icon = "mdi:car"
@@ -427,7 +442,7 @@ class ASPCarNameSensor(_ASPDiagnosticSensor):
         return state.name
 
 
-class ASPVINSensor(_ASPDiagnosticSensor):
+class ASPVINSensor(_ASPTrackerMirrorSensor):
     """Diagnostic sensor showing the VIN of the tracked vehicle."""
 
     _attr_icon = "mdi:identifier"
@@ -448,7 +463,7 @@ class ASPVINSensor(_ASPDiagnosticSensor):
         return state.attributes.get("vin")
 
 
-class ASPLatitudeSensor(_ASPDiagnosticSensor):
+class ASPLatitudeSensor(_ASPGpsDependentSensor):
     """Diagnostic sensor showing the last resolved GPS latitude."""
 
     _attr_icon = "mdi:latitude"
@@ -466,7 +481,7 @@ class ASPLatitudeSensor(_ASPDiagnosticSensor):
         return self._coordinator.data.last_lat
 
 
-class ASPLongitudeSensor(_ASPDiagnosticSensor):
+class ASPLongitudeSensor(_ASPGpsDependentSensor):
     """Diagnostic sensor showing the last resolved GPS longitude."""
 
     _attr_icon = "mdi:longitude"
@@ -484,7 +499,7 @@ class ASPLongitudeSensor(_ASPDiagnosticSensor):
         return self._coordinator.data.last_lon
 
 
-class ASPResolvedStreetSensor(_ASPDiagnosticSensor):
+class ASPResolvedStreetSensor(_ASPGpsDependentSensor):
     """Diagnostic sensor showing the resolved street name."""
 
     _attr_icon = "mdi:road"
@@ -525,7 +540,7 @@ class ASPResolvedStreetSensor(_ASPDiagnosticSensor):
         return attrs
 
 
-class ASPResolutionStatusSensor(_ASPDiagnosticSensor):
+class ASPResolutionStatusSensor(_ASPGpsDependentSensor):
     """Diagnostic sensor showing the pipeline resolution status."""
 
     _attr_icon = "mdi:map-search"
@@ -561,7 +576,7 @@ class ASPResolutionStatusSensor(_ASPDiagnosticSensor):
         return attrs
 
 
-class ASPConfidenceScoreSensor(_ASPDiagnosticSensor):
+class ASPConfidenceScoreSensor(_ASPGpsDependentSensor):
     """Diagnostic sensor showing the resolver confidence score (0-1).
 
     Per D-08: surfaces coordinator.data.confidence_score as the entity state.
@@ -583,7 +598,7 @@ class ASPConfidenceScoreSensor(_ASPDiagnosticSensor):
         return self._coordinator.data.confidence_score
 
 
-class ASPSODALevelSensor(_ASPDiagnosticSensor):
+class ASPSODALevelSensor(_ASPGpsDependentSensor):
     """Diagnostic sensor showing which SODA fallback level matched (0-4).
 
     Per D-08: surfaces coordinator.data.soda_level as the entity state. 0 means
@@ -604,7 +619,7 @@ class ASPSODALevelSensor(_ASPDiagnosticSensor):
         return self._coordinator.data.soda_level
 
 
-class ASPLastResolvedSensor(_ASPDiagnosticSensor):
+class ASPLastResolvedSensor(_ASPGpsDependentSensor):
     """Diagnostic sensor showing the timestamp of the last successful resolve.
 
     Per D-08: surfaces coordinator.data.last_resolved as ISO string entity state.
