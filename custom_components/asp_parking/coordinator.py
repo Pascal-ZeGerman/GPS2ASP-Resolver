@@ -1753,6 +1753,7 @@ class ASPParkingCoordinator:
 
         if not has_gps_location:
             return
+        assert new_state is not None  # has_gps_location implies this
 
         new_lat = new_state.attributes[ATTR_LATITUDE]
         new_lon = new_state.attributes[ATTR_LONGITUDE]
