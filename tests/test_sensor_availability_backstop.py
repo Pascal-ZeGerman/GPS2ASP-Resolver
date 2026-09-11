@@ -367,9 +367,7 @@ class TestGpsUpdateNotifiesOnHealthTransition:
         # The real method (not a mock) so its own logic -- deciding whether to
         # call the two mocks above -- is what actually runs under test.
         stub._async_handle_tracker_health_transition = (
-            ASPParkingCoordinator._async_handle_tracker_health_transition.__get__(
-                stub
-            )
+            ASPParkingCoordinator._async_handle_tracker_health_transition.__get__(stub)
         )
         return stub
 
@@ -427,7 +425,7 @@ class TestGpsUpdateNotifiesOnHealthTransition:
 def _patched_registry(*, registered: bool):
     """Patch ``er.async_get`` so ``tracker_registered`` returns ``registered``."""
     fake_registry = SimpleNamespace(
-        async_get=lambda entity_id: (object() if registered else None)
+        async_get=lambda entity_id: object() if registered else None
     )
     return patch(
         "custom_components.asp_parking.coordinator.er.async_get",
@@ -488,9 +486,7 @@ class TestGpsWatchdogFastPath:
         )
         with (
             _patched_registry(registered=True),
-            patch(
-                "custom_components.asp_parking.coordinator.pn_create"
-            ) as mock_create,
+            patch("custom_components.asp_parking.coordinator.pn_create") as mock_create,
             patch(
                 "custom_components.asp_parking.coordinator.pn_dismiss"
             ) as mock_dismiss,
@@ -510,9 +506,7 @@ class TestGpsWatchdogFastPath:
         coord = _StubCoordinator(tracker_state=None, stale_timeout=168)
         with (
             _patched_registry(registered=False),
-            patch(
-                "custom_components.asp_parking.coordinator.pn_create"
-            ) as mock_create,
+            patch("custom_components.asp_parking.coordinator.pn_create") as mock_create,
             patch(
                 "custom_components.asp_parking.coordinator.async_call_later"
             ) as mock_call_later,
@@ -533,9 +527,7 @@ class TestGpsWatchdogFastPath:
         )
         with (
             _patched_registry(registered=True),
-            patch(
-                "custom_components.asp_parking.coordinator.pn_create"
-            ) as mock_create,
+            patch("custom_components.asp_parking.coordinator.pn_create") as mock_create,
             patch(
                 "custom_components.asp_parking.coordinator.pn_dismiss"
             ) as mock_dismiss,
@@ -557,9 +549,7 @@ class TestGpsWatchdogFastPath:
         )
         with (
             _patched_registry(registered=True),
-            patch(
-                "custom_components.asp_parking.coordinator.pn_create"
-            ) as mock_create,
+            patch("custom_components.asp_parking.coordinator.pn_create") as mock_create,
         ):
             coord._on_gps_stale_timeout(dt_util.utcnow())
 

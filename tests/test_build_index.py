@@ -678,7 +678,9 @@ class TestCurbCalibrationEndpointTrim:
         )
         monkeypatch.setattr(build_index, "_fetch_asp_signs", lambda: set())
         monkeypatch.setattr(
-            build_index, "_download_curbs", lambda cache_path=None: self._make_curb_gdf()
+            build_index,
+            "_download_curbs",
+            lambda cache_path=None: self._make_curb_gdf(),
         )
         monkeypatch.setattr(
             build_index,

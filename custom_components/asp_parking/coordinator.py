@@ -417,9 +417,7 @@ class ASPParkingCoordinator:
         setup runs, so this check is reliable even on the very first callback
         after a restart.
         """
-        return (
-            er.async_get(self.hass).async_get(self.device_tracker_entity) is not None
-        )
+        return er.async_get(self.hass).async_get(self.device_tracker_entity) is not None
 
     @property
     def tracker_failed(self) -> bool:
@@ -1724,9 +1722,9 @@ class ASPParkingCoordinator:
             old_state: Previous device_tracker state (or None) from the event.
             has_gps_location: Whether ``new_state`` carries a valid GPS fix.
         """
-        is_transition = _is_failed_tracker_state(
-            new_state
-        ) != _is_failed_tracker_state(old_state)
+        is_transition = _is_failed_tracker_state(new_state) != _is_failed_tracker_state(
+            old_state
+        )
         if not is_transition:
             return
 
