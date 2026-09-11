@@ -48,7 +48,7 @@ When using the `asp_parking` custom integration, the fields below are set throug
 | `device_tracker` | **Required** | _(none)_ | Entity ID of the `device_tracker` whose GPS coordinates are resolved. Selected in the first setup step; stored in the config entry `data`. |
 | `movement_threshold` | Optional | `50.0` m | Minimum GPS displacement (metres) before the pipeline re-runs. Suppresses redundant API calls for minor GPS jitter. Valid range: 1–10 000 m. |
 | `refresh_interval` | Optional | `8` h | Hours between forced periodic refreshes even when the vehicle has not moved. Valid range: 1–168 h. |
-| `stale_timeout` | Optional | `8` h | Hours after which sensors are marked `unavailable` if no successful resolve has occurred. Valid range: 1–168 h. |
+| `stale_timeout` | Optional | `168` h | Backstop: hours with **no location event from the `device_tracker` at all** before sensors are marked `unavailable`. Valid range: 1–168 h. Defaults to 7 days to match the NYC ASP recurrence cycle — a parked car legitimately emits no GPS updates for days (telematics sleep, movement-triggered phone trackers), so a shorter value produces false `unavailable` states on ordinary overnight parking. A `device_tracker` that reports its own state as `unavailable`/`unknown` is treated as a real failure and marks the sensors unavailable immediately, independent of this timer. |
 | `nyc311_api_key` | Optional | _(none)_ | NYC 311 API subscription key entered in the setup wizard. Stored in the HA config entry; takes precedence over `NYC_311_API_KEY` env var when set via the UI. Validated against the live API during setup — an invalid key surfaces an `invalid_api_key` form error. |
 | `nyc311_entity` | Optional | `""` | Entity ID of a `binary_sensor` that already tracks the NYC 311 suspension state (e.g., from another integration). Used as an alternative to direct API polling. |
 | `notify_service` | Optional | `""` | HA `notify.*` service to call when an upcoming ASP cleaning window is approaching. Example: `notify.mobile_app_my_phone`. |
@@ -78,7 +78,7 @@ The CalDAV step in the options flow lets the integration publish upcoming ASP cl
 |---|---|---|
 | `movement_threshold` | `50.0` m | `custom_components/asp_parking/const.py` — `DEFAULT_MOVEMENT_THRESHOLD` |
 | `refresh_interval` | `8` h | `custom_components/asp_parking/const.py` — `DEFAULT_REFRESH_INTERVAL` |
-| `stale_timeout` | `8` h | `custom_components/asp_parking/const.py` — `DEFAULT_STALE_TIMEOUT` |
+| `stale_timeout` | `168` h (7 days) | `custom_components/asp_parking/const.py` — `DEFAULT_STALE_TIMEOUT` |
 | `parking_radius` | `500` m | `custom_components/asp_parking/const.py` — `DEFAULT_PARKING_RADIUS` |
 | `notify_lead_time` | `120` min | `custom_components/asp_parking/const.py` — `DEFAULT_NOTIFY_LEAD_TIME` |
 | `notify_service` | `""` | `custom_components/asp_parking/const.py` — `DEFAULT_NOTIFY_SERVICE` |

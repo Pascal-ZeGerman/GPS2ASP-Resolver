@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import httpx
 
-from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE
+from homeassistant.const import (
+    ATTR_LATITUDE,
+    ATTR_LONGITUDE,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import (
     CALLBACK_TYPE,
     Event,
@@ -32,6 +37,7 @@ from homeassistant.components.persistent_notification import (
     async_dismiss as pn_dismiss,
 )
 from homeassistant.helpers.debounce import Debouncer
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
@@ -213,6 +219,23 @@ def _legal_sides_for(candidate) -> tuple[str, ...]:
     return ("N", "S", "E", "W")
 
 
+def _is_failed_tracker_state(state) -> bool:
+    """Return True when a device_tracker state object self-reports a failure.
+
+    Only an explicit ``unavailable`` / ``unknown`` state counts.  A ``None``
+    state (entity not in the state machine) deliberately does NOT: that is the
+    normal shape of a tracker whose integration has not finished setting up, or
+    of a manually-posted / Shortcut-driven tracker whose state was not restored
+    across an HA restart.  Treating that as a failure would flap the sensor to
+    unavailable on every reboot, so it falls through to the long backstop
+    instead.
+
+    Args:
+        state: A ``homeassistant.core.State`` or None.
+    """
+    return state is not None and state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+
+
 class ASPParkingCoordinator:
     """Event-driven coordinator for ASP Parking.
 
@@ -359,6 +382,85 @@ class ASPParkingCoordinator:
     def stale_timeout(self) -> int:
         """Return the stale GPS timeout in hours."""
         return self.entry.options.get(CONF_STALE_TIMEOUT, DEFAULT_STALE_TIMEOUT)
+
+    @property
+    def tracker_unavailable(self) -> bool:
+        """Return True when the configured device_tracker self-reports a failure.
+
+        This is the fast path out of the multi-day ``stale_timeout`` backstop.
+        The backstop deliberately tolerates days of silence because a parked car
+        produces exactly that, but a tracker whose own HA state is
+        ``unavailable`` / ``unknown`` is a different thing entirely: the source
+        integration is telling us it is broken (expired OAuth token, API
+        outage), so there is nothing to wait for and the sensor should stop
+        presenting a retained position as current immediately.
+
+        Reads the live state machine rather than a cached flag so the answer is
+        still correct when the tracker was ALREADY unavailable at HA start and
+        has therefore never fired a state_changed event for us to observe.
+        """
+        return _is_failed_tracker_state(
+            self.hass.states.get(self.device_tracker_entity)
+        )
+
+    @property
+    def tracker_registered(self) -> bool:
+        """Return True when the configured device_tracker exists in the entity registry.
+
+        Distinct from ``tracker_unavailable``: a ``None`` state can mean either
+        "the source integration hasn't finished setting up yet" (entity IS
+        registered, no state yet -- must not be treated as a failure, see
+        ``tracker_unavailable``) or "this entity was deleted, renamed, or never
+        existed" (entity is NOT registered, and will therefore never fire a
+        recovering ``state_changed`` event on its own). Unlike the state
+        machine, the entity registry is loaded from storage before component
+        setup runs, so this check is reliable even on the very first callback
+        after a restart.
+        """
+        return er.async_get(self.hass).async_get(self.device_tracker_entity) is not None
+
+    @property
+    def tracker_failed(self) -> bool:
+        """Return True when the tracker is broken with nothing worth waiting for.
+
+        True when it self-reports ``unavailable``/``unknown``, OR it has been
+        removed from the entity registry entirely (deleted, renamed, source
+        integration uninstalled). Used by the GPS-stale watchdog notification
+        (see ``_gps_watchdog_rearm``), which -- unlike entity availability --
+        is a one-shot proactive alert and is safe to fire immediately rather
+        than only after the long staleness backstop.
+        """
+        return self.tracker_unavailable or not self.tracker_registered
+
+    @property
+    def gps_data_available(self) -> bool:
+        """Return True when GPS/pipeline-derived data should be presented as current.
+
+        Shared three-gate policy (pipeline error -> tracker health -> staleness)
+        used by every entity whose value is derived from the GPS-to-ASP
+        pipeline. See ``ASPNextMoveTimeSensor.available`` for the rationale
+        behind each gate and why gate 3 is a multi-day backstop rather than a
+        freshness SLA.
+
+        Deliberately checks ``tracker_unavailable`` alone, NOT ``tracker_failed``
+        (which also covers a deleted/renamed tracker entity via
+        ``tracker_registered``). A missing entity is left to the staleness
+        backstop here for the same reason a merely-absent *state* is: it is
+        indistinguishable at this call site from an integration still mid-setup,
+        and gate 2 flapping availability on every reboot is exactly the bug this
+        policy exists to prevent. ``tracker_failed`` is intentionally reserved
+        for the GPS-stale watchdog notification (see ``_gps_watchdog_rearm``),
+        which is a one-shot proactive alert rather than a live-read gate, so it
+        can afford to treat "deleted" as certain rather than ambiguous.
+        """
+        if self._last_pipeline_error:
+            return False
+        if self.tracker_unavailable:
+            return False
+        if self.data.last_gps_update is None:
+            return True
+        elapsed = (dt_util.utcnow() - self.data.last_gps_update).total_seconds()
+        return elapsed <= self.stale_timeout * 3600
 
     def _get_now(self) -> datetime:
         """Return debug datetime override when active, otherwise real now.
@@ -1592,6 +1694,45 @@ class ASPParkingCoordinator:
     # ------------------------------------------------------------------
 
     @callback
+    def _async_handle_tracker_health_transition(
+        self, new_state, old_state, *, has_gps_location: bool
+    ) -> None:
+        """Notify entities and rearm the watchdog on a tracker-health transition.
+
+        Entities read ``tracker_unavailable`` live, but they only re-render
+        when something pushes them.  A tracker flipping into (or back out of)
+        unavailable/unknown carries no location, so the early return in
+        ``_async_on_gps_update`` would otherwise swallow the event and leave
+        the sensor showing its old availability until the next unrelated
+        pipeline run.  Push on the transition only -- not on every
+        location-less state change -- so a zone-only tracker does not trigger
+        a write per update.
+
+        Also rearms the watchdog when the transition carries no location: a
+        tracker going unavailable/unknown (or recovering from it without a
+        fresh fix) would otherwise never reach the main rearm call in
+        ``_async_on_gps_update``, and the "GPS Signal Lost" notification would
+        wait out the full ``stale_timeout`` instead of firing via the same
+        fast path used for entity availability. When there IS a location, the
+        caller's own rearm call already covers it -- skip here to avoid
+        rearming (and thus cancelling/reposting the watchdog timer) twice.
+
+        Args:
+            new_state: New device_tracker state (or None) from the event.
+            old_state: Previous device_tracker state (or None) from the event.
+            has_gps_location: Whether ``new_state`` carries a valid GPS fix.
+        """
+        is_transition = _is_failed_tracker_state(new_state) != _is_failed_tracker_state(
+            old_state
+        )
+        if not is_transition:
+            return
+
+        self._async_notify_entities()
+        if not has_gps_location:
+            self._gps_watchdog_rearm()
+
+    @callback
     def _async_on_gps_update(self, event: Event) -> None:
         """Handle device_tracker state change events.
 
@@ -1603,14 +1744,27 @@ class ASPParkingCoordinator:
             event: State change event from Home Assistant.
         """
         new_state = event.data.get("new_state")
-        if new_state is None or not has_location(new_state):
+        old_state = event.data.get("old_state")
+        has_gps_location = new_state is not None and has_location(new_state)
+
+        self._async_handle_tracker_health_transition(
+            new_state, old_state, has_gps_location=has_gps_location
+        )
+
+        if not has_gps_location:
             return
+        assert new_state is not None  # has_gps_location implies this
 
         new_lat = new_state.attributes[ATTR_LATITUDE]
         new_lon = new_state.attributes[ATTR_LONGITUDE]
 
         self.data.last_gps_update = dt_util.utcnow()
-        self._gps_watchdog_rearm()  # Cancel prior watchdog, dismiss stale notif, rearm
+        # A fresh GPS fix already proves the tracker is healthy -- an
+        # unavailable/unknown state never carries location attributes, so
+        # `has_gps_location` above already rules that out -- so arm the
+        # backstop directly rather than re-deriving `tracker_failed` (which
+        # would also re-check the entity registry for no reason here).
+        self._gps_watchdog_arm_normal()
 
         # Check movement threshold against last resolved position
         if self.data.last_lat is not None and self.data.last_lon is not None:
@@ -1682,32 +1836,85 @@ class ASPParkingCoordinator:
             cancel()
 
     @callback
-    def _gps_watchdog_rearm(self) -> None:
-        """Cancel prior GPS stale watchdog, dismiss stale notification, and arm a new timer.
+    def _gps_watchdog_arm_normal(self) -> None:
+        """Cancel prior watchdog, dismiss any stale notification, and arm the backstop.
 
-        Called on every GPS state-change event so the timer always reflects the
-        time of the last actual GPS update.  When the timer fires it posts the
-        ``asp_parking_gps_stale`` persistent notification and triggers an entity
-        state refresh via ``_async_notify_entities()``.
+        Used whenever the tracker is known (or assumed) healthy: directly by a
+        real GPS location fix in ``_async_on_gps_update`` (which cannot happen
+        while self-reporting unavailable/unknown, so there is nothing to
+        re-check), and by ``_gps_watchdog_rearm`` once ``tracker_failed`` has
+        already been confirmed False.
         """
         self._gps_watchdog_cancel()
         pn_dismiss(self.hass, "asp_parking_gps_stale")
-
         delay = float(self.stale_timeout * 3600)
+        self._gps_stale_unsub = async_call_later(
+            self.hass, delay, self._on_gps_stale_timeout
+        )
 
-        @callback
-        def _on_gps_stale(_now: datetime) -> None:
-            pn_create(
-                self.hass,
+    @callback
+    def _gps_watchdog_rearm(self) -> None:
+        """Check tracker health and either alert now or arm the backstop timer.
+
+        Called on a tracker-health transition (see
+        ``_async_handle_tracker_health_transition``) and once at startup, so
+        the watchdog always reflects the current tracker state when it is NOT
+        already known from the caller's context (contrast with
+        ``_gps_watchdog_arm_normal``, used directly when it is).
+
+        When the tracker is genuinely broken (``tracker_failed``: self-reports
+        unavailable/unknown, or has been deleted from the entity registry)
+        there is nothing to wait for, so the "GPS Signal Lost" notification
+        fires immediately -- the same fast path already used by the entity
+        availability gates (see ``tracker_unavailable`` / ``tracker_failed``)
+        instead of waiting out the full ``stale_timeout`` backstop.
+        """
+        if self.tracker_failed:
+            self._gps_watchdog_cancel()
+            self._async_post_gps_stale_notification()
+            return
+
+        self._gps_watchdog_arm_normal()
+
+    @callback
+    def _on_gps_stale_timeout(self, _now: datetime) -> None:
+        """Fire when the stale-timeout backstop elapses with no recovery."""
+        self._async_post_gps_stale_notification()
+
+    @callback
+    def _async_post_gps_stale_notification(self) -> None:
+        """Post the GPS-stale persistent notification and refresh entities.
+
+        The message distinguishes three causes so the user knows what to fix:
+        a self-reported tracker failure, a deleted/renamed tracker entity, or
+        genuine multi-day silence from an otherwise healthy tracker.
+        """
+        if self.tracker_unavailable:
+            message = (
+                "The configured device tracker is reporting 'unavailable' or "
+                "'unknown'. Check that its source integration is working "
+                "(e.g. an expired login or an API outage)."
+            )
+        elif not self.tracker_registered:
+            message = (
+                f"The configured device tracker ({self.device_tracker_entity}) "
+                "no longer exists -- it may have been deleted, renamed, or its "
+                "source integration removed. Reconfigure ASP Parking with a "
+                "valid device tracker."
+            )
+        else:
+            message = (
                 f"No GPS update has been received for {self.stale_timeout} hour(s). "
                 "The GPS pipeline health sensor is now OFF. Check that your device "
-                "tracker is reporting location updates.",
-                title="ASP Parking: GPS Signal Lost",
-                notification_id="asp_parking_gps_stale",
+                "tracker is reporting location updates."
             )
-            self._async_notify_entities()
-
-        self._gps_stale_unsub = async_call_later(self.hass, delay, _on_gps_stale)
+        pn_create(
+            self.hass,
+            message,
+            title="ASP Parking: GPS Signal Lost",
+            notification_id="asp_parking_gps_stale",
+        )
+        self._async_notify_entities()
 
     @callback
     def _async_schedule_boundary_timer(self, schedule: ScheduleResult) -> None:

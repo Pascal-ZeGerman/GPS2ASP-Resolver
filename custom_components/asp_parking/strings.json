@@ -14,12 +14,12 @@
         "data": {
           "movement_threshold": "Movement threshold",
           "refresh_interval": "Refresh interval",
-          "stale_timeout": "GPS stale timeout"
+          "stale_timeout": "GPS silence backstop"
         },
         "data_description": {
           "movement_threshold": "Min distance the car must move before re-running the schedule lookup. 50 m filters GPS drift without missing real moves.",
           "refresh_interval": "Re-check schedule even without movement so upcoming windows stay current. 8 h balances freshness with API calls.",
-          "stale_timeout": "Mark sensor unavailable after this long without a GPS update. Match your tracker's reporting frequency."
+          "stale_timeout": "Safety net only: mark sensors unavailable after this long with NO location update at all. Default 168 h (7 days), because a parked car legitimately reports nothing for days and a short value here fires on ordinary overnight parking. A tracker that reports itself unavailable is flagged immediately regardless of this value."
         }
       },
       "api_keys": {
@@ -62,7 +62,7 @@
         "data": {
           "movement_threshold": "Movement threshold",
           "refresh_interval": "Refresh interval",
-          "stale_timeout": "GPS stale timeout",
+          "stale_timeout": "GPS silence backstop",
           "nyc311_entity": "ha-nyc311 suspension entity",
           "nyc311_api_key": "NYC 311 API key",
           "notify_service": "Push notification service",
@@ -71,7 +71,7 @@
         "data_description": {
           "movement_threshold": "Min distance the car must move before re-running the schedule lookup. 50 m filters GPS drift without missing real moves.",
           "refresh_interval": "Re-check schedule even without movement so upcoming windows stay current. 8 h balances freshness with API calls.",
-          "stale_timeout": "Mark sensor unavailable after this long without a GPS update. Match your tracker's reporting frequency.",
+          "stale_timeout": "Safety net only: mark sensors unavailable after this long with NO location update at all. Default 168 h (7 days), because a parked car legitimately reports nothing for days and a short value here fires on ordinary overnight parking. A tracker that reports itself unavailable is flagged immediately regardless of this value.",
           "nyc311_entity": "Leave empty for auto-detection. Only set this if you renamed the ha-nyc311 binary sensor.",
           "nyc311_api_key": "Get a free key at api-portal.nyc.gov. Leave blank to disable 311 polling.",
           "notify_service": "Pick a notify service. Leave empty to disable push notifications. If the list is empty, set up the Home Assistant Companion app or another notify integration first.",

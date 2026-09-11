@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPS2ASP-Resolver — try it before you install</title>
+  <meta name="description" content="Two static, no-install pages: a click-a-block parking rule demo for everyone, and a citywide sign-coverage explorer for maintainers.">
+
+  <!-- Shared design tokens + reset/base + typography (kept in sync with docs/demo/ and docs/explorer/). -->
+  <link rel="stylesheet" href="common.css">
+  <style>
+    .landing-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: var(--sp-lg);
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 var(--sp-lg) var(--sp-3xl);
+    }
+    @media (min-width: 768px) {
+      .landing-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .landing-card {
+      display: flex;
+      flex-direction: column;
+      gap: var(--sp-sm);
+    }
+    .landing-card .heading { color: var(--fg); }
+    .landing-card a.cta {
+      display: inline-block;
+      margin-top: var(--sp-sm);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .landing-card a.cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .audience-tag { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <h1 class="display">GPS2ASP-Resolver</h1>
+    <p class="hero-subhead body">Two static pages, no install and no server — pick the one that fits what you're after.</p>
+  </header>
+
+  <main class="landing-grid">
+    <section class="card landing-card">
+      <p class="label audience-tag">For everyone</p>
+      <h2 class="heading">Try the demo</h2>
+      <p class="body">Click a block on the map and see exactly what the integration would show you: the parking rule, the next time you'd need to move your car, the Home Assistant sensor it creates, and an animated calendar.</p>
+      <a class="cta" href="demo/">Open the demo &rarr;</a>
+    </section>
+
+    <section class="card landing-card">
+      <p class="label audience-tag">For maintainers &amp; technical users</p>
+      <h2 class="heading">Explore sign coverage</h2>
+      <p class="body">A citywide map of all ~105K street segments, colored by match confidence, with filters by borough/tier/SODA level and GeoJSON export — for inspecting data coverage and gaps.</p>
+      <a class="cta" href="explorer/">Open the explorer &rarr;</a>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p class="label"><a href="https://github.com/Pascal-ZeGerman/GPS2ASP-Resolver" rel="noopener">View the project on GitHub</a></p>
+  </footer>
+</body>
+</html>

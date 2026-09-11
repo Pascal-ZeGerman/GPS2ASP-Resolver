@@ -229,6 +229,11 @@ class ASPParkingConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """
 
     VERSION = 2
+    # Bumped to 2 alongside the stale_timeout 8h -> 168h backstop change so
+    # async_migrate_entry can rewrite the shadowing legacy value on existing
+    # entries. Minor (not major) because the data shape is unchanged and old
+    # entries remain loadable.
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         """Initialize the config flow."""
