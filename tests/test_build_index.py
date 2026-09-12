@@ -434,20 +434,18 @@ class TestPropagateAspToInteriorBlocks:
         assert "N" in sides_in_expanded
 
 
-class TestCurbCalibration:
-    """Offline synthetic-curb tests for per-segment calibration (SC-1/SC-5).
+class _CurbBuildHarness:
+    """Shared offline-build monkeypatch harness for curb-calibration tests.
 
     A tiny index is built over ONE East-running CSCL segment with synthetic
     flanking curb + roadbed geometry, monkeypatching the three network download
     helpers. All geometry is in EPSG:2263 (State Plane feet); the CSCL frame is
     tagged EPSG:2263 so _filter_and_reproject's to_crs is a no-op and coordinates
-    are preserved through the build.
+    are preserved through the build. Subclasses set ``_X0``/``_Y0``/``_LEN``/
+    ``_STREETWIDTH`` and implement ``_make_curb_gdf``/``_make_roadbed_gdf``.
     """
 
-    # East-running segment on y=0-line, 300 ft long, at a State-Plane origin.
-    _X0 = 1_000_000.0
-    _Y0 = 200_000.0
-    _LEN = 300.0
+    _STREETWIDTH = 50.0
 
     def _make_cscl_gdf(self):
         import geopandas as gpd
@@ -460,13 +458,40 @@ class TestCurbCalibration:
                 "full_street_name": ["TEST STREET"],
                 "rw_type": [1],
                 "trafdir": ["TW"],
-                "streetwidth": [34.0],
+                "streetwidth": [self._STREETWIDTH],
                 "nominaldir": [""],
                 "boroughcode": ["1"],
                 "geometry": [seg],
             },
             crs="EPSG:2263",
         )
+
+    def _patch_downloads(self, monkeypatch, *, curbs=True):
+        monkeypatch.setattr(
+            build_index, "_download_cscl_geojson", lambda: self._make_cscl_gdf()
+        )
+        monkeypatch.setattr(build_index, "_fetch_asp_signs", lambda: set())
+        if curbs:
+            monkeypatch.setattr(
+                build_index,
+                "_download_curbs",
+                lambda cache_path=None: self._make_curb_gdf(),
+            )
+            monkeypatch.setattr(
+                build_index,
+                "_download_roadbed",
+                lambda cache_path=None: self._make_roadbed_gdf(),
+            )
+
+
+class TestCurbCalibration(_CurbBuildHarness):
+    """Clean-curb and calibration-disabled behaviour (SC-1/SC-5)."""
+
+    # East-running segment on y=0-line, 300 ft long, at a State-Plane origin.
+    _X0 = 1_000_000.0
+    _Y0 = 200_000.0
+    _LEN = 300.0
+    _STREETWIDTH = 34.0
 
     def _make_curb_gdf(self):
         """North curb at +16 ft, South curb at -14 ft -> c=+1.0, width=30.0."""
@@ -490,23 +515,6 @@ class TestCurbCalibration:
             self._X0 - 10, self._Y0 - 14, self._X0 + self._LEN + 10, self._Y0 + 16
         )
         return gpd.GeoDataFrame(geometry=[pavement], crs="EPSG:2263")
-
-    def _patch_downloads(self, monkeypatch, *, curbs=True):
-        monkeypatch.setattr(
-            build_index, "_download_cscl_geojson", lambda: self._make_cscl_gdf()
-        )
-        monkeypatch.setattr(build_index, "_fetch_asp_signs", lambda: set())
-        if curbs:
-            monkeypatch.setattr(
-                build_index,
-                "_download_curbs",
-                lambda cache_path=None: self._make_curb_gdf(),
-            )
-            monkeypatch.setattr(
-                build_index,
-                "_download_roadbed",
-                lambda cache_path=None: self._make_roadbed_gdf(),
-            )
 
     def _load_segments(self, output_dir):
         with open(output_dir / "segments.json") as f:
@@ -579,7 +587,7 @@ class TestCurbCalibration:
         assert info["non_calibrated_count"] == 1
 
 
-class TestCurbCalibrationEndpointTrim:
+class TestCurbCalibrationEndpointTrim(_CurbBuildHarness):
     """End-to-end proof that the endpoint-trim retry reaches segments.json.
 
     Same offline build harness as :class:`TestCurbCalibration` (which is left
@@ -603,30 +611,12 @@ class TestCurbCalibrationEndpointTrim:
     _X0 = 1_000_000.0
     _Y0 = 200_000.0
     _LEN = 200.0
-
-    def _make_cscl_gdf(self):
-        import geopandas as gpd
-        from shapely.geometry import LineString
-
-        seg = LineString([(self._X0, self._Y0), (self._X0 + self._LEN, self._Y0)])
-        return gpd.GeoDataFrame(
-            {
-                "physicalid": [1],
-                "full_street_name": ["TEST STREET"],
-                "rw_type": [1],
-                "trafdir": ["TW"],
-                # streetwidth passes straight through as cscl_width_ft, so 50.0
-                # sets max_perp = max(45, 50*1.5) = 75 -- the +/-70 ft flare
-                # samples SURVIVE the perpendicular gate and reach the spread
-                # computation. With a narrower street they would be clipped and
-                # the fixture would exercise the wrong gate entirely.
-                "streetwidth": [50.0],
-                "nominaldir": [""],
-                "boroughcode": ["1"],
-                "geometry": [seg],
-            },
-            crs="EPSG:2263",
-        )
+    # streetwidth passes straight through as cscl_width_ft, so 50.0 sets
+    # max_perp = max(45, 50*1.5) = 75 -- the +/-70 ft flare samples SURVIVE the
+    # perpendicular gate and reach the spread computation. With a narrower
+    # street they would be clipped and the fixture would exercise the wrong
+    # gate entirely.
+    _STREETWIDTH = 50.0
 
     def _make_curb_gdf(self):
         """Corner-return flares in the end zones + straight mid-block runs.
@@ -672,22 +662,6 @@ class TestCurbCalibrationEndpointTrim:
         )
         return gpd.GeoDataFrame(geometry=[pavement], crs="EPSG:2263")
 
-    def _patch_downloads(self, monkeypatch):
-        monkeypatch.setattr(
-            build_index, "_download_cscl_geojson", lambda: self._make_cscl_gdf()
-        )
-        monkeypatch.setattr(build_index, "_fetch_asp_signs", lambda: set())
-        monkeypatch.setattr(
-            build_index,
-            "_download_curbs",
-            lambda cache_path=None: self._make_curb_gdf(),
-        )
-        monkeypatch.setattr(
-            build_index,
-            "_download_roadbed",
-            lambda cache_path=None: self._make_roadbed_gdf(),
-        )
-
     def test_corner_contaminated_segment_calibrates_through_the_build(
         self, tmp_path, monkeypatch
     ):
@@ -717,7 +691,7 @@ class TestCurbCalibrationEndpointTrim:
         assert info["non_calibrated_count"] == 0
 
 
-class TestCurbCalibrationMajorityCluster:
+class TestCurbCalibrationMajorityCluster(_CurbBuildHarness):
     """End-to-end proof that the majority-cluster retry reaches segments.json.
 
     Same offline build harness as :class:`TestCurbCalibration` and
@@ -749,30 +723,12 @@ class TestCurbCalibrationMajorityCluster:
     _X0 = 1_000_000.0
     _Y0 = 200_000.0
     _LEN = 300.0
-
-    def _make_cscl_gdf(self):
-        import geopandas as gpd
-        from shapely.geometry import LineString
-
-        seg = LineString([(self._X0, self._Y0), (self._X0 + self._LEN, self._Y0)])
-        return gpd.GeoDataFrame(
-            {
-                "physicalid": [1],
-                "full_street_name": ["TEST STREET"],
-                "rw_type": [1],
-                "trafdir": ["TW"],
-                # streetwidth passes straight through as cscl_width_ft, so 50.0
-                # sets max_perp = max(45, 50*1.5) = 75 -- the +65 ft apron samples
-                # SURVIVE the perpendicular gate and reach the spread computation.
-                # With a narrower street they would be clipped and the fixture
-                # would exercise the wrong gate entirely.
-                "streetwidth": [50.0],
-                "nominaldir": [""],
-                "boroughcode": ["1"],
-                "geometry": [seg],
-            },
-            crs="EPSG:2263",
-        )
+    # streetwidth passes straight through as cscl_width_ft, so 50.0 sets
+    # max_perp = max(45, 50*1.5) = 75 -- the +65 ft apron samples SURVIVE the
+    # perpendicular gate and reach the spread computation. With a narrower
+    # street they would be clipped and the fixture would exercise the wrong
+    # gate entirely.
+    _STREETWIDTH = 50.0
 
     def _make_curb_gdf(self):
         """Straight full-block runs plus a detached mid-block apron bulge.
@@ -810,22 +766,6 @@ class TestCurbCalibrationMajorityCluster:
             self._X0 - 10, self._Y0 - 16, self._X0 + self._LEN + 10, self._Y0 + 18
         )
         return gpd.GeoDataFrame(geometry=[pavement], crs="EPSG:2263")
-
-    def _patch_downloads(self, monkeypatch):
-        monkeypatch.setattr(
-            build_index, "_download_cscl_geojson", lambda: self._make_cscl_gdf()
-        )
-        monkeypatch.setattr(build_index, "_fetch_asp_signs", lambda: set())
-        monkeypatch.setattr(
-            build_index,
-            "_download_curbs",
-            lambda cache_path=None: self._make_curb_gdf(),
-        )
-        monkeypatch.setattr(
-            build_index,
-            "_download_roadbed",
-            lambda cache_path=None: self._make_roadbed_gdf(),
-        )
 
     def test_mid_block_apron_segment_calibrates_through_the_build(
         self, tmp_path, monkeypatch

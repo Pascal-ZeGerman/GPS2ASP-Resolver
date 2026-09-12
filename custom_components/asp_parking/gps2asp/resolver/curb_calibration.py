@@ -35,15 +35,9 @@ trusted: the segment is marked non-calibrated and ``c`` is blanked to 0.0. A
 segment missing a curb on either flank is likewise non-calibrated. This gate is
 the whole reason the method is safe at scale — it lets bad geometry self-flag.
 
-Two optional rescue layers sit in FRONT of that gate, never replacing it, and
-:func:`derive_segment_calibration_with_fallback_retries` chains them in strict
-order: (a) the plain untrimmed derivation — today's shipped behaviour — then (b)
-one retry with the 25 ft along-span endpoint trim (spike 008, the intersection
-corner-return failure mode), then (c) one retry adding the per-side
-dominant-cluster reduction on top of those trimmed samples (spike 009, the
-mid-block-bulge failure mode). Each tier runs only when the previous one leaves
-the segment non-calibrated, so a segment that calibrates today is returned
-verbatim and never recomputed.
+Two optional rescue layers sit in FRONT of that gate, never replacing it. See
+:func:`derive_segment_calibration_with_fallback_retries` for the three-tier
+fallback chain built on top of this gate.
 
 No network here. The caller (plan 40-08, the offline index build) fetches the
 curb lines and, for accepted segments, cross-validates against the roadbed
@@ -422,12 +416,12 @@ def derive_segment_calibration_with_fallback_retries(
     Measured yield (spike 009, on the 61 genuine spread-gate failures from spike
     008's population whose spread was distributed through the block INTERIOR and
     which the 25 ft trim therefore could not rescue): ~18% flip to calibrated
-    through the FULL pipeline at a 0.8 threshold, and 92% of the ones clearing the
-    spread gate also survived the caller's independent roadbed cross-check (vs 73%
-    at a 0.6 threshold). Scaled against spike 008's own population split that is
-    roughly ~11% additional citywide flip rate, on top of spike 008's ~26%. No new
-    NYC dataset is involved — the reduction operates purely on curb samples the
-    build already downloads.
+    through the FULL pipeline at :data:`MAJORITY_THRESHOLD`, and 92% of those also
+    survived the caller's independent roadbed cross-check (see the constant's own
+    comment for why 0.8 rather than a looser threshold). Scaled against spike
+    008's own population split that is roughly ~11% additional citywide flip
+    rate, on top of spike 008's ~26%. No new NYC dataset is involved — the
+    reduction operates purely on curb samples the build already downloads.
 
     Its scope limits are equally measured. It does nothing for a segment whose
     sides split closer to even than the threshold: that is treated as genuinely

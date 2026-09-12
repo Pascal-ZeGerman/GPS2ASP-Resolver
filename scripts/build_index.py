@@ -1182,14 +1182,10 @@ def _build_rtree_and_metadata(
         except (ValueError, TypeError):
             streetwidth = 0.0
 
-        # Per-segment curb calibration (SC-1/SC-5). Derive c/width from flanking
-        # curbs via derive_segment_calibration_with_fallback_retries (untrimmed
-        # first, then one 25 ft endpoint-trim retry on failure -- spike 008 --
-        # then one majority-cluster-at-0.8 retry on those trimmed samples --
-        # spike 009), spread-gated (40-05) and roadbed-cross-checked on whatever
-        # comes back; fall back to the non-calibrated defaults when disabled,
-        # geometry is missing, or the two sources disagree. The five keys use the
-        # EXACT 40-04 name contract.
+        # Per-segment curb calibration (SC-1/SC-5) via _derive_segment_fields's
+        # three-tier fallback chain (see its docstring); fall back to the
+        # non-calibrated defaults when disabled or geometry is missing. The five
+        # keys use the EXACT 40-04 name contract.
         if calibrate and geom.geom_type == "LineString":
             cal = _derive_segment_fields(
                 geom,
@@ -1313,12 +1309,10 @@ def build_index(
     index, and saves all metadata.
 
     When curb calibration is enabled (the default) the build ALSO bulk-downloads
-    the NYC curb + roadbed planimetric layers ONCE, derives each segment's centre
-    offset ``c`` / true width via
-    :func:`derive_segment_calibration_with_fallback_retries` — untrimmed, then one
-    25 ft endpoint-trim retry, then one majority-cluster-at-0.8 retry on those
-    trimmed samples — cross-checks the resulting ``c`` against the roadbed polygon
-    whichever tier produced it, and writes the calibration fields into
+    the NYC curb + roadbed planimetric layers ONCE and derives each segment's
+    centre offset ``c`` / true width / calibrated flag via
+    :func:`_derive_segment_fields` (see its docstring for the three-tier fallback
+    chain and the roadbed cross-check), writing the calibration fields into
     ``segments.json`` (SC-1/SC-5).
 
     Args:
