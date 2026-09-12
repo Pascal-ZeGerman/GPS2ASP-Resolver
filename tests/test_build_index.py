@@ -717,6 +717,147 @@ class TestCurbCalibrationEndpointTrim:
         assert info["non_calibrated_count"] == 0
 
 
+class TestCurbCalibrationMajorityCluster:
+    """End-to-end proof that the majority-cluster retry reaches segments.json.
+
+    Same offline build harness as :class:`TestCurbCalibration` and
+    :class:`TestCurbCalibrationEndpointTrim` (both left byte-unchanged on purpose
+    — their continuing to pass without edits is the end-to-end evidence that
+    ORDINARY and TRIM-RESCUED segments are unaffected), but with
+    mid-block-contaminated curb geometry: straight full-block runs plus a short,
+    detached apron curb bulging outward deep in the block INTERIOR.
+
+    Before this wiring, this exact fixture lands in ``non_calibrated_count`` with
+    an untrimmed north spread of ~15 ft against a 12 ft gate — AND it stays there
+    under the endpoint trim alone (~17 ft; the trim removes good mid-block samples
+    while leaving every apron sample, so it actually makes the spread slightly
+    worse). It is drawn from precisely the mid-block-distributed population spike
+    008 measured it could not touch and spike 009 went on to measure: ~18% of that
+    slice flips at a 0.8 threshold, 92% of those corroborated by the independent
+    roadbed cross-check. The assertion below is the whole point of the task — the
+    segment now reaches ``segments.json`` with ``calibrated: true``, having ALSO
+    cleared that roadbed cross-check.
+    """
+
+    # East-running segment on the y=0-line at a State-Plane origin. 300 ft (not
+    # the 200 ft of the endpoint-trim fixture) for the same share-headroom reason
+    # the unit fixture uses 300: the 40 ft apron yields 7 samples against the
+    # 25 ft-trimmed main run's 41, so the dominant north share is ~0.854, clear of
+    # the 0.8 threshold. On a 200 ft block the share falls to ~0.78 and 0.8
+    # correctly refuses to clean, so the fixture would test the refusal path by
+    # accident.
+    _X0 = 1_000_000.0
+    _Y0 = 200_000.0
+    _LEN = 300.0
+
+    def _make_cscl_gdf(self):
+        import geopandas as gpd
+        from shapely.geometry import LineString
+
+        seg = LineString([(self._X0, self._Y0), (self._X0 + self._LEN, self._Y0)])
+        return gpd.GeoDataFrame(
+            {
+                "physicalid": [1],
+                "full_street_name": ["TEST STREET"],
+                "rw_type": [1],
+                "trafdir": ["TW"],
+                # streetwidth passes straight through as cscl_width_ft, so 50.0
+                # sets max_perp = max(45, 50*1.5) = 75 -- the +65 ft apron samples
+                # SURVIVE the perpendicular gate and reach the spread computation.
+                # With a narrower street they would be clipped and the fixture
+                # would exercise the wrong gate entirely.
+                "streetwidth": [50.0],
+                "nominaldir": [""],
+                "boroughcode": ["1"],
+                "geometry": [seg],
+            },
+            crs="EPSG:2263",
+        )
+
+    def _make_curb_gdf(self):
+        """Straight full-block runs plus a detached mid-block apron bulge.
+
+        Mid-block: north +18, south -16 -> c = +1.0, width = 34.0. The apron is a
+        SEPARATE LineString at +65 ft spanning x0+120..x0+160 -- its own feature,
+        as NYC planimetrics actually digitize a driveway apron / bus-stop curb, and
+        unlike a kink it emits no ramp samples at intermediate offsets to fill the
+        very gap the widest-gap split keys on. It sits deep in the block interior,
+        far from both 25 ft end zones, which is exactly why the endpoint trim
+        cannot reach it.
+        """
+        import geopandas as gpd
+        from shapely.geometry import LineString
+
+        x0, y0, ln = self._X0, self._Y0, self._LEN
+        north_main = LineString([(x0, y0 + 18), (x0 + ln, y0 + 18)])
+        north_apron = LineString([(x0 + 120, y0 + 65), (x0 + 160, y0 + 65)])
+        south = LineString([(x0, y0 - 16), (x0 + ln, y0 - 16)])
+        return gpd.GeoDataFrame(
+            geometry=[north_main, north_apron, south], crs="EPSG:2263"
+        )
+
+    def _make_roadbed_gdf(self):
+        """Rectangular pavement over the MID-BLOCK curb offsets, y in [-16, +18].
+
+        Roadbed c ~= +1.0, agreeing with the cleaned derived c well inside
+        ROADBED_DISAGREEMENT_FT, so the cross-check does not mask the behaviour
+        under test (it still runs -- it just has nothing to object to).
+        """
+        import geopandas as gpd
+        from shapely.geometry import box
+
+        pavement = box(
+            self._X0 - 10, self._Y0 - 16, self._X0 + self._LEN + 10, self._Y0 + 18
+        )
+        return gpd.GeoDataFrame(geometry=[pavement], crs="EPSG:2263")
+
+    def _patch_downloads(self, monkeypatch):
+        monkeypatch.setattr(
+            build_index, "_download_cscl_geojson", lambda: self._make_cscl_gdf()
+        )
+        monkeypatch.setattr(build_index, "_fetch_asp_signs", lambda: set())
+        monkeypatch.setattr(
+            build_index,
+            "_download_curbs",
+            lambda cache_path=None: self._make_curb_gdf(),
+        )
+        monkeypatch.setattr(
+            build_index,
+            "_download_roadbed",
+            lambda cache_path=None: self._make_roadbed_gdf(),
+        )
+
+    def test_mid_block_apron_segment_calibrates_through_the_build(
+        self, tmp_path, monkeypatch
+    ):
+        """The full build rescues a mid-block-contaminated segment (spike 009)."""
+        self._patch_downloads(monkeypatch)
+        build_index.build_index(output_dir=tmp_path)
+
+        with open(tmp_path / "segments.json") as f:
+            segments = json.load(f)
+        assert "1" in segments, "synthetic segment should be indexed"
+        rec = segments["1"]
+
+        assert rec["calibrated"] is True, (
+            "mid-block-apron segment should be rescued by the THIRD fallback tier "
+            "(majority-cluster reduction on the endpoint-trimmed samples); without "
+            "the wiring it lands non-calibrated, and the endpoint trim alone "
+            "cannot rescue it"
+        )
+        # Mid-block geometry recovered exactly: (18 + -16)/2 = +1.0, 18 - -16 = 34.0
+        assert rec["center_offset_c"] == pytest.approx(1.0, abs=0.5)
+        assert rec["curb_width_ft"] == pytest.approx(34.0, abs=1.0)
+        # Cleaned spreads are the straight runs -> ~0, well under the gate
+        assert rec["spread_n"] is not None and rec["spread_n"] < 1.0
+        assert rec["spread_s"] is not None and rec["spread_s"] < 1.0
+
+        with open(tmp_path / "build_info.json") as f:
+            info = json.load(f)
+        assert info["calibrated_count"] == 1
+        assert info["non_calibrated_count"] == 0
+
+
 class TestGraphJson:
     """Tests for graph.json serialization (Task 2 integration)."""
 
