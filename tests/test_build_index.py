@@ -468,9 +468,9 @@ class _CurbBuildHarness:
 
     def _patch_downloads(self, monkeypatch, *, curbs=True):
         monkeypatch.setattr(
-            build_index, "_download_cscl_geojson", lambda: self._make_cscl_gdf()
+            build_index, "_download_cscl_geojson", self._make_cscl_gdf
         )
-        monkeypatch.setattr(build_index, "_fetch_asp_signs", lambda: set())
+        monkeypatch.setattr(build_index, "_fetch_asp_signs", set)
         if curbs:
             monkeypatch.setattr(
                 build_index,
