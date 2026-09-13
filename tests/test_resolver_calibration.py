@@ -313,7 +313,9 @@ class TestNonCalibratedLaneHalfWidth:
                 distance_to_nearest_intersection_ft=500.0,
             )
             == 0.0
-        ), "Pre-fix model (p = 9.7) must score this fix 0.0 — otherwise the test is vacuous"
+        ), (
+            "Pre-fix model (p = 9.7) must score this fix 0.0 — otherwise the test is vacuous"
+        )
 
     async def test_narrow_non_calibrated_street_keeps_default_floor(self, monkeypatch):
         """20 ft non-calibrated street keeps p = 9.7 exactly (the floor is load-bearing).
@@ -347,7 +349,9 @@ class TestNonCalibratedLaneHalfWidth:
                 distance_to_nearest_intersection_ft=500.0,
             )
             == 0.0
-        ), "Dropping the 9.7 ft floor must refuse this fix — that is why the floor exists"
+        ), (
+            "Dropping the 9.7 ft floor must refuse this fix — that is why the floor exists"
+        )
 
         # Pin p exactly: the fix lands on the lane centre (margin 1.0) only when
         # p is precisely DEFAULT_LANE_HALF_P.

@@ -237,9 +237,7 @@ async def test_no_segment_found_still_logs_no_street_segment_found(
     """A genuine miss keeps its existing actionable message verbatim."""
     coord, _hass, _entry = make_coordinator()
 
-    await _drive_pipeline(
-        coord, NoSegmentFoundError(987654.0, 178432.0, 164.0), caplog
-    )
+    await _drive_pipeline(coord, NoSegmentFoundError(987654.0, 178432.0, 164.0), caplog)
 
     text = caplog.text
     assert "No street segment found" in text, (
