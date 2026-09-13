@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from .confidence import (
     DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_LANE_HALF_P,
     _NEAR_INTERSECTION_THRESHOLD_FT,
     compute_lane_snap_confidence,
     is_confident,
@@ -216,16 +217,26 @@ async def resolve_segment(
         else:
             c = 0.0
 
-        # Lane half-width `p`: derived from the true curb width only for a
-        # calibrated candidate; otherwise the default lane half (via None).
-        p = lane_half_from_width(best.curb_width_ft if best.calibrated else None)
-
-        # Effective width is retained purely for the debug record /
-        # ResolutionResult.street_width_ft (unchanged); the confidence model no
-        # longer uses it.
+        # Effective width feeds the non-calibrated lane half-width `p` below, as
+        # well as the debug record, the AmbiguousResolutionError message and
+        # ResolutionResult.street_width_ft. Computed here (above `p`) because `p`
+        # now consumes it.
         effective_width = resolve_effective_width(
             best.streetwidth, best.rw_type, segment_id=best.segment_id
         )
+
+        # Lane half-width `p`: a calibrated candidate uses its MEASURED curb
+        # width; a non-calibrated one scales `p` with the CSCL effective width
+        # instead of taking a flat default, floored at DEFAULT_LANE_HALF_P.
+        # The floor is mandatory: the margin score is NOT monotone in `p`, so a
+        # width-derived `p` below 9.7 ft would shrink the plausible band and
+        # refuse narrow-street fixes that resolve today. Spike 010 measured the
+        # floored form at +24.5 pp resolved on the non-calibrated population
+        # (71.2% -> 95.7%) with ZERO additional wrong-side resolutions.
+        if best.calibrated:
+            p = lane_half_from_width(best.curb_width_ft)
+        else:
+            p = max(DEFAULT_LANE_HALF_P, lane_half_from_width(effective_width))
 
         # Step 4: Lane-snap confidence with an UPPER plausibility bound judged
         # relative to `c` (not 0). A fix more than one lane-width outside the

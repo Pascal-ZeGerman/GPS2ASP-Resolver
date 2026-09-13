@@ -27,7 +27,12 @@ from shapely import wkt
 from shapely.geometry import LineString
 
 from gps2asp.resolver import convert, resolve_segment
-from gps2asp.resolver.confidence import DEFAULT_CONFIDENCE_THRESHOLD
+from gps2asp.resolver.confidence import (
+    DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_LANE_HALF_P,
+    compute_lane_snap_confidence,
+    lane_half_from_width,
+)
 from gps2asp.resolver.exceptions import AmbiguousResolutionError
 from gps2asp.resolver.models import SegmentCandidate
 
@@ -254,4 +259,151 @@ class TestAlternationPreserved:
         assert north.side_of_street != south.side_of_street, (
             "Opposite-side points must resolve to opposite sides — alternation "
             "must not be suppressed by any hysteresis"
+        )
+
+
+class TestNonCalibratedLaneHalfWidth:
+    """Spike 010: `p` scales with the CSCL effective width on NON-calibrated segments.
+
+    A non-calibrated candidate used to receive a fixed
+    ``DEFAULT_LANE_HALF_P = 9.7`` ft lane half-width regardless of how wide the
+    street is, so a car parked in the lane of a 58 ft avenue fell outside the
+    plausible band and was refused (the user's Aug 30 Vanderbilt park). 46% of
+    the index is non-calibrated. The fix derives ``p`` from the effective width
+    and FLOORS it at 9.7 ft — the margin score is not monotone in ``p``, so the
+    floor is what makes the change strictly non-regressive on narrow streets.
+    """
+
+    async def test_wide_non_calibrated_street_resolves(self, monkeypatch):
+        """58 ft non-calibrated street, fix 21 ft off the centre -> resolves at ~0.81.
+
+        The Aug 30 Vanderbilt defect. With width-informed ``p`` the effective
+        width 58.0 gives ``p = max(9.7, 58/2 - 3) = 26.0``, so the fix sits 5 ft
+        from the North lane centre and scores ``(47 - 5) / 52 = 0.8077``.
+        """
+        seg = LineString([(0, 0), (1000, 0)])
+        candidate = _make_candidate(
+            geometry=seg,
+            calibrated=False,
+            streetwidth=58.0,
+        )
+        _patch_index(monkeypatch, [candidate])
+
+        # Must NOT raise: this is the fix that used to be refused at 0.0.
+        result = await resolve_segment(500.0, 21.0)
+
+        assert result.side_of_street == "N", (
+            "A fix 21 ft LEFT of an E-running segment is the North curb"
+        )
+        assert result.confidence == pytest.approx(0.8077, abs=1e-4), (
+            "58 ft non-calibrated street with p = 26.0 must score (47-5)/52; "
+            f"got {result.confidence}"
+        )
+        assert result.confidence > DEFAULT_CONFIDENCE_THRESHOLD
+        assert result.street_width_ft == 58.0
+
+        # Prove the defect is real so this test cannot pass vacuously: with the
+        # OLD fixed p = 9.7 the very same fix scores exactly 0.0 (d_near = 11.3
+        # exceeds the plausible band) and resolve_segment would refuse it.
+        assert (
+            compute_lane_snap_confidence(
+                signed_offset_ft=21.0,
+                center_offset_c=0.0,
+                lane_half_p=DEFAULT_LANE_HALF_P,
+                distance_to_nearest_intersection_ft=500.0,
+            )
+            == 0.0
+        ), "Pre-fix model (p = 9.7) must score this fix 0.0 — otherwise the test is vacuous"
+
+    async def test_narrow_non_calibrated_street_keeps_default_floor(self, monkeypatch):
+        """20 ft non-calibrated street keeps p = 9.7 exactly (the floor is load-bearing).
+
+        ``lane_half_from_width(20.0) = 7.0`` is BELOW the default, and the margin
+        score is not monotone in ``p``: a 7 ft band would refuse a fix that
+        resolves today. The floor makes spike 010 strictly non-regressive.
+        """
+        seg = LineString([(0, 0), (1000, 0)])
+        candidate = _make_candidate(
+            geometry=seg,
+            calibrated=False,
+            streetwidth=20.0,
+        )
+        _patch_index(monkeypatch, [candidate])
+
+        result = await resolve_segment(500.0, 15.0)
+
+        assert result.confidence == pytest.approx(0.6467, abs=1e-4), (
+            "Narrow non-calibrated street must score identically to pre-fix "
+            f"behaviour ((24.7-5.3)/30.0); got {result.confidence}"
+        )
+        assert result.confidence > DEFAULT_CONFIDENCE_THRESHOLD
+
+        # Without the floor, p would be 7.0 and d_near = 8.0 > 7.0 -> refused.
+        assert (
+            compute_lane_snap_confidence(
+                signed_offset_ft=15.0,
+                center_offset_c=0.0,
+                lane_half_p=lane_half_from_width(20.0),
+                distance_to_nearest_intersection_ft=500.0,
+            )
+            == 0.0
+        ), "Dropping the 9.7 ft floor must refuse this fix — that is why the floor exists"
+
+        # Pin p exactly: the fix lands on the lane centre (margin 1.0) only when
+        # p is precisely DEFAULT_LANE_HALF_P.
+        on_lane_centre = await resolve_segment(500.0, 9.7)
+        assert on_lane_centre.confidence == pytest.approx(1.0), (
+            "A fix at 9.7 ft must sit exactly on the lane centre, proving "
+            f"p == {DEFAULT_LANE_HALF_P}; got {on_lane_centre.confidence}"
+        )
+
+    async def test_calibrated_candidate_still_uses_curb_width(self, monkeypatch):
+        """A calibrated candidate derives p from curb_width_ft ONLY — no width leak.
+
+        ``curb_width_ft = 25.4`` gives ``p = 9.7`` while the CSCL
+        ``streetwidth = 58.0`` would give ``p = 26.0``. If the effective width
+        leaked into the calibrated branch this fix would score 0.373, not 1.0.
+        """
+        seg = LineString([(0, 0), (1000, 0)])
+        candidate = _make_candidate(
+            geometry=seg,
+            center_offset_c=0.0,
+            curb_width_ft=25.4,  # p = 25.4/2 - 3 = 9.7 ft
+            calibrated=True,
+            streetwidth=58.0,  # would give p = 26.0 if it leaked in
+        )
+        _patch_index(monkeypatch, [candidate])
+
+        result = await resolve_segment(500.0, 9.7)
+
+        assert result.confidence == pytest.approx(1.0), (
+            "Calibrated p must come from curb_width_ft alone; a 0.373 score "
+            f"means the CSCL effective width leaked in. Got {result.confidence}"
+        )
+
+    async def test_centre_of_road_fix_still_refused(self, monkeypatch):
+        """A fix 1.1 ft from the centre of a 58 ft street stays REFUSED.
+
+        The user's Aug 28 park. No choice of ``p`` may turn a centre-of-road fix
+        into a side answer — with p = 26.0 the margin is (27.1-24.9)/52 = 0.0423,
+        far below the 0.33 threshold. This belongs to refusal handling (spike
+        011), not to ``p``.
+        """
+        seg = LineString([(0, 0), (1000, 0)])
+        candidate = _make_candidate(
+            geometry=seg,
+            calibrated=False,
+            streetwidth=58.0,
+        )
+        _patch_index(monkeypatch, [candidate])
+
+        with pytest.raises(AmbiguousResolutionError) as excinfo:
+            await resolve_segment(500.0, 1.1)
+
+        assert excinfo.value.confidence == pytest.approx(0.0423, abs=1e-4), (
+            "Centre-of-road fix must score (27.1-24.9)/52; got "
+            f"{excinfo.value.confidence}"
+        )
+        assert excinfo.value.confidence < DEFAULT_CONFIDENCE_THRESHOLD, (
+            "A fix at the centre of the road is a CORRECT refusal"
         )
