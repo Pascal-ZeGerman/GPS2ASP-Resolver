@@ -180,7 +180,12 @@ def test_outside_nyc_main_loop_logs_warning_with_actionable_message():
 
 
 def test_no_segment_handler_logs_warning_with_actionable_message():
-    """D-11, D-13: NoSegmentFoundError/AmbiguousResolutionError emit WARNING with actionable text.
+    """D-11, D-13: NoSegmentFoundError emits a WARNING with actionable text.
+
+    Spike 011 split the formerly-shared refusal handler: this message now covers
+    ``NoSegmentFoundError`` ONLY. ``AmbiguousResolutionError`` has its own
+    handler and its own honest message (the segment WAS found; only the curb side
+    is undetermined), covered by tests/test_coordinator_refusal_messages.py.
 
     NOTE (IN-03): Source-text inspection is used here for the same reason as
     test_outside_nyc_main_loop_logs_warning_with_actionable_message — caplog-based

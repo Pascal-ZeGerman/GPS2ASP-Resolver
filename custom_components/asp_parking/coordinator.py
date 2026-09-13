@@ -1992,6 +1992,39 @@ class ASPParkingCoordinator:
     # Pipeline execution
     # ------------------------------------------------------------------
 
+    def _apply_no_street_match(self, lat: float, lon: float) -> None:
+        """Shared state reset for BOTH refusal paths (spike 011).
+
+        ``NoSegmentFoundError`` (no candidate segment at all) and
+        ``AmbiguousResolutionError`` (segment certain, curb side not) are
+        deliberately indistinguishable in entity state: the availability
+        contract -- ``special_state`` pinned to the no-street-match sentinel,
+        ``_last_pipeline_error`` cleared, ``last_error`` None, and the last
+        ``schedule_result`` retained -- is identical for both. Spike 011
+        requires the *message* to change and nothing else (user decision
+        2026-09-12: no degraded both-curbs schedule mode).
+
+        This helper neither logs nor touches ``schedule_result``; each handler
+        owns its own ``logger.warning`` call.
+        """
+        self.data.special_state = "no_street_match"
+        self.data.last_lat = lat
+        self.data.last_lon = lon
+        self.data.soda_level = 0  # reset: no street match
+        # Phase 30: reset new diagnostic fields
+        self.data.borough = None
+        self.data.distance_ft = None
+        self.data.street_width_ft = None
+        self.data.segment_id = None
+        self.data.last_error = None  # clear stale errors on clean resolution failures
+        self.data.last_error_time = None
+        # Clean resolution outcome: the pipeline ran successfully, the GPS fix
+        # just didn't match a mapped segment (or a mapped curb side). Clear the
+        # health flag so a prior transient error does not leave entities
+        # permanently unavailable.
+        self._last_pipeline_error = False
+        # Retain last schedule_result per user decision
+
     async def _async_resolve_pipeline(self) -> None:
         """Run the full GPS-to-schedule pipeline.
 
@@ -2160,26 +2193,52 @@ class ASPParkingCoordinator:
                     lon,
                 )
 
-            except (NoSegmentFoundError, AmbiguousResolutionError) as err:
-                # GPS is valid but no matching street segment
-                self.data.special_state = "no_street_match"
-                self.data.last_lat = lat
-                self.data.last_lon = lon
-                self.data.soda_level = 0  # reset: no street match
-                # Phase 30: reset new diagnostic fields
-                self.data.borough = None
-                self.data.distance_ft = None
-                self.data.street_width_ft = None
-                self.data.segment_id = None
-                self.data.last_error = (
-                    None  # clear stale errors on clean resolution failures
+            except AmbiguousResolutionError as err:
+                # The street segment WAS found -- only the curb side is
+                # undetermined (the fix sits near the centre of the roadway).
+                # Spike 011: all 16 refusals in the Aug 28 - Sep 4 logs were
+                # this error, yet the old shared handler claimed "No street
+                # segment found". The entity state is deliberately the SAME as a
+                # genuine miss -- user decision 2026-09-12, no degraded
+                # both-curbs schedule mode -- so only the message differs. A
+                # distinct finer-grained special_state (a dedicated
+                # side-ambiguous sentinel) is a tracked follow-up, not an
+                # omission: adopting it requires
+                # every consumer of "no_street_match" (sensor availability
+                # backstop, binary sensors, their tests) to treat it identically.
+                self._apply_no_street_match(lat, lon)
+                # Build the interpolated values defensively BEFORE logging:
+                # debug_info.candidates may be empty and perpendicular_distance_ft
+                # / street_width_ft are `float | None`, so a raise here would
+                # escalate a clean refusal into the broad-Exception branch and
+                # make every entity unavailable (T-tt5-02).
+                debug_info = getattr(err, "debug_info", None)
+                candidate = ((getattr(debug_info, "candidates", None) or [{}])[0]) or {}
+                street_label = (
+                    candidate.get("street")
+                    or getattr(debug_info, "selected_segment_id", None)
+                    or "a street segment"
                 )
-                self.data.last_error_time = None
-                # Clean resolution outcome: the pipeline ran successfully, the GPS fix
-                # just didn't match a mapped segment. Clear the health flag so a prior
-                # transient error does not leave entities permanently unavailable.
-                self._last_pipeline_error = False
-                # Retain last schedule_result per user decision
+                perp_ft = getattr(debug_info, "perpendicular_distance_ft", None)
+                width_ft = getattr(debug_info, "street_width_ft", None)
+                perp_label = f"{perp_ft:.1f}" if perp_ft is not None else "unknown"
+                width_label = f"{width_ft:.0f}" if width_ft is not None else "unknown"
+                logger.warning(
+                    "Found %s at (%.4f, %.4f) but could not determine the curb"
+                    " side: the fix is %s ft from the centre of a %s ft street"
+                    " -- no schedule can be shown for a car at the centre of the"
+                    " roadway: %s",
+                    street_label,
+                    lat,
+                    lon,
+                    perp_label,
+                    width_label,
+                    err,
+                )
+
+            except NoSegmentFoundError as err:
+                # GPS is valid but no matching street segment at all
+                self._apply_no_street_match(lat, lon)
                 logger.warning(
                     "No street segment found at (%.4f, %.4f)"
                     " -- check that your device tracker is reporting accurate"
