@@ -269,6 +269,11 @@ async def test_caldav_hook_not_called_on_pipeline_nosegmentfounderror():
     caldav_hook_spy = AsyncMock(name="_async_caldav_hook_after_resolve")
     stub._async_caldav_hook_after_resolve = caldav_hook_spy
 
+    # The refusal handlers delegate their state reset to the real
+    # _apply_no_street_match helper (spike 011), so the SimpleNamespace stub must
+    # carry it bound off the class like _async_resolve_pipeline itself.
+    stub._apply_no_street_match = _bind(stub, "_apply_no_street_match")
+
     # Stub out everything _async_resolve_pipeline needs:
     stub._pending_lat = 40.6782
     stub._pending_lon = -73.9442
