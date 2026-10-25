@@ -111,6 +111,7 @@ from .const import (
     DEFAULT_SUSPENSION_INTERVAL,
     DOMAIN,
     GPS_DEBOUNCE_COOLDOWN,
+    REFUSAL_RETRY_DISTANCE_M,
     GITHUB_INDEX_RELEASE_TAG,
     GITHUB_RELEASES_API_BASE,
     BUTTON_DOUBLE_PRESS_WINDOW_HOURS,
@@ -1774,7 +1775,13 @@ class ASPParkingCoordinator:
                 new_lat,
                 new_lon,
             )
-            if distance is not None and distance < self.movement_threshold:
+            # After a refusal the previous position is not a settled park, so
+            # a nearby refined fix (CarPlay-disconnect burst) must be re-tried
+            # instead of being swallowed by the 50 m movement gate (spike 013).
+            threshold = self.movement_threshold
+            if self.data.special_state == "no_street_match":
+                threshold = min(threshold, REFUSAL_RETRY_DISTANCE_M)
+            if distance is not None and distance < threshold:
                 return  # Below threshold -- skip
 
         # Store pending coordinates and trigger debounced pipeline
