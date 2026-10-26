@@ -285,6 +285,11 @@ async def resolve_segment(
 
         # Check confidence threshold
         if not is_confident(confidence, confidence_threshold):
+            # Diagnostic only (spike 013): so/c/p/d_near/band let a labelled
+            # population of sidewalk-band ("past_lane") refusals accumulate
+            # without changing any decision.
+            d_near = min(abs(so - (c - p)), abs(so - (c + p)))
+            band = _classify_band(d_near, p)
             raise AmbiguousResolutionError(
                 message=(
                     f"Resolution confidence {confidence:.2f} is below "
@@ -292,7 +297,9 @@ async def resolve_segment(
                     f"{best.full_street_name} "
                     f"(street_width={effective_width:.0f}ft, "
                     f"perp_dist={perp_distance:.1f}ft, "
-                    f"endpoint_dist={dist_to_endpoints:.1f}ft)"
+                    f"endpoint_dist={dist_to_endpoints:.1f}ft, "
+                    f"so={so:.1f}ft, c={c:.1f}ft, p={p:.1f}ft, "
+                    f"d_near={d_near:.1f}ft, band={band})"
                 ),
                 debug_info=debug_info,
                 confidence=confidence,
@@ -338,6 +345,21 @@ async def resolve_segment(
         )
         log_resolution(debug_info)
         raise
+
+
+def _classify_band(d_near: float, p: float) -> str:
+    """Classify where a refused fix sits relative to the lane band.
+
+    ``d_near`` is the distance to the nearer lane centre (c +/- p).  Thresholds
+    match spike 013's band_analysis: within ``p`` is ``lane_ambig``; up to 15 ft
+    beyond is ``past_lane`` (candidate sidewalk band); anything further is
+    ``far``.  Diagnostic label only.
+    """
+    if d_near <= p:
+        return "lane_ambig"
+    if d_near <= p + 15.0:
+        return "past_lane"
+    return "far"
 
 
 def _classify_ambiguity(perp_distance: float, dist_to_endpoints: float) -> str:
