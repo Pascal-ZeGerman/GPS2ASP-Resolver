@@ -45,6 +45,14 @@ LEGACY_STALE_TIMEOUT_HOURS = 8
 # Internal tuning
 GPS_DEBOUNCE_COOLDOWN = 5.0  # seconds (debounce rapid GPS jitter)
 
+# After a refusal (``special_state == "no_street_match"``) the movement gate
+# drops from the user's threshold to this tiny distance.  The CarPlay-disconnect
+# Shortcut sends a BURST of fixes 5-15 s apart that settle 3-6 m from the first
+# (spike 013); the first is often the worst (sidewalk / centre-of-road) and is
+# refused, and a 50 m gate would then discard the refined fix that resolves.
+# Large enough to ignore byte-identical re-serves and sub-metre jitter.
+REFUSAL_RETRY_DISTANCE_M = 2.0  # meters
+
 # Suspension
 CONF_NYC311_API_KEY = "nyc311_api_key"
 DEFAULT_SUSPENSION_INTERVAL = 60  # minutes between suspension polls
