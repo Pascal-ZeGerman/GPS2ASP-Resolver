@@ -26,7 +26,7 @@ jobs:
     name: Rebuild + publish calibrated index
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install package + build deps
         run: |
